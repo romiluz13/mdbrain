@@ -60,6 +60,7 @@ import {
 	importOkfBundle,
 	exportOkfBundle,
 	searchWikiPages,
+	listUnresolvedContradictions,
 	WikiDuplicateSlugError,
 	type WikiPageInput,
 } from "@mdbrian/wiki-engine"
@@ -2451,6 +2452,40 @@ export function createV1Router(): Hono {
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_SEARCH_FAILED", message)
+		}
+	})
+
+	// Wiki lint (/v1/wiki/lint) — T12: lists pages + unresolved contradictions
+	v1.get("/wiki/lint", async (c) => {
+		const scope = c.req.query("scope")
+		const scopeRef = c.req.query("scopeRef")
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef are required",
+			)
+		try {
+			const handle = await readWikiDbHandle(
+				String(c.req.query("agentId") ?? ""),
+			)
+			const [pagesResult, contradictions] = await Promise.all([
+				listWikiPages(handle, {
+					scope,
+					scopeRef,
+					limit: MAX_LIST_LIMIT,
+				}),
+				listUnresolvedContradictions(handle, scope, scopeRef),
+			])
+			return c.json({
+				pages: pagesResult.pages,
+				total: pagesResult.total,
+				unresolvedContradictions: contradictions,
+			})
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_LINT_FAILED", message)
 		}
 	})
 

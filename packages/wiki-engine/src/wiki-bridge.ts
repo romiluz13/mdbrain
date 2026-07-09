@@ -18,6 +18,10 @@ import {
 } from "./wiki-schema.js"
 import { renderWikiPageMarkdown, renderWikiPageHtml } from "./wiki-renderer.js"
 import { recomputeBacklinksAfterChange } from "./wiki-backlinks.js"
+import {
+	runWritePipelineGate,
+	type ClaimRecord,
+} from "./wiki-contradictions.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -333,6 +337,26 @@ export async function createWikiPage(
 				newRelationshipTargets: newTargets,
 			},
 		)
+		// Run contradiction detection for each claim (BEFORE dedup — for a new
+		// page there are no existing claims so dedup always passes, but
+		// cross-page contradictions are still detected).
+		if (Array.isArray(doc.claims)) {
+			for (const claim of doc.claims as ClaimRecord[]) {
+				await runWritePipelineGate(
+					handle,
+					input.slug,
+					{
+						id: claim.id,
+						text: claim.text,
+						status: claim.status,
+						confidence: claim.confidence,
+					},
+					[], // no existing claims on a new page
+					input.scope,
+					input.scopeRef,
+				)
+			}
+		}
 		return toView(inserted)
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err)
@@ -416,22 +440,8 @@ export async function updateWikiPage(
 	if (patch.trustTier !== undefined) setFields.trustTier = patch.trustTier
 	if (patch.permissions !== undefined) setFields.permissions = patch.permissions
 	if (patch.personCard !== undefined) setFields.personCard = patch.personCard
-	if (patch.claims !== undefined) {
-		setFields.claims = (patch.claims ?? []).map((c) => ({
-			id: c.id,
-			text: c.text,
-			status: c.status ?? "active",
-			confidence: c.confidence ?? 0,
-			evidence: c.evidence ?? [],
-			writerAgent: c.writerAgent,
-			derivedFrom: c.derivedFrom ?? [],
-			supersedesClaimId: c.supersedesClaimId,
-			sourceMemId: c.sourceMemId,
-			validFrom: c.validFrom ?? now,
-			validTo: c.validTo,
-			updatedAt: now,
-		}))
-	}
+	// Claims are processed by the pipeline gate below (after fetching the
+	// old page for existing-claim dedup checks).
 	if (patch.questions !== undefined) {
 		// Normalize like the create path: default status + createdAt so the
 		// $jsonSchema validator (requires id/text/status/createdAt per question)
@@ -451,8 +461,87 @@ export async function updateWikiPage(
 	// (so their backlinks can be cleaned).
 	const oldPage = (await coll.findOne({ slug, scope, scopeRef })) as {
 		relationships?: Array<{ targetPageSlug: string }>
+		claims?: Array<{
+			id: string
+			text: string
+			status?: string
+			confidence?: number
+		}>
 	} | null
 	const oldTargets = oldPage?.relationships?.map((r) => r.targetPageSlug) ?? []
+
+	// Process claims through the write pipeline gate: contradiction detection
+	// FIRST (cross-page), then dedup (same-page near-duplicate). Claims rejected
+	// by dedup are filtered out — but contradictions are still recorded.
+	// CRITICAL: the final claims array = existing claims + accepted new claims
+	// (NOT just the accepted new claims — that would drop all existing claims).
+	if (patch.claims !== undefined) {
+		if (patch.claims.length === 0) {
+			// Clear all claims (empty array = clear).
+			setFields.claims = []
+		} else {
+			const existingClaimRecords: ClaimRecord[] = (oldPage?.claims ?? []).map(
+				(c) => ({
+					id: c.id,
+					text: c.text,
+					status: c.status,
+					confidence: c.confidence,
+				}),
+			)
+			const acceptedNewClaims = [] as typeof patch.claims
+			for (const newClaim of patch.claims) {
+				const gate = await runWritePipelineGate(
+					handle,
+					slug,
+					{
+						id: newClaim.id,
+						text: newClaim.text,
+						status: newClaim.status,
+						confidence: newClaim.confidence,
+					},
+					existingClaimRecords,
+					scope,
+					scopeRef,
+				)
+				if (!gate.rejected) {
+					acceptedNewClaims.push(newClaim)
+				}
+			}
+			// Final claims = existing claims (preserved) + accepted new claims.
+			const existingClaimsNormalized = existingClaimRecords.map((c) => ({
+				id: c.id,
+				text: c.text,
+				status: c.status ?? "active",
+				confidence: c.confidence ?? 0,
+				evidence: [],
+				writerAgent: undefined,
+				derivedFrom: [],
+				supersedesClaimId: undefined,
+				sourceMemId: undefined,
+				validFrom: now,
+				validTo: undefined,
+				updatedAt: now,
+			}))
+			const newClaimsNormalized = acceptedNewClaims.map((c) => ({
+				id: c.id,
+				text: c.text,
+				status: c.status ?? "active",
+				confidence: c.confidence ?? 0,
+				evidence: c.evidence ?? [],
+				writerAgent: c.writerAgent,
+				derivedFrom: c.derivedFrom ?? [],
+				supersedesClaimId: c.supersedesClaimId,
+				sourceMemId: c.sourceMemId,
+				validFrom: c.validFrom ?? now,
+				validTo: c.validTo,
+				updatedAt: now,
+			}))
+			setFields.claims = [
+				...existingClaimsNormalized,
+				...newClaimsNormalized,
+			] as unknown as typeof setFields.claims
+		}
+	}
 
 	const result = await coll.findOneAndUpdate(
 		{ slug, scope, scopeRef },

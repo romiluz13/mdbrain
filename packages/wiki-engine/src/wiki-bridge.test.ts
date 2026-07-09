@@ -171,6 +171,50 @@ describe("updateWikiPage", () => {
 		expect(q.status).toBe("open")
 		expect(q.createdAt).toBeInstanceOf(Date)
 	})
+
+	it("updateWikiPage preserves existing claims when adding new ones (no data loss)", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		// Mock findOne to return an existing page with one claim.
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			claims: [{ id: "c-existing", text: "Existing claim", status: "active" }],
+			relationships: [],
+		})
+		await updateWikiPage(h, "x", "workspace", "ws-1", {
+			claims: [{ id: "c-new", text: "New claim about something else" }],
+		})
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		// The final claims array should include BOTH the existing claim and the new one.
+		const claimIds = update.$set.claims.map((c: { id: string }) => c.id)
+		expect(claimIds).toContain("c-existing")
+		expect(claimIds).toContain("c-new")
+	})
+
+	it("updateWikiPage with empty claims array clears all claims", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			claims: [{ id: "c1", text: "old", status: "active" }],
+			relationships: [],
+		})
+		await updateWikiPage(h, "x", "workspace", "ws-1", { claims: [] })
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		expect(update.$set.claims).toEqual([])
+	})
 })
 
 describe("deleteWikiPage", () => {

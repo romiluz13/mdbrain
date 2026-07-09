@@ -108,3 +108,20 @@ export {
 	type TrustTier,
 	type PrivacyTier,
 } from "./wiki-governance.js"
+
+export {
+	detectContradictions,
+	recordContradictions,
+	listUnresolvedContradictions,
+	resolveContradiction,
+	runWritePipelineGate,
+	checkNearDuplicate,
+	areContradictory,
+	hasNegation,
+	textOverlap,
+	type Contradiction,
+	type ContradictionResolution,
+	type DedupResult,
+	type PipelineGateResult,
+	type ClaimRecord,
+} from "./wiki-contradictions.js"
