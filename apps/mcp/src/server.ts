@@ -1009,6 +1009,176 @@ export const toolList = [
 			properties: { agentId: { type: "string" } },
 		},
 	},
+	{
+		name: "mdbrian_wiki_search",
+		description:
+			"Hybrid search over the MDBrain wiki (vector + full-text + RRF fusion). Returns ranked wiki pages with scoped retrieval + governance filters.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				query: { type: "string", description: "Search query." },
+				scope: {
+					type: "string",
+					enum: ["session", "user", "agent", "workspace", "tenant", "global"],
+				},
+				scopeRef: {
+					type: "string",
+					description: "Concrete namespace for the scope.",
+				},
+				kind: {
+					type: "string",
+					enum: [
+						"entity",
+						"concept",
+						"synthesis",
+						"source",
+						"report",
+						"procedure",
+					],
+				},
+				trustTier: {
+					type: "string",
+					enum: ["restricted", "standard", "admin"],
+				},
+				recipe: { type: "string", enum: ["fast", "hybrid", "deep"] },
+				maxResults: { type: "number" },
+				agentId: { type: "string" },
+			},
+			required: ["query"],
+		},
+	},
+	{
+		name: "mdbrian_wiki_get",
+		description:
+			"Get a wiki page by slug (OKF concept ID, may contain slashes). Returns JSON by default, or markdown/HTML via format.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				slug: {
+					type: "string",
+					description: "Page slug (OKF concept ID, e.g. tables/users).",
+				},
+				scope: { type: "string" },
+				scopeRef: { type: "string" },
+				format: { type: "string", enum: ["json", "markdown", "html"] },
+				agentId: { type: "string" },
+			},
+			required: ["slug", "scope", "scopeRef"],
+		},
+	},
+	{
+		name: "mdbrian_wiki_apply",
+		description:
+			"Create or update a wiki page. When the slug+scope+scopeRef matches an existing page, it updates (bumps revision); otherwise it creates a new page.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				kind: {
+					type: "string",
+					enum: [
+						"entity",
+						"concept",
+						"synthesis",
+						"source",
+						"report",
+						"procedure",
+					],
+				},
+				title: { type: "string" },
+				slug: {
+					type: "string",
+					description:
+						"URL-safe ID = OKF concept ID (may contain slashes, e.g. tables/users).",
+				},
+				summary: {
+					type: "string",
+					description: "One-paragraph dense summary.",
+				},
+				body: { type: "string", description: "Full markdown body." },
+				frontmatter: {
+					type: "object",
+					properties: {
+						type: {
+							type: "string",
+							description:
+								"OKF required field (free-form, e.g. table, concept, person).",
+						},
+						title: { type: "string" },
+						description: { type: "string" },
+						resource: { type: "string" },
+						tags: { type: "array", items: { type: "string" } },
+					},
+					required: ["type"],
+				},
+				scope: {
+					type: "string",
+					enum: ["session", "user", "agent", "workspace", "tenant", "global"],
+				},
+				scopeRef: { type: "string" },
+				trustTier: {
+					type: "string",
+					enum: ["restricted", "standard", "admin"],
+				},
+				agentId: { type: "string" },
+			},
+			required: [
+				"kind",
+				"title",
+				"slug",
+				"summary",
+				"body",
+				"frontmatter",
+				"scope",
+				"scopeRef",
+				"trustTier",
+			],
+		},
+	},
+	{
+		name: "mdbrian_wiki_export_okf",
+		description:
+			"Export wiki pages to an OKF (Open Knowledge Format) bundle on disk. Portable, vendor-neutral interchange with Google Knowledge Catalog + OKF consumers.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				scope: { type: "string" },
+				scopeRef: { type: "string" },
+				outDir: {
+					type: "string",
+					description: "Directory to write the bundle.",
+				},
+				okfBundleId: { type: "string" },
+				agentId: { type: "string" },
+			},
+			required: ["scope", "scopeRef", "outDir"],
+		},
+	},
+	{
+		name: "mdbrian_wiki_lint",
+		description:
+			"List wiki pages (optionally by kind) for lint review — spot stale/superseded entries needing attention. Contradiction surfacing lands with the T12 contradiction detector.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				scope: { type: "string" },
+				scopeRef: { type: "string" },
+				kind: {
+					type: "string",
+					enum: [
+						"entity",
+						"concept",
+						"synthesis",
+						"source",
+						"report",
+						"procedure",
+					],
+				},
+				limit: { type: "number" },
+				agentId: { type: "string" },
+			},
+			required: ["scope", "scopeRef"],
+		},
+	},
 ] as const
 
 const server = new Server(
@@ -1914,6 +2084,85 @@ export async function handleToolCall(
 			}
 			const out = await mdbrian.getJob({
 				jobId: args.jobId,
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrian_wiki_search") {
+			const out = await mdbrian.wikiSearch({
+				query: typeof args.query === "string" ? args.query : "",
+				scope: typeof args.scope === "string" ? args.scope : undefined,
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : undefined,
+				kind: typeof args.kind === "string" ? args.kind : undefined,
+				trustTier:
+					typeof args.trustTier === "string" ? args.trustTier : undefined,
+				recipe:
+					args.recipe === "fast" ||
+					args.recipe === "hybrid" ||
+					args.recipe === "deep"
+						? args.recipe
+						: undefined,
+				maxResults:
+					typeof args.maxResults === "number" ? args.maxResults : undefined,
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrian_wiki_get") {
+			const out = await mdbrian.wikiGet({
+				slug: typeof args.slug === "string" ? args.slug : "",
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
+				format:
+					args.format === "markdown" ||
+					args.format === "html" ||
+					args.format === "json"
+						? args.format
+						: undefined,
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrian_wiki_apply") {
+			const out = await mdbrian.wikiApply({
+				kind: typeof args.kind === "string" ? args.kind : "",
+				title: typeof args.title === "string" ? args.title : "",
+				slug: typeof args.slug === "string" ? args.slug : "",
+				summary: typeof args.summary === "string" ? args.summary : "",
+				body: typeof args.body === "string" ? args.body : "",
+				frontmatter: (args.frontmatter ?? {}) as {
+					type: string
+					title?: string
+					description?: string
+					resource?: string
+					tags?: string[]
+					entityTypes?: string[]
+					privacyTier?: string
+				},
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
+				trustTier: typeof args.trustTier === "string" ? args.trustTier : "",
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrian_wiki_export_okf") {
+			const out = await mdbrian.wikiExportOkf({
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
+				outDir: typeof args.outDir === "string" ? args.outDir : "",
+				okfBundleId:
+					typeof args.okfBundleId === "string" ? args.okfBundleId : undefined,
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrian_wiki_lint") {
+			const out = await mdbrian.wikiLint({
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
+				kind: typeof args.kind === "string" ? args.kind : undefined,
+				limit: typeof args.limit === "number" ? args.limit : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }

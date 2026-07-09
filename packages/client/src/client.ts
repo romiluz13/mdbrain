@@ -146,6 +146,17 @@ async function apiGet<T>(opts: MdbrianClientOptions, path: string): Promise<T> {
 	return apiFetch<T>(opts, path, { method: "GET" })
 }
 
+async function apiPatch<T>(
+	opts: MdbrianClientOptions,
+	path: string,
+	body: Record<string, unknown>,
+): Promise<T> {
+	return apiFetch<T>(opts, path, {
+		method: "PATCH",
+		body: JSON.stringify(body),
+	})
+}
+
 function q(
 	agentId?: string,
 	extra?: Record<string, string | number | undefined>,
@@ -1007,6 +1018,142 @@ export class MdbrianClient {
 			content: input.content,
 			agentId: input.agentId,
 		})
+	}
+
+	// ---------------------------------------------------------------------------
+	// Wiki (T6 MCP tools)
+	// ---------------------------------------------------------------------------
+
+	async wikiSearch(input: {
+		query: string
+		queryVector?: number[]
+		scope?: string
+		scopeRef?: string
+		kind?: string
+		trustTier?: string
+		state?: string
+		privacyTier?: string
+		recipe?: "fast" | "hybrid" | "deep"
+		maxResults?: number
+		minScore?: number
+		agentId?: string
+	}): Promise<unknown> {
+		return apiPost(this._opts, "/v1/wiki/search", {
+			query: input.query,
+			queryVector: input.queryVector,
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+			kind: input.kind,
+			trustTier: input.trustTier,
+			state: input.state,
+			privacyTier: input.privacyTier,
+			recipe: input.recipe,
+			maxResults: input.maxResults,
+			minScore: input.minScore,
+			agentId: input.agentId,
+		})
+	}
+
+	async wikiGet(input: {
+		slug: string
+		scope: string
+		scopeRef: string
+		format?: "json" | "markdown" | "html"
+		agentId?: string
+	}): Promise<unknown> {
+		const qs = new URLSearchParams({
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.format) qs.set("format", input.format)
+		if (input.agentId) qs.set("agentId", input.agentId)
+		return apiGet(this._opts, `/v1/wiki/${input.slug}?${qs}`)
+	}
+
+	async wikiApply(input: {
+		// Create or update a wiki page. When slug+scope+scopeRef match an
+		// existing page, it updates; otherwise it creates.
+		kind: string
+		title: string
+		slug: string
+		summary: string
+		body: string
+		frontmatter: {
+			type: string
+			title?: string
+			description?: string
+			resource?: string
+			tags?: string[]
+			entityTypes?: string[]
+			privacyTier?: string
+		}
+		scope: string
+		scopeRef: string
+		trustTier: string
+		agentId?: string
+	}): Promise<unknown> {
+		// Upsert: try POST (create); on 409 DUPLICATE_SLUG, fall back to PATCH
+		// (update existing page, bumps revision). Honors the create-or-update
+		// contract the tool description advertises.
+		const body = {
+			kind: input.kind,
+			title: input.title,
+			slug: input.slug,
+			summary: input.summary,
+			body: input.body,
+			frontmatter: input.frontmatter,
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+			trustTier: input.trustTier,
+			agentId: input.agentId,
+		}
+		try {
+			return await apiPost(this._opts, "/v1/wiki", body)
+		} catch (err) {
+			if (err instanceof MdbrianClientError && err.status === 409) {
+				return apiPatch(this._opts, `/v1/wiki/${input.slug}`, body)
+			}
+			throw err
+		}
+	}
+
+	async wikiExportOkf(input: {
+		scope: string
+		scopeRef: string
+		outDir: string
+		okfBundleId?: string
+		agentId?: string
+	}): Promise<unknown> {
+		return apiPost(this._opts, "/v1/wiki/okf-export", {
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+			outDir: input.outDir,
+			okfBundleId: input.okfBundleId,
+			agentId: input.agentId,
+		})
+	}
+
+	async wikiLint(input: {
+		scope: string
+		scopeRef: string
+		kind?: string
+		limit?: number
+		agentId?: string
+	}): Promise<unknown> {
+		// Lists pages for lint review. Surfaces pages needing attention for
+		// manual review. T12 contradiction detector will populate contradictions[]
+		// for a fuller lint; for now this lists pages (optionally by kind) so a
+		// human can spot stale/superseded entries. The list route accepts a state
+		// filter — we don't force one here so callers see the full picture.
+		const qs = new URLSearchParams({
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.kind) qs.set("kind", input.kind)
+		if (input.agentId) qs.set("agentId", input.agentId)
+		const limit = input.limit ?? 100
+		qs.set("limit", String(limit))
+		return apiGet(this._opts, `/v1/wiki?${qs}`)
 	}
 }
 

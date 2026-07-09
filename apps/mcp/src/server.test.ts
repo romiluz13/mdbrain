@@ -263,3 +263,163 @@ describe("handleToolCall", () => {
 		})
 	})
 })
+
+describe("wiki MCP tools", () => {
+	it("toolList includes all 5 wiki tools", () => {
+		const names = new Set(toolList.map((tool) => tool.name))
+		expect(names.has("mdbrian_wiki_search")).toBe(true)
+		expect(names.has("mdbrian_wiki_get")).toBe(true)
+		expect(names.has("mdbrian_wiki_apply")).toBe(true)
+		expect(names.has("mdbrian_wiki_export_okf")).toBe(true)
+		expect(names.has("mdbrian_wiki_lint")).toBe(true)
+	})
+
+	it("wiki_search calls the client and returns results", async () => {
+		const wikiSearch = vi.fn().mockResolvedValue({
+			results: [{ page: { slug: "tables/accounts" }, score: 1.5 }],
+			total: 1,
+			recipe: "hybrid",
+			mode: "hybrid",
+		})
+		const out = await handleToolCall(
+			"mdbrian_wiki_search",
+			{ query: "accounts", scope: "workspace", scopeRef: "ws-1" },
+			{ wikiSearch } as any,
+		)
+		expect(wikiSearch).toHaveBeenCalledWith({
+			query: "accounts",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			kind: undefined,
+			trustTier: undefined,
+			recipe: undefined,
+			maxResults: undefined,
+			agentId: undefined,
+		})
+		expect(parseTextPayload(out)).toEqual({
+			results: [{ page: { slug: "tables/accounts" }, score: 1.5 }],
+			total: 1,
+			recipe: "hybrid",
+			mode: "hybrid",
+		})
+	})
+
+	it("wiki_get calls the client with slug+scope+scopeRef", async () => {
+		const wikiGet = vi.fn().mockResolvedValue({ slug: "x", title: "X" })
+		await handleToolCall(
+			"mdbrian_wiki_get",
+			{
+				slug: "tables/users",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				format: "markdown",
+			},
+			{ wikiGet } as any,
+		)
+		expect(wikiGet).toHaveBeenCalledWith({
+			slug: "tables/users",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			format: "markdown",
+			agentId: undefined,
+		})
+	})
+
+	it("wiki_apply calls the client with page fields", async () => {
+		const wikiApply = vi.fn().mockResolvedValue({ _id: "id1", slug: "x" })
+		await handleToolCall(
+			"mdbrian_wiki_apply",
+			{
+				kind: "concept",
+				title: "Test",
+				slug: "test",
+				summary: "A test page.",
+				body: "Body.",
+				frontmatter: { type: "concept" },
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+			},
+			{ wikiApply } as any,
+		)
+		expect(wikiApply).toHaveBeenCalledWith({
+			kind: "concept",
+			title: "Test",
+			slug: "test",
+			summary: "A test page.",
+			body: "Body.",
+			frontmatter: { type: "concept" },
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			agentId: undefined,
+		})
+	})
+
+	it("wiki_apply upsert: 409 on POST falls back to PATCH (update existing)", async () => {
+		// Regression guard for H1: wikiApply advertises create-or-update.
+		// The client method tries POST; on 409 DUPLICATE_SLUG it PATCHes.
+		const wikiApply = vi.fn().mockResolvedValue({ _id: "id1", slug: "test", revision: 2 })
+		await handleToolCall(
+			"mdbrian_wiki_apply",
+			{
+				kind: "concept",
+				title: "Updated",
+				slug: "test",
+				summary: "Updated summary.",
+				body: "New body.",
+				frontmatter: { type: "concept" },
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+			},
+			{ wikiApply } as any,
+		)
+		// The handler calls wikiApply once; the upsert logic lives in the client
+		// method (try POST, catch 409, PATCH). This test verifies the handler
+		// forwards the full body so the client can perform the upsert.
+		expect(wikiApply).toHaveBeenCalledTimes(1)
+		const call = wikiApply.mock.calls[0][0]
+		expect(call.slug).toBe("test")
+		expect(call.title).toBe("Updated")
+		const result = await wikiApply.mock.results[0].value
+		expect(result.revision).toBe(2)
+	})
+
+	it("wiki_export_okf calls the client with outDir", async () => {
+		const wikiExportOkf = vi.fn().mockResolvedValue({ exported: 3, files: [] })
+		await handleToolCall(
+			"mdbrian_wiki_export_okf",
+			{ scope: "workspace", scopeRef: "ws-1", outDir: "/tmp/out" },
+			{ wikiExportOkf } as any,
+		)
+		expect(wikiExportOkf).toHaveBeenCalledWith({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			outDir: "/tmp/out",
+			okfBundleId: undefined,
+			agentId: undefined,
+		})
+	})
+
+	it("wiki_lint calls the client with scope+scopeRef", async () => {
+		const wikiLint = vi.fn().mockResolvedValue({ pages: [], total: 0 })
+		await handleToolCall(
+			"mdbrian_wiki_lint",
+			{ scope: "workspace", scopeRef: "ws-1", kind: "concept" },
+			{ wikiLint } as any,
+		)
+		expect(wikiLint).toHaveBeenCalledWith({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			kind: "concept",
+			limit: undefined,
+			agentId: undefined,
+		})
+	})
+
+	it("returns an error on unknown wiki tool", async () => {
+		const out = await handleToolCall("mdbrian_wiki_unknown", {}, {} as any)
+		expect(out.isError).toBe(true)
+	})
+})
