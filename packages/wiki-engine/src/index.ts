@@ -93,3 +93,18 @@ export {
 	checkMigrationCoverage,
 	type MigrationResult,
 } from "./wiki-migrate.js"
+
+export {
+	buildScopeFilter,
+	buildPermissionsFilter,
+	buildGovernanceFilter,
+	canPropagateCrossScope,
+	getWikiPageGoverned,
+	getWikiPageByIdGoverned,
+	graphTraversalGoverned,
+	filterPagesByGovernance,
+	countSupersededClaims,
+	type GovernanceContext,
+	type TrustTier,
+	type PrivacyTier,
+} from "./wiki-governance.js"
