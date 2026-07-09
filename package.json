@@ -31,7 +31,8 @@
 		"compare-memory-eval": "bun scripts/compare-memory-eval.ts",
 		"agent-smoke": "bun scripts/real-agent-smoke.ts",
 		"capability-stress": "bun scripts/real-capability-stress.ts",
-		"wiki:init": "bun run scripts/mdbrian-init.ts"
+		"wiki:init": "bun run scripts/mdbrian-init.ts",
+		"wiki:migrate": "bun run scripts/mdbrian-migrate.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.0",

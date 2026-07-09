@@ -41,6 +41,8 @@ export interface WikiPageInput {
 		timestamp?: Date
 		entityTypes?: string[]
 		privacyTier?: "public" | "internal" | "confidential" | "restricted"
+		// Migration provenance: "structured_mem:<id>" or "procedures:<id>".
+		migratedFrom?: string
 	}
 	claims?: WikiClaimInput[]
 	questions?: WikiQuestionInput[]
@@ -80,6 +82,8 @@ export interface WikiClaimInput {
 	supersedesClaimId?: string
 	validFrom?: Date
 	validTo?: Date
+	// Migration provenance: the structured_mem _id this claim was migrated from.
+	sourceMemId?: string
 }
 
 export interface WikiQuestionInput {
@@ -241,6 +245,7 @@ function normalizeInput(input: WikiPageInput): OptionalId<WikiPage> {
 			writerAgent: c.writerAgent,
 			derivedFrom: c.derivedFrom ?? [],
 			supersedesClaimId: c.supersedesClaimId,
+			sourceMemId: c.sourceMemId,
 			validFrom: c.validFrom ?? now,
 			validTo: c.validTo,
 			updatedAt: now,
@@ -421,6 +426,7 @@ export async function updateWikiPage(
 			writerAgent: c.writerAgent,
 			derivedFrom: c.derivedFrom ?? [],
 			supersedesClaimId: c.supersedesClaimId,
+			sourceMemId: c.sourceMemId,
 			validFrom: c.validFrom ?? now,
 			validTo: c.validTo,
 			updatedAt: now,

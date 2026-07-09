@@ -85,3 +85,11 @@ export {
 	recomputeAllBacklinks,
 	type WikiBacklink,
 } from "./wiki-backlinks.js"
+
+export {
+	migrateStructuredMem,
+	migrateProcedures,
+	migrateLegacyToWiki,
+	checkMigrationCoverage,
+	type MigrationResult,
+} from "./wiki-migrate.js"

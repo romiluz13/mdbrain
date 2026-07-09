@@ -162,6 +162,8 @@ const WIKI_PAGES_SCHEMA: Document = {
 					// OKF extensions (permitted by spec)
 					entityTypes: { bsonType: "array", items: { bsonType: "string" } },
 					privacyTier: { enum: PRIVACY_TIER_VALUES },
+					// Migration provenance: "structured_mem:<id>" or "procedures:<id>".
+					migratedFrom: { bsonType: "string" },
 				},
 			},
 
@@ -222,6 +224,8 @@ const WIKI_PAGES_SCHEMA: Document = {
 						validFrom: { bsonType: "date" },
 						validTo: { bsonType: "date" },
 						updatedAt: { bsonType: "date" },
+						// Migration provenance: the structured_mem _id this claim was migrated from.
+						sourceMemId: { bsonType: "string" },
 					},
 				},
 			},
