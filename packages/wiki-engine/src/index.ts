@@ -78,3 +78,10 @@ export {
 	generateAndWriteWikiMap,
 	type MapPointerOptions,
 } from "./wiki-map-pointer.js"
+
+export {
+	recomputeBacklinksFor,
+	recomputeBacklinksAfterChange,
+	recomputeAllBacklinks,
+	type WikiBacklink,
+} from "./wiki-backlinks.js"

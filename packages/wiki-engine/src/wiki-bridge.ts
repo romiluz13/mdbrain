@@ -17,6 +17,7 @@ import {
 	type WIKI_PAGE_STATE_VALUES,
 } from "./wiki-schema.js"
 import { renderWikiPageMarkdown, renderWikiPageHtml } from "./wiki-renderer.js"
+import { recomputeBacklinksAfterChange } from "./wiki-backlinks.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -316,6 +317,17 @@ export async function createWikiPage(
 			...doc,
 			_id: result.insertedId.toString(),
 		} as unknown as Record<string, unknown>
+		// Recompute backlinks for the targets this page now references.
+		const newTargets = (input.relationships ?? []).map((r) => r.targetPageSlug)
+		await recomputeBacklinksAfterChange(
+			handle,
+			input.slug,
+			input.scope,
+			input.scopeRef,
+			{
+				newRelationshipTargets: newTargets,
+			},
+		)
 		return toView(inserted)
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err)
@@ -429,6 +441,13 @@ export async function updateWikiPage(
 	if (patch.relationships !== undefined)
 		setFields.relationships = patch.relationships
 
+	// Fetch the old page to compute which relationship targets are being removed
+	// (so their backlinks can be cleaned).
+	const oldPage = (await coll.findOne({ slug, scope, scopeRef })) as {
+		relationships?: Array<{ targetPageSlug: string }>
+	} | null
+	const oldTargets = oldPage?.relationships?.map((r) => r.targetPageSlug) ?? []
+
 	const result = await coll.findOneAndUpdate(
 		{ slug, scope, scopeRef },
 		{ $set: setFields, $inc: { revision: 1 } },
@@ -436,6 +455,12 @@ export async function updateWikiPage(
 	)
 	const value = result?.value ?? null
 	if (!value) return undefined
+	// Recompute backlinks for gained/lost relationship targets.
+	const newTargets = (patch.relationships ?? []).map((r) => r.targetPageSlug)
+	await recomputeBacklinksAfterChange(handle, slug, scope, scopeRef, {
+		oldRelationshipTargets: oldTargets,
+		newRelationshipTargets: newTargets,
+	})
 	return toView(value as unknown as Record<string, unknown>)
 }
 
@@ -451,20 +476,26 @@ export async function deleteWikiPage(
 	opts: { hard?: boolean } = {},
 ): Promise<boolean> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
+	let deleted = false
 	if (opts.hard) {
 		const result = await coll.deleteOne({ slug, scope, scopeRef })
-		return result.deletedCount > 0
+		deleted = result.deletedCount > 0
+	} else {
+		const now = new Date()
+		const result = await coll.updateOne(
+			{ slug, scope, scopeRef, state: { $ne: "superseded" } },
+			{ $set: { state: "superseded", updatedAt: now, validTo: now } },
+		)
+		deleted = result.matchedCount > 0
 	}
-	const now = new Date()
-	const result = await coll.updateOne(
-		{ slug, scope, scopeRef, state: { $ne: "superseded" } },
-		{ $set: { state: "superseded", updatedAt: now, validTo: now } },
-	)
-	return result.matchedCount > 0
+	if (deleted) {
+		// Recompute backlinks: pages that referenced this slug lose a backlink.
+		await recomputeBacklinksAfterChange(handle, slug, scope, scopeRef, {
+			deleted: true,
+		})
+	}
+	return deleted
 }
-
-// ---------------------------------------------------------------------------
-// Rendering
 // ---------------------------------------------------------------------------
 
 /** Returns the page rendered as markdown (agent-readable). */

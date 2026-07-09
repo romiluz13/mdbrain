@@ -41,6 +41,7 @@ function mockCollection(): Collection {
 		findOneAndUpdate: vi.fn(async () => ({ value: null })),
 		updateOne: vi.fn(async () => ({ matchedCount: 0, modifiedCount: 0 })),
 		deleteOne: vi.fn(async () => ({ deletedCount: 0 })),
+		aggregate: vi.fn(() => ({ toArray: async () => [] })),
 	} as unknown as Collection
 }
 

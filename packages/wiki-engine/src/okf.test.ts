@@ -93,6 +93,7 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 		}),
 		updateOne: vi.fn(async () => ({ matchedCount: 1, modifiedCount: 1 })),
 		deleteOne: vi.fn(async () => ({ deletedCount: 1 })),
+		aggregate: vi.fn(() => ({ toArray: async () => [] })),
 	} as unknown as Collection
 	const db = { collection: vi.fn(() => coll) } as unknown as Db
 	return { db, coll }
