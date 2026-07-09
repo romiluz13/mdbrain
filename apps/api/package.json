@@ -9,13 +9,14 @@
 		"dev": "node --import tsx --watch src/server.ts",
 		"build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit false --rootDir src --outDir dist",
 		"check-types": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
-		"test": "vitest run src/app.test.ts"
+		"test": "vitest run src/"
 	},
 	"dependencies": {
 		"@hono/node-server": "^1.19.0",
 		"@mdbrian/memory-bridge": "workspace:*",
 		"hono": "^4.12.0",
-		"tsx": "^4.19.0"
+		"tsx": "^4.19.0",
+		"@mdbrian/wiki-engine": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.0",

@@ -43,10 +43,23 @@ import {
 	mdbrianBridgeWriteConversationEvent,
 	mdbrianBridgeWriteProcedure,
 	mdbrianBridgeWriteStructuredMemory,
+	mdbrianBridgeGetManager,
 	type MemoryStableHandle,
 	type ProcedureEntry,
 	type StructuredMemoryEntry,
 } from "@mdbrian/memory-bridge"
+import {
+	createWikiPage,
+	getWikiPage,
+	listWikiPages,
+	updateWikiPage,
+	deleteWikiPage,
+	renderMarkdown,
+	renderHtml,
+	getWikiDbHandle,
+	WikiDuplicateSlugError,
+	type WikiPageInput,
+} from "@mdbrian/wiki-engine"
 import { jsonError } from "../lib/errors.js"
 
 const MAX_LIST_LIMIT = 100
@@ -2058,6 +2071,261 @@ export function createV1Router(): Hono {
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "SELF_EDIT_FAILED", message)
+		}
+	})
+
+	// ---------------------------------------------------------------------------
+	// Wiki routes (/v1/wiki/*) — T3
+	// ---------------------------------------------------------------------------
+
+	async function readWikiDbHandle(agentId?: string) {
+		const manager = await mdbrianBridgeGetManager(agentId)
+		return getWikiDbHandle(manager)
+	}
+
+	// Slug may contain slashes (OKF concept IDs are file paths like
+	// "tables/users"), so routes use /wiki/* and parse the slug from the path.
+	// Robust against slugs containing the literal "/wiki/" substring and
+	// against a trailing slash.
+	function readWikiSlug(c: { req: { path: string } }): string {
+		const afterWiki = c.req.path.split("/wiki/").slice(1).join("/wiki/")
+		return (afterWiki ?? "").replace(/\/$/, "")
+	}
+
+	const WIKI_VALID_KINDS = [
+		"entity",
+		"concept",
+		"synthesis",
+		"source",
+		"report",
+		"procedure",
+	]
+	const WIKI_VALID_SCOPES = [
+		"session",
+		"user",
+		"agent",
+		"workspace",
+		"tenant",
+		"global",
+	]
+	const WIKI_VALID_TRUST_TIERS = ["restricted", "standard", "admin"]
+
+	v1.post("/wiki", async (c) => {
+		const body = (await c.req.json().catch(() => ({}))) as Record<
+			string,
+			unknown
+		>
+		const kind = String(body.kind ?? "")
+		const title = String(body.title ?? "")
+		const slug = String(body.slug ?? "")
+		const summary = String(body.summary ?? "")
+		const scope = String(body.scope ?? "")
+		const scopeRef = String(body.scopeRef ?? "")
+		const trustTier = String(body.trustTier ?? "")
+		const frontmatter = (body.frontmatter ?? {}) as Record<string, unknown>
+		if (!title.trim())
+			return jsonError(c, 400, "VALIDATION_ERROR", "title is required")
+		if (!slug.trim())
+			return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
+		if (!summary.trim())
+			return jsonError(c, 400, "VALIDATION_ERROR", "summary is required")
+		if (!WIKI_VALID_KINDS.includes(kind))
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				`kind must be one of ${WIKI_VALID_KINDS.join("|")}`,
+			)
+		if (!WIKI_VALID_SCOPES.includes(scope))
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				`scope must be one of ${WIKI_VALID_SCOPES.join("|")}`,
+			)
+		if (!scopeRef.trim())
+			return jsonError(c, 400, "VALIDATION_ERROR", "scopeRef is required")
+		if (!WIKI_VALID_TRUST_TIERS.includes(trustTier))
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				`trustTier must be one of ${WIKI_VALID_TRUST_TIERS.join("|")}`,
+			)
+		if (
+			!frontmatter ||
+			typeof frontmatter !== "object" ||
+			!String(frontmatter.type ?? "").trim()
+		)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"frontmatter.type is required (OKF)",
+			)
+		try {
+			const handle = await readWikiDbHandle(String(body.agentId ?? ""))
+			const input = body as unknown as WikiPageInput
+			const page = await createWikiPage(handle, input)
+			return c.json(page, 201)
+		} catch (err) {
+			if (err instanceof WikiDuplicateSlugError) {
+				return jsonError(c, 409, "DUPLICATE_SLUG", err.message)
+			}
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_CREATE_FAILED", message)
+		}
+	})
+
+	v1.get("/wiki", async (c) => {
+		const scope = c.req.query("scope")
+		const scopeRef = c.req.query("scopeRef")
+		const kind = c.req.query("kind")
+		const trustTier = c.req.query("trustTier")
+		const state = c.req.query("state")
+		const limit = c.req.query("limit")
+			? Number(c.req.query("limit"))
+			: undefined
+		const skip = c.req.query("skip") ? Number(c.req.query("skip")) : undefined
+		try {
+			const handle = await readWikiDbHandle(
+				String(c.req.query("agentId") ?? ""),
+			)
+			const result = await listWikiPages(handle, {
+				kind: kind ?? undefined,
+				scope: scope ?? undefined,
+				scopeRef: scopeRef ?? undefined,
+				trustTier: trustTier ?? undefined,
+				state: state ?? undefined,
+				limit: Number.isFinite(limit) ? limit : undefined,
+				skip: Number.isFinite(skip) ? skip : undefined,
+			})
+			return c.json(result)
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_LIST_FAILED", message)
+		}
+	})
+
+	v1.get("/wiki/*", async (c) => {
+		const slug = readWikiSlug(c)
+		const scope = String(c.req.query("scope") ?? "")
+		const scopeRef = String(c.req.query("scopeRef") ?? "")
+		const format = c.req.query("format")
+		if (!slug) return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef query params are required",
+			)
+		try {
+			const handle = await readWikiDbHandle(
+				String(c.req.query("agentId") ?? ""),
+			)
+			const page = await getWikiPage(handle, slug, scope, scopeRef)
+			if (!page)
+				return jsonError(
+					c,
+					404,
+					"WIKI_NOT_FOUND",
+					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
+				)
+			if (format === "html") {
+				return c.html(renderHtml(page))
+			}
+			if (format === "markdown") {
+				return c.text(renderMarkdown(page), 200, {
+					"Content-Type": "text/markdown; charset=utf-8",
+				})
+			}
+			return c.json(page)
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_GET_FAILED", message)
+		}
+	})
+
+	v1.patch("/wiki/*", async (c) => {
+		const slug = readWikiSlug(c)
+		const body = (await c.req.json().catch(() => ({}))) as Record<
+			string,
+			unknown
+		>
+		const scope = String(body.scope ?? c.req.query("scope") ?? "")
+		const scopeRef = String(body.scopeRef ?? c.req.query("scopeRef") ?? "")
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef are required",
+			)
+		try {
+			const handle = await readWikiDbHandle(
+				String(body.agentId ?? c.req.query("agentId") ?? ""),
+			)
+			const {
+				scope: _s,
+				scopeRef: _sr,
+				slug: _sl,
+				...patch
+			} = body as Record<string, unknown>
+			void _s
+			void _sr
+			void _sl
+			const updated = await updateWikiPage(
+				handle,
+				slug,
+				scope,
+				scopeRef,
+				patch as Partial<WikiPageInput>,
+			)
+			if (!updated)
+				return jsonError(
+					c,
+					404,
+					"WIKI_NOT_FOUND",
+					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
+				)
+			return c.json(updated)
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_UPDATE_FAILED", message)
+		}
+	})
+
+	v1.delete("/wiki/*", async (c) => {
+		const slug = readWikiSlug(c)
+		const scope = String(c.req.query("scope") ?? "")
+		const scopeRef = String(c.req.query("scopeRef") ?? "")
+		const hard = c.req.query("hard") === "true"
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef query params are required",
+			)
+		try {
+			const handle = await readWikiDbHandle(
+				String(c.req.query("agentId") ?? ""),
+			)
+			const deleted = await deleteWikiPage(handle, slug, scope, scopeRef, {
+				hard,
+			})
+			if (!deleted)
+				return jsonError(
+					c,
+					404,
+					"WIKI_NOT_FOUND",
+					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
+				)
+			return c.json({ ok: true, slug, scope, scopeRef, hard })
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_DELETE_FAILED", message)
 		}
 	})
 
