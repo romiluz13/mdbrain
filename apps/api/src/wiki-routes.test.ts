@@ -22,6 +22,7 @@ const wikiMocks = vi.hoisted(() => ({
 	getWikiDbHandle: vi.fn(),
 	importOkfBundle: vi.fn(),
 	exportOkfBundle: vi.fn(),
+	searchWikiPages: vi.fn(),
 }))
 
 const bridgeMocks = vi.hoisted(() => ({
@@ -46,11 +47,10 @@ vi.mock("@mdbrian/wiki-engine", () => ({
 
 vi.mock("@mdbrian/memory-bridge", () => ({
 	...bridgeMocks,
-	// Re-export the types the router imports — the mock module must satisfy
-	// the type-only imports too, but Vitest strips them at runtime.
 }))
 
 import { createApp } from "./app.js"
+import { WikiDuplicateSlugError } from "@mdbrian/wiki-engine"
 
 type WikiJson = {
 	slug?: string
@@ -174,17 +174,6 @@ describe("wiki routes", () => {
 		})
 
 		it("returns 409 on duplicate slug", async () => {
-			wikiMocks.createWikiPage.mockRejectedValue(
-				new (class extends Error {
-					slug = "tables/accounts"
-					scope = "workspace"
-					scopeRef = "ws-1"
-				})("duplicate"),
-			)
-			// Mark the error with the right name so the handler's instanceof check
-			// works — the mock throws a plain Error, so we simulate via the mocked
-			// WikiDuplicateSlugError class instead.
-			const { WikiDuplicateSlugError } = await import("@mdbrian/wiki-engine")
 			wikiMocks.createWikiPage.mockRejectedValue(
 				new WikiDuplicateSlugError("tables/accounts", "workspace", "ws-1"),
 			)
@@ -427,6 +416,72 @@ describe("wiki routes", () => {
 			})
 			expect(res.status).toBe(400)
 			expect((await asJson(res)).error?.message).toMatch(/outDir/)
+		})
+	})
+
+	describe("POST /v1/wiki/search", () => {
+		it("returns ranked results for a query", async () => {
+			wikiMocks.searchWikiPages.mockResolvedValue({
+				results: [
+					{ page: { slug: "tables/accounts" }, score: 1.5, source: "hybrid" },
+				],
+				total: 1,
+				recipe: "hybrid",
+				mode: "hybrid",
+			})
+			const res = await createApp().request("/v1/wiki/search", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					query: "accounts",
+					scope: "workspace",
+					scopeRef: "ws-1",
+				}),
+			})
+			expect(res.status).toBe(200)
+			const json = await asJson(res)
+			expect(json.total).toBe(1)
+			expect(wikiMocks.searchWikiPages).toHaveBeenCalledTimes(1)
+			const [, params] = wikiMocks.searchWikiPages.mock.calls[0]
+			expect(params.query).toBe("accounts")
+			expect(params.scope).toBe("workspace")
+		})
+
+		it("rejects missing query", async () => {
+			const res = await createApp().request("/v1/wiki/search", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			})
+			expect(res.status).toBe(400)
+			expect((await asJson(res)).error?.message).toMatch(/query is required/)
+		})
+
+		it("forwards recipe + filter params", async () => {
+			wikiMocks.searchWikiPages.mockResolvedValue({
+				results: [],
+				total: 0,
+				recipe: "fast",
+				mode: "vector-only",
+			})
+			await createApp().request("/v1/wiki/search", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					query: "x",
+					recipe: "fast",
+					kind: "concept",
+					trustTier: "standard",
+					privacyTier: "internal",
+					maxResults: 5,
+				}),
+			})
+			const [, params] = wikiMocks.searchWikiPages.mock.calls[0]
+			expect(params.recipe).toBe("fast")
+			expect(params.kind).toBe("concept")
+			expect(params.trustTier).toBe("standard")
+			expect(params.privacyTier).toBe("internal")
+			expect(params.maxResults).toBe(5)
 		})
 	})
 })

@@ -59,6 +59,7 @@ import {
 	getWikiDbHandle,
 	importOkfBundle,
 	exportOkfBundle,
+	searchWikiPages,
 	WikiDuplicateSlugError,
 	type WikiPageInput,
 } from "@mdbrian/wiki-engine"
@@ -2411,6 +2412,45 @@ export function createV1Router(): Hono {
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "OKF_EXPORT_FAILED", message)
+		}
+	})
+
+	// Wiki search (/v1/wiki/search) — T5
+	v1.post("/wiki/search", async (c) => {
+		const body = (await c.req.json().catch(() => ({}))) as Record<
+			string,
+			unknown
+		>
+		const query = String(body.query ?? "").trim()
+		if (!query)
+			return jsonError(c, 400, "VALIDATION_ERROR", "query is required")
+		try {
+			const handle = await readWikiDbHandle(String(body.agentId ?? ""))
+			const result = await searchWikiPages(handle, {
+				query,
+				queryVector: Array.isArray(body.queryVector)
+					? (body.queryVector as number[])
+					: undefined,
+				scope: body.scope ? String(body.scope) : undefined,
+				scopeRef: body.scopeRef ? String(body.scopeRef) : undefined,
+				kind: body.kind ? String(body.kind) : undefined,
+				trustTier: body.trustTier ? String(body.trustTier) : undefined,
+				state: body.state ? String(body.state) : undefined,
+				privacyTier: body.privacyTier ? String(body.privacyTier) : undefined,
+				recipe:
+					body.recipe === "fast" ||
+					body.recipe === "hybrid" ||
+					body.recipe === "deep"
+						? body.recipe
+						: undefined,
+				maxResults:
+					typeof body.maxResults === "number" ? body.maxResults : undefined,
+				minScore: typeof body.minScore === "number" ? body.minScore : undefined,
+			})
+			return c.json(result)
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_SEARCH_FAILED", message)
 		}
 	})
 

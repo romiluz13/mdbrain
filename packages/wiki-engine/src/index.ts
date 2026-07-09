@@ -60,3 +60,12 @@ export {
 	type OkfImportResult,
 	type OkfExportResult,
 } from "./okf.js"
+
+export {
+	searchWikiPages,
+	searchWikiPagesViaManager,
+	type WikiSearchRecipe,
+	type WikiSearchParams,
+	type WikiSearchResult,
+	type WikiSearchResponse,
+} from "./wiki-search.js"
