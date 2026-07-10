@@ -137,3 +137,18 @@ export {
 	type EventInput,
 	type LlmGenerateFn,
 } from "./wiki-maintenance.js"
+
+export {
+	ObsidianConnector,
+	GitHubConnector,
+	ConnectorRegistry,
+	type SourceConnector,
+	type ConnectorAuthenticateResult,
+	type ConnectorDiscoverResult,
+	type ConnectorIngestResult,
+	type ConnectorMapPermissionsResult,
+	type DiscoveredSource,
+	type IngestOpts,
+	type ObsidianConnectorConfig,
+	type GitHubConnectorConfig,
+} from "./wiki-connectors.js"
