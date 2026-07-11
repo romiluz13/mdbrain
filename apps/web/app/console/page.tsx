@@ -7,7 +7,7 @@ import { useMemo, useState } from "react"
 const defaultApi =
 	process.env.NEXT_PUBLIC_MDBRAIN_API_URL ?? "http://127.0.0.1:3847"
 
-type Tab = "overview" | "search" | "kb" | "profile" | "write"
+type Tab = "overview" | "search" | "kb" | "profile" | "write" | "wiki"
 
 type OutputState = {
 	title: string
@@ -166,6 +166,10 @@ export default function Home() {
 	const [scopeValue, setScopeValue] = useState("default")
 	const [tab, setTab] = useState<Tab>("overview")
 	const [query, setQuery] = useState("What does this user prefer?")
+	const [wikiSlug, setWikiSlug] = useState("")
+	const [wikiKind, setWikiKind] = useState("")
+	const [wikiScope, setWikiScope] = useState("workspace")
+	const [wikiScopeRef, setWikiScopeRef] = useState("default")
 	const [writeContent, setWriteContent] = useState(
 		"The user prefers concise release notes and Friday deploy windows.",
 	)
@@ -278,6 +282,28 @@ export default function Home() {
 					scopeRef: scopeValue,
 				})
 			})
+			return
+		}
+		if (tab === "wiki") {
+			// Wiki tab: if a slug is provided, get the page; otherwise list pages.
+			if (wikiSlug.trim()) {
+				await withOutput(`Wiki page: ${wikiSlug}`, async () => {
+					return await client.wikiGet({
+						slug: wikiSlug,
+						scope: wikiScope,
+						scopeRef: wikiScopeRef,
+						format: "json",
+					})
+				})
+			} else {
+				await withOutput("Wiki pages", async () => {
+					return await client.wikiLint({
+						scope: wikiScope,
+						scopeRef: wikiScopeRef,
+						kind: wikiKind || undefined,
+					})
+				})
+			}
 			return
 		}
 		await withOutput("Memory write", async () => {
@@ -483,6 +509,7 @@ export default function Home() {
 									["kb", "KB"],
 									["profile", "Profile"],
 									["write", "Write"],
+									["wiki", "Wiki"],
 								] as const
 							).map(([key, label]) => (
 								<button
@@ -520,6 +547,41 @@ export default function Home() {
 									}}
 								/>
 							</Field>
+						)}
+
+						{tab === "wiki" && (
+							<>
+								<Field label="Page slug (leave empty to list all pages)">
+									<input
+										value={wikiSlug}
+										onChange={(e) => setWikiSlug(e.target.value)}
+										placeholder="e.g. tables/users or entities/fact/my-fact"
+										style={{ ...fieldStyle, marginBottom: 14 }}
+									/>
+								</Field>
+								<Field label="Kind filter (optional, for list view)">
+									<input
+										value={wikiKind}
+										onChange={(e) => setWikiKind(e.target.value)}
+										placeholder="entity, concept, procedure, source, synthesis, report"
+										style={{ ...fieldStyle, marginBottom: 14 }}
+									/>
+								</Field>
+								<Field label="Scope">
+									<input
+										value={wikiScope}
+										onChange={(e) => setWikiScope(e.target.value)}
+										style={{ ...fieldStyle, marginBottom: 14 }}
+									/>
+								</Field>
+								<Field label="Scope Ref">
+									<input
+										value={wikiScopeRef}
+										onChange={(e) => setWikiScopeRef(e.target.value)}
+										style={{ ...fieldStyle, marginBottom: 14 }}
+									/>
+								</Field>
+							</>
 						)}
 
 						<div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
