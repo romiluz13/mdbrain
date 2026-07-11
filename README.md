@@ -50,12 +50,14 @@ git clone https://github.com/romiluz13/mdbrian.git
 cd mdbrian
 bun install
 
-# Start MongoDB (Atlas Local Preview with mongot)
-docker compose -f docker/docker-compose.yml up -d
+# Start MongoDB (Atlas Local Preview with mongot for Atlas Search + Vector Search)
+docker compose -f docker/mongodb/docker-compose.preview.yml up -d
 export MDBRAIN_MONGODB_URI="mongodb://127.0.0.1:27017/?directConnection=true"
 export MDBRAIN_API_KEY="local-dev-secret"
+# Optional: Atlas Model API key for auto-embeddings (al-... prefix)
+export VOYAGE_API_KEY="al-your-atlas-model-api-key"
 
-# Start the API
+# Start the API (Hono server on port 3847)
 cd apps/api && bun run dev
 ```
 
@@ -162,6 +164,41 @@ Five MCP tools for agent access to the wiki:
 - `mdbrian_wiki_export_okf` — export pages as OKF bundle
 - `mdbrian_wiki_lint` — list pages + unresolved contradictions
 
+### Start the MCP server
+
+```bash
+export MDBRAIN_API_URL="http://127.0.0.1:3847"
+export MDBRAIN_API_KEY="local-dev-secret"
+cd apps/mcp && bun run start
+```
+
+Connect from any MCP-compatible agent (Claude Desktop, Cursor, etc.) by pointing
+it at the MCP server's stdio or HTTP transport.
+
+## CLI
+
+```bash
+# Generate a wiki-map pointer block in AGENTS.md + CLAUDE.md
+bun run wiki:init -- --scope workspace --scopeRef default
+
+# Migrate existing structured_mem + procedures to wiki_pages
+bun run wiki:migrate -- --scope workspace --scopeRef default
+
+# Dry-run migration (no writes)
+bun run wiki:migrate -- --dry-run
+```
+
+## Web Console
+
+```bash
+cd apps/web && bun run dev
+# Open http://localhost:3040 → Console tab → Wiki tab
+```
+
+The web console wiki tab lets you browse pages (filterable by kind), view full
+page details (claims, contradictions, questions, relationships, backlinks), and
+search.
+
 ## Packages
 
 | Package | Description |
@@ -175,6 +212,16 @@ Five MCP tools for agent access to the wiki:
 | `@mdbrian/api` | Hono HTTP API server |
 | `@mdbrian/mcp` | MCP server (5 wiki + existing memory tools) |
 | `@mdbrian/web` | Next.js web console (wiki browsing tab) |
+
+## Environment Variables
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `MDBRAIN_MONGODB_URI` | Yes | MongoDB connection string (local or Atlas) |
+| `MDBRAIN_API_KEY` | Yes | API authentication key (any string for local dev) |
+| `MDBRAIN_API_URL` | MCP only | URL of the MDBrain API server (default: `http://127.0.0.1:3847`) |
+| `MDBRAIN_AGENT_ID` | Optional | Default agent ID (default: `"default"`) |
+| `VOYAGE_API_KEY` | Optional | Atlas Model API key for auto-embeddings (`al-...` prefix) |
 
 ## Architecture
 
