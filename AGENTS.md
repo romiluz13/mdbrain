@@ -1,6 +1,6 @@
 # Mdbrain Repository Guidelines
 
-- Repo: https://github.com/romiluz13/mdbrain
+- Repo: <https://github.com/romiluz13/mdbrain>
 - In chat replies, file references must be repo-root relative only (example: `packages/memory-engine/src/mongodb-manager.ts:80`); never absolute paths or `~/...`.
 
 ## Project Structure
@@ -16,6 +16,7 @@ mdbrain/
   packages/
     memory-engine/   Core MongoDB memory: embeddings, graph, episodes, search, KB, analytics
     memory-bridge/   Stable facade for the engine used by apps
+    wiki-engine/      LLM wiki: wiki_pages, OKF, search, governance, maintenance, connectors
     mdbrain-memory/  Published re-export package
     client/          TypeScript HTTP client SDK
     tools/           AI SDK tool helpers
@@ -48,6 +49,7 @@ mdbrain/
 
 - `@mdbrain/memory-engine` -- core engine
 - `@mdbrain/memory-bridge` -- facade
+- `@mdbrain/wiki-engine` -- LLM wiki engine (wiki_pages, OKF, search, governance)
 - `@mdbrain/client` -- HTTP client SDK
 - `@mdbrain/tools` -- AI SDK tools
 - `@mdbrain/lib` -- shared utilities (private)
@@ -59,6 +61,8 @@ mdbrain/
 - Group related changes; avoid bundling unrelated refactors.
 
 ## Security
+
+<!-- scar: 2026-07-12 — MongoDB $jsonSchema validators reject undefined-valued fields. normalizeInput in wiki-bridge.ts must NOT set optional fields to undefined — use conditional spread (only when the value is truthy). Setting embedding: undefined when the schema says bsonType: 'array' causes 'Document failed validation' on every insert. -->
 
 - Never commit secrets. Use environment variables (`MDBRAIN_MONGODB_URI`, `MDBRAIN_API_KEY`, etc.).
 - Never publish real connection strings, API keys, or personal data in code or docs.
