@@ -13,9 +13,9 @@
 
 <p align="center">
   <a href="#why">Why</a> ·
-  <a href="#quickstart">Quickstart</a> ·
   <a href="#why-mongodb">Why MongoDB</a> ·
   <a href="#comparison">Comparison</a> ·
+  <a href="#quickstart">Quickstart</a> ·
   <a href="#architecture">Architecture</a>
 </p>
 
@@ -25,13 +25,92 @@
 
 Andrej Karpathy said it best: instead of retrieving chunks at query time (RAG), an LLM should build and maintain a **persistent, interlinked, pre-synthesized knowledge layer** that compounds over time. That's an LLM wiki.
 
-The problem? Every existing solution is either:
+Every existing solution is either:
 
 - **File-based** (OpenWiki, OKF) — no search, no governance, no scale, no concurrency
 - **Bolt-on memory** (Mem0, Letta) — no wiki structure, no contradiction detection, no governance
 - **Graph-only** (Graphiti, Zep) — no document model, no hybrid search, complex infrastructure
 
-MDBrain is the first to combine the wiki paradigm with a real database substrate. Wiki pages hold claims, evidence, contradictions, questions, relationships, and backlinks — all backed by MongoDB Atlas hybrid search, governance gates, and LLM-driven self-maintenance.
+MDBrain is the first to combine the wiki paradigm with a real database substrate. Wiki pages hold claims, evidence, contradictions, questions, relationships, and backlinks — all backed by MongoDB Atlas hybrid search, graph traversal, governance gates, and LLM-driven self-maintenance.
+
+## Why MongoDB
+
+This is the core architectural decision. Here's the argument.
+
+**Postgres is a relational database with vectors bolted on. MongoDB Atlas is an AI data platform built for this.**
+
+### One platform. One pipeline. Zero sync tax
+
+The alt stack for an AI wiki is 5+ systems: a vector store for embeddings, a keyword search engine for full-text, a graph database for relationships, a custom merge layer to combine results, an external reranker API, and a sync pipeline to keep everything consistent. Every component is a failure point and a sync lag.
+
+MongoDB runs all of it in one aggregation pipeline:
+
+```
+db.wiki_pages.aggregate([
+  { $vectorSearch: { ... } },     // semantic search (auto-embedded via Voyage AI)
+  { $search: { ... } },           // full-text search (BM25)
+  { $rankFusion: { ... } },       // hybrid scoring, server-side
+  { $graphLookup: { ... } },      // multi-hop relationship traversal
+  { $limit: 10 }
+])
+```
+
+One query. One round trip. No stitching. No stale vectors from sync lag.
+
+### The synchronization tax is the killer
+
+With a separate vector store, you must keep two systems in sync — operational data in your DB, embeddings in the vector store. MongoDB puts vectors and operational JSON in the **same document, same transaction**. When an agent learns a new fact, the document and its embedding update atomically. No stale vectors. No hallucinations from desynchronized state.
+
+**Auto-embeddings eliminate the pipeline.** MDBrain defines a `text` field on every wiki page (title + summary + body). Atlas auto-generates embeddings via Voyage AI (`voyage-4-large`). No app-side embedding code. No batch jobs. No rate-limit management. When a page is updated, Atlas re-embeds only the changed text. Query with plain natural language — no pre-computed query vectors.
+
+### The document model is the natural shape of a wiki
+
+A wiki page IS a document: title, summary, body, nested claims with evidence, arrays of questions, relationships to other pages, backlinks, person cards. In Postgres, this is 5+ tables with JOINs on every read. In MongoDB, it's one document. No JOINs. No serialization tax. No `ALTER TABLE` locks when the schema evolves.
+
+MDBrain's wiki schema evolved 20+ times during development with zero migration windows. In Postgres, every new field is an `ALTER TABLE` that holds an exclusive lock during backfill — a maintenance window agents can't wait for.
+
+### Graph traversal, natively
+
+Wiki pages are nodes. Relationships are directed edges. Backlinks are reverse edges. MDBrain's wiki IS a graph — and MongoDB traverses it natively with `$graphLookup`.
+
+The GraphRAG pattern: `$vectorSearch` finds seed pages semantically → `$graphLookup` traverses relationships multi-hop → the LLM gets graph-enriched context, not just flat chunks. This reduces hallucinations by giving the agent a structured map of how concepts connect.
+
+For wiki relationship graphs (page → related page → related page), 1-3 hops is exactly the range MongoDB's `$graphLookup` is optimized for. No Neo4j. No separate graph database.
+
+### Built once. Runs anywhere
+
+Same APIs across Atlas cloud, self-managed, edge, and local dev. MDBrain uses Atlas Local Preview (`docker compose -f docker/mongodb/docker-compose.preview.yml up -d`) — the exact same `mongot` + Atlas Search engine runs on your laptop as in production. No vendor lock-in. No "works on cloud, breaks locally."
+
+| Capability | PostgreSQL + pgvector | MongoDB Atlas |
+| --- | --- | --- |
+| **Auto-embeddings** | External orchestration (Python workers, LangChain pipelines) | Native. `autoEmbed` field, Atlas handles chunking, embedding, delta detection, sync. Zero pipeline code. |
+| **Hybrid search** | Manual union of `tsvector` + pgvector, app-side merging | `$rankFusion` — full-text + vector in one aggregation, server-side scoring |
+| **Graph traversal** | Recursive CTEs (complex, limited) or separate graph DB | `$graphLookup` — multi-hop traversal in the same pipeline as search |
+| **Document model** | Normalized tables + JOINs for wiki structure | One document per page. Nested claims, arrays of evidence, embedded relationships. No JOINs. |
+| **Schema evolution** | `ALTER TABLE` holds exclusive lock during backfill | Add a field at write time. Zero downtime. Zero migration. |
+| **Sync tax** | Vectors in sidecar table, must sync with operational data | Vectors and operational data in same document, same transaction |
+| **Local dev parity** | pgvector needs separate install, different behavior | Atlas Local Preview runs same engine locally |
+
+**Real adopters running MongoDB for AI:** Zomato (50% monthly growth, $10B scale), Novo Nordisk, Factory, Mercor, Financial Times (1M+ daily hybrid searches). MongoDB re-accelerated to ~25% revenue growth in 2026, driven by AI workloads.
+
+## Comparison
+
+| Feature | OpenWiki | Mem0 / Letta | Graphiti / Zep | **MDBrain** |
+| --- | --- | --- | --- | --- |
+| **Paradigm** | File-based wiki | Bolt-on memory | Graph memory | **Database-backed wiki** |
+| **Storage** | File-system markdown | Postgres + pgvector | Neo4j / FalkorDB | **MongoDB Atlas** |
+| **Hybrid search** | Planned | Partial | Graph traversal | **$vectorSearch + $search + $rankFusion** |
+| **Graph traversal** | None | None | Native (Neo4j) | **$graphLookup (native MongoDB)** |
+| **Auto-embeddings** | None | App-side | App-side | **Native (Voyage AI via Atlas)** |
+| **OKF interchange** | In progress | None | None | **Import + export round-trip** |
+| **Governance** | None | None | None | **Scope, trust tiers, permissions** |
+| **Contradiction detection** | None | ADD-only bias (stores contradictions) | None | **Cross-page, runs before dedup** |
+| **Self-maintenance** | Scheduled runs | Reactive | Reactive | **Git-diff + Dreamer 5-phase** |
+| **MCP tools** | Planned | None | None | **5 tools shipped** |
+| **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **6 (Obsidian, GitHub, Confluence, Notion, Slack, CRM)** |
+| **Web console** | None (CLI only) | None | None | **Next.js wiki browser** |
+| **Backlinks** | None | None | Graph edges | **Auto-computed from relationships** |
+| **Supersession audit** | None | None | None | **Retained, not deleted** |
 
 ## Quickstart
 
@@ -81,45 +160,6 @@ Install the client SDK:
 npm install @mdbrain/client @mdbrain/wiki-engine
 ```
 
-## Why MongoDB
-
-This is the core architectural decision. Here's the argument:
-
-**Postgres is a relational database with vectors bolted on. MongoDB Atlas is an AI data platform built for this.**
-
-| Capability | PostgreSQL + pgvector | MongoDB Atlas |
-| --- | --- | --- |
-| **Auto-embeddings** | Requires external orchestration (Python workers, LangChain pipelines) | Native. Define a field as `autoEmbed`, Atlas handles chunking, embedding, delta detection, sync. Zero pipeline code. |
-| **Hybrid search** | Manual union of `tsvector` + pgvector results, app-side merging | `$rankFusion` — full-text + vector in one aggregation query, server-side scoring |
-| **Document model** | Normalized tables + JOINs for wiki structure (claims, evidence, questions, relationships, backlinks) | One document per wiki page. Nested claims, arrays of evidence, embedded relationships. No JOINs. |
-| **Synchronization tax** | Vectors in separate sidecar table, must sync with operational data | Vectors and operational data in the same document, same transaction. No stale vectors. |
-| **Workload isolation** | Vector queries compete with OLTP on the same process | Dedicated Search Nodes — vector queries don't compete with writes |
-| **Local dev parity** | pgvector needs separate install, different behavior than cloud | Atlas Local Preview runs the exact same mongot + Atlas Search engine locally |
-
-**The synchronization tax is the killer.** With a separate vector store, you must keep two systems in sync — operational data in your DB, embeddings in the vector store. MongoDB puts vectors and operational JSON in the same collection, same transaction. When an agent learns a new fact, the document and its embedding update atomically. No stale vectors. No hallucinations from desynchronized state.
-
-**Auto-embeddings eliminate the pipeline.** MDBrain defines a `text` field on every wiki page (title + summary + body). Atlas auto-generates embeddings via Voyage AI (`voyage-4-large`). No app-side embedding code. No batch jobs. No rate-limit management. When a page is updated, Atlas re-embeds only the changed text. Query with plain natural language — no pre-computed query vectors.
-
-**Real adopters:** Zomato (50% monthly growth, scaled to $10B), Novo Nordisk, Factory, Mercor, Financial Times (1M+ daily hybrid searches). MongoDB re-accelerated to ~25% revenue growth in 2026, driven by AI workloads.
-
-## Comparison
-
-| Feature | OpenWiki | Mem0 / Letta | Graphiti / Zep | **MDBrain** |
-| --- | --- | --- | --- | --- |
-| **Paradigm** | File-based wiki | Bolt-on memory | Graph memory | **Database-backed wiki** |
-| **Storage** | File-system markdown | Postgres + pgvector | Neo4j / FalkorDB | **MongoDB Atlas** |
-| **Hybrid search** | Planned | Partial | Graph traversal | **$vectorSearch + $search + $rankFusion** |
-| **Auto-embeddings** | None | App-side | App-side | **Native (Voyage AI via Atlas)** |
-| **OKF interchange** | In progress | None | None | **Import + export round-trip** |
-| **Governance** | None | None | None | **Scope, trust tiers, permissions** |
-| **Contradiction detection** | None | ADD-only bias (stores contradictions) | None | **Cross-page, runs before dedup** |
-| **Self-maintenance** | Scheduled runs | Reactive | Reactive | **Git-diff + Dreamer 5-phase** |
-| **MCP tools** | Planned | None | None | **5 tools shipped** |
-| **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **6 (Obsidian, GitHub, Confluence, Notion, Slack, CRM)** |
-| **Web console** | None (CLI only) | None | None | **Next.js wiki browser** |
-| **Backlinks** | None | None | Graph edges | **Auto-computed from relationships** |
-| **Supersession audit** | None | None | None | **Retained, not deleted** |
-
 ## Architecture
 
 ```
@@ -141,8 +181,8 @@ CRM        ──┘                       │               │
                                       │               │
                               ┌───────┴───────┐       │
                               │ Hybrid Search │       │
-                              │ $vectorSearch │       │
-                              │ $search       │       │
+                              │ $vectorSearch │  $graphLookup
+                              │ $search       │  (multi-hop)  │
                               │ $rankFusion   │       │
                               └───────────────┘       │
                                       │               │
@@ -158,9 +198,11 @@ CRM        ──┘                       │               │
 
 **Hybrid search** — Atlas Vector Search (semantic, auto-embedded via Voyage AI) + Atlas Search (full-text, lucene.standard) combined via `$rankFusion` with reciprocal rank fusion scoring. One query, server-side scoring, no app-side merging.
 
+**Graph traversal** — `$graphLookup` traverses wiki relationships multi-hop in the same aggregation pipeline as search. The GraphRAG pattern: semantic retrieval finds seed pages, `$graphLookup` expands their relationships, the LLM gets graph-enriched context. Wiki pages are nodes, relationships are edges, backlinks are reverse edges.
+
 **OKF interchange** — Import and export [Google's Open Knowledge Format](https://groundingpage.com/facts/open-knowledge-format/) bundles. MDBrain's internal schema is richer than OKF; OKF is a strict-subset projection for interoperability.
 
-**Governance** — Implements the arXiv:2606.24535 governance primitives: scoped retrieval (scope + scopeRef enforced on every read path), trust tiers (restricted / standard / admin), permissions (allowedRoles + allowedDepartments + privacyTier), and supersession audit trail.
+**Governance** — Implements the arXiv:2606.24535 governance primitives: scoped retrieval (scope + scopeRef enforced on every read path), trust tiers (restricted / standard / admin), permissions (allowedRoles + allowedDepartments + privacyTier), and supersession audit trail. Governance is native to the database query layer, not app-side checks.
 
 **Contradiction detection** — Cross-page contradictions are detected BEFORE dedup/near-duplicate gating (prevents the arXiv pipeline-ordering bug). Contradictions are recorded, surfaced via `wiki_lint`, and can be resolved (newest_wins, authority_wins, human_escalation).
 
@@ -210,8 +252,8 @@ Browse pages (filterable by kind), view full page details (claims, contradiction
 
 | Package | Description |
 | --- | --- |
-| `@mdbrain/wiki-engine` | Wiki pages schema, CRUD, OKF, search, governance, maintenance, connectors |
-| `@mdbrain/memory-engine` | MongoDB memory manager (events, episodes, structured_mem, entities) |
+| `@mdbrain/wiki-engine` | Wiki pages schema, CRUD, OKF, search, graph traversal, governance, maintenance, connectors |
+| `@mdbrain/memory-engine` | MongoDB memory manager (events, episodes, structured_mem, entities, graph) |
 | `@mdbrain/memory-bridge` | Bridge layer (config resolution, manager lifecycle) |
 | `@mdbrain/client` | TypeScript HTTP client (wiki + memory methods) |
 | `@mdbrain/tools` | AI SDK tools |
@@ -235,6 +277,7 @@ Browse pages (filterable by kind), view full page details (claims, contradiction
 - **[LangChain OpenWiki](https://github.com/langchain-ai/openwiki)** — LLM-maintained code wiki, git-diff incremental updates
 - **[Google Open Knowledge Format](https://groundingpage.com/facts/open-knowledge-format/)** — Vendor-neutral concept-per-page interchange format
 - **[arXiv:2606.24535](https://arxiv.org/abs/2606.24535)** — "Governed Shared Memory for Multi-Agent LLM Systems" (governance primitives)
+- **[MongoDB Five Pillars](https://mdb-five-pillars.demo-portal.mongoarena.com/)** — One data platform, built for AI, trustworthy by default
 - **[John Underwood](https://github.com/JohnGUnderwood/mdb-community-search)** — MongoDB docker stack foundation
 - **Andrej Karpathy** — The LLM wiki idea that started all of this
 
