@@ -25,6 +25,12 @@ import {
 
 export type WikiSearchRecipe = "fast" | "hybrid" | "deep"
 
+/** Rerank function signature — receives the query and candidate docs, returns reranked docs with updated scores. */
+export type WikiRerankFn = (
+	query: string,
+	docs: Array<{ text: string; score: number }>,
+) => Promise<Array<{ text: string; score: number }>>
+
 interface RecipeConfig {
 	recipe: WikiSearchRecipe
 	maxResults: number
@@ -81,12 +87,16 @@ export interface WikiSearchParams {
 	maxResults?: number
 	minScore?: number
 	agentId?: string // not used for filtering; reserved for future per-agent perms
+	/** When provided, re-ranks search results using a cross-encoder (e.g. Voyage rerank-2.5). */
+	rerank?: WikiRerankFn
+	/** When provided, expands search results with related pages via relationship graph traversal. */
+	graphExpansion?: { maxDepth?: number; crossScope?: boolean }
 }
 
 export interface WikiSearchResult {
 	page: WikiPageView
 	score: number
-	source: "vector" | "text" | "hybrid"
+	source: "vector" | "text" | "hybrid" | "graph"
 }
 
 export interface WikiSearchResponse {
@@ -260,6 +270,61 @@ async function hybridSearch(
 }
 
 // ---------------------------------------------------------------------------
+// Graph expansion: traverse relationships[] to find related pages
+// ---------------------------------------------------------------------------
+
+/** BFS over wiki page relationships, mirroring $graphLookup behavior but
+ *  in-application so we can apply governance filters and avoid deep
+ *  traversal limits. Returns related pages not already in the result set. */
+async function expandGraph(
+	handle: WikiDbHandle,
+	searchResults: WikiSearchResult[],
+	params: WikiSearchParams,
+	prefilter: Document,
+): Promise<WikiPageView[]> {
+	const coll = wikiPagesCollection(handle.db, handle.prefix)
+	const maxDepth = params.graphExpansion?.maxDepth ?? 1
+	const maxExpansion = 20 // cap to avoid unbounded expansion
+
+	const startSlugs = searchResults.map((r) => r.page.slug)
+	const visited = new Set(startSlugs)
+	const result: WikiPageView[] = []
+	// Start BFS from the relationships already in the search results.
+	const queue: Array<{ slug: string; depth: number }> = []
+	for (const r of searchResults) {
+		for (const rel of (r.page.relationships ?? []) as Array<{
+			targetPageSlug?: string
+		}>) {
+			if (rel.targetPageSlug && !visited.has(rel.targetPageSlug)) {
+				queue.push({ slug: rel.targetPageSlug, depth: 0 })
+			}
+		}
+	}
+
+	while (queue.length > 0 && result.length < maxExpansion) {
+		const { slug, depth } = queue.shift()!
+		if (visited.has(slug) || depth >= maxDepth) continue
+		visited.add(slug)
+		const relatedPage = (await coll.findOne({
+			$and: [{ slug }, prefilter],
+		})) as Document | null
+		if (!relatedPage) continue
+		result.push(toView(relatedPage))
+		if (depth + 1 < maxDepth) {
+			const rels = (relatedPage.relationships ?? []) as Array<{
+				targetPageSlug?: string
+			}>
+			for (const rel of rels) {
+				if (rel.targetPageSlug && !visited.has(rel.targetPageSlug)) {
+					queue.push({ slug: rel.targetPageSlug, depth: depth + 1 })
+				}
+			}
+		}
+	}
+	return result
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -279,7 +344,49 @@ export async function searchWikiPages(
 		return { results: [], total: 0, recipe, mode: cfg.mode }
 	}
 
-	const results = await hybridSearch(handle, params, cfg, prefilter)
+	let results = await hybridSearch(handle, params, cfg, prefilter)
+
+	// Reranking: cross-encoder re-ranks search results (e.g. Voyage rerank-2.5).
+	// Mirrors memory-engine's rerankResults pattern (mongodb-manager.ts:2644).
+	if (params.rerank && results.length > 1) {
+		try {
+			const docs = results.map((r) => ({
+				text: `${r.page.title} ${r.page.summary} ${r.page.body}`,
+				score: r.score,
+			}))
+			const reranked = await params.rerank(params.query, docs)
+			// Reorder results to match reranked order, update scores.
+			results = results.map((r, i) => ({
+				...r,
+				score: reranked[i]?.score ?? r.score,
+			}))
+		} catch {
+			// Reranking failure → keep original results (never crash search)
+		}
+	}
+
+	// Graph expansion: traverse relationships[] to find related pages.
+	// Uses BFS over wiki relationships (same graph as $graphLookup would traverse).
+	if (params.graphExpansion && results.length > 0) {
+		try {
+			const expanded = await expandGraph(handle, results, params, prefilter)
+			// Merge expanded pages, avoiding duplicates from search results.
+			const existingSlugs = new Set(results.map((r) => r.page.slug))
+			for (const page of expanded) {
+				if (!existingSlugs.has(page.slug)) {
+					results.push({
+						page,
+						score: 0, // graph-expanded pages have no search score
+						source: "graph",
+					})
+					existingSlugs.add(page.slug)
+				}
+			}
+		} catch {
+			// Graph expansion failure → keep search results only
+		}
+	}
+
 	return {
 		results,
 		total: results.length,

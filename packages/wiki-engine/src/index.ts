@@ -67,6 +67,7 @@ export {
 	type WikiSearchRecipe,
 	type WikiSearchParams,
 	type WikiSearchResult,
+	type WikiRerankFn,
 	type WikiSearchResponse,
 } from "./wiki-search.js"
 

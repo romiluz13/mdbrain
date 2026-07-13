@@ -198,3 +198,153 @@ describe("searchWikiPages", () => {
 		expect(limitStage?.$limit).toBe(100)
 	})
 })
+
+describe("searchWikiPages with reranking", () => {
+	it("reorders results when rerankFn is provided", async () => {
+		// Mock that returns 2 docs so reranking has multiple candidates
+		const coll = {
+			collectionName: "test_wiki_pages",
+			aggregate: vi.fn(() => ({
+				toArray: async () => [
+					{
+						_id: { toString: () => "id1" },
+						kind: "concept", title: "Accounts", slug: "tables/accounts",
+						aliases: [], summary: "s", body: "b",
+						frontmatter: { type: "table" }, claims: [], contradictions: [],
+						questions: [], relationships: [], personCard: null,
+						scope: "workspace", scopeRef: "ws-1", trustTier: "standard",
+						permissions: {}, state: "active", revision: 1,
+						validFrom: new Date(), freshness: "fresh", backlinks: [],
+						createdAt: new Date(), updatedAt: new Date(),
+						searchScore: 1.5,
+					},
+					{
+						_id: { toString: () => "id2" },
+						kind: "concept", title: "Orders", slug: "tables/orders",
+						aliases: [], summary: "s2", body: "b2",
+						frontmatter: { type: "table" }, claims: [], contradictions: [],
+						questions: [], relationships: [], personCard: null,
+						scope: "workspace", scopeRef: "ws-1", trustTier: "standard",
+						permissions: {}, state: "active", revision: 1,
+						validFrom: new Date(), freshness: "fresh", backlinks: [],
+						createdAt: new Date(), updatedAt: new Date(),
+						searchScore: 0.8,
+					},
+				],
+			})),
+		} as unknown as Collection
+		const db = { collection: vi.fn(() => coll) } as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const rerankFn = vi.fn(
+			async (_query: string, docs: Array<{ text: string; score: number }>) => {
+				return [...docs].reverse().map((d, i) => ({ ...d, score: 1 - i * 0.1 }))
+			},
+		)
+		const res = await searchWikiPages(h, {
+			query: "accounts",
+			rerank: rerankFn,
+		})
+		expect(rerankFn).toHaveBeenCalledTimes(1)
+		expect(rerankFn.mock.calls[0][0]).toBe("accounts")
+		expect(res.results.length).toBe(2)
+	})
+
+	it("does not call rerankFn when results are empty", async () => {
+		const coll = {
+			aggregate: vi.fn(() => ({
+				toArray: async () => [],
+			})),
+		} as unknown as Collection
+		const db = { collection: vi.fn(() => coll) } as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const rerankFn = vi.fn(async () => [])
+		const res = await searchWikiPages(h, {
+			query: "x",
+			rerank: rerankFn,
+		})
+		expect(rerankFn).not.toHaveBeenCalled()
+		expect(res.results).toEqual([])
+	})
+})
+
+describe("searchWikiPages with graph expansion", () => {
+	it("appends related pages when graphExpansion is enabled", async () => {
+		// Mock that returns a page with a relationship, then the related page
+		const _findOneCallCount = { count: 0 }
+		const coll = {
+			collectionName: "test_wiki_pages",
+			aggregate: vi.fn(() => ({
+				toArray: async () => [
+					{
+						_id: { toString: () => "id1" },
+						kind: "concept",
+						title: "Accounts",
+						slug: "tables/accounts",
+						aliases: [],
+						summary: "s",
+						body: "b",
+						frontmatter: { type: "table" },
+						claims: [],
+						contradictions: [],
+						questions: [],
+						relationships: [{ targetPageSlug: "tables/orders" }],
+						personCard: null,
+						scope: "workspace",
+						scopeRef: "ws-1",
+						trustTier: "standard",
+						permissions: {},
+						state: "active",
+						revision: 1,
+						validFrom: new Date(),
+						freshness: "fresh",
+						backlinks: [],
+						createdAt: new Date(),
+						updatedAt: new Date(),
+						searchScore: 1.5,
+					},
+				],
+			})),
+			findOne: vi.fn(async (filter: Record<string, unknown>) => {
+				_findOneCallCount.count++
+				const andArray = (filter.$and ?? []) as Array<Record<string, unknown>>
+				const slug = (andArray[0]?.slug ?? filter.slug) as string
+				if (slug === "tables/orders") {
+					return {
+						_id: { toString: () => "id-orders" },
+						slug: "tables/orders",
+						kind: "concept",
+						title: "Orders",
+						summary: "Order data",
+						body: "# Orders",
+						frontmatter: { type: "table" },
+						claims: [],
+						contradictions: [],
+						questions: [],
+						relationships: [],
+						personCard: null,
+						scope: "workspace",
+						scopeRef: "ws-1",
+						trustTier: "standard",
+						permissions: {},
+						state: "active",
+						revision: 1,
+						validFrom: new Date(),
+						freshness: "fresh",
+						backlinks: [],
+					}
+				}
+				return null
+			}),
+		} as unknown as Collection
+		const db = { collection: vi.fn(() => coll) } as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const res = await searchWikiPages(h, {
+			query: "accounts",
+			graphExpansion: { maxDepth: 1 },
+		})
+		// Should have the original result + the expanded related page
+		expect(res.results.length).toBe(2)
+		expect(res.results.some((r) => r.page.slug === "tables/orders")).toBe(true)
+		expect(res.results.some((r) => r.source === "graph")).toBe(true)
+	})
+})
