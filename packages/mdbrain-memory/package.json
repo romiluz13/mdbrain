@@ -37,7 +37,8 @@
 		"@mdbrain/memory-bridge": "1.1.0"
 	},
 	"devDependencies": {
-		"typescript": "^5.8.0"
+		"typescript": "^5.8.0",
+		"@types/node": "^22.10.0"
 	},
 	"homepage": "https://github.com/romiluz13/mdbrain#readme",
 	"bugs": {

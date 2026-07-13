@@ -7,6 +7,10 @@
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md"
+	],
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -21,9 +25,12 @@
 	"dependencies": {
 		"@mdbrain/memory-engine": "workspace:*",
 		"@mdbrain/lib": "workspace:*",
-		"js-yaml": "^4.1.0"
+		"js-yaml": "^4.1.0",
+		"mongodb": "^7.0.0"
 	},
 	"devDependencies": {
-		"@types/js-yaml": "^4.0.9"
+		"@types/js-yaml": "^4.0.9",
+		"@types/node": "^22.10.0",
+		"vitest": "^4.1.0"
 	}
 }

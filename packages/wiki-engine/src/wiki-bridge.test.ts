@@ -84,6 +84,24 @@ describe("createWikiPage", () => {
 		void inserted
 	})
 
+	it("sets the text field = title + summary + body for auto-embedding", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		await createWikiPage(h, VALID_INPUT)
+		const doc = (coll.insertOne as unknown as ReturnType<typeof vi.fn>).mock
+			.calls[0][0]
+		expect(doc.text).toContain(VALID_INPUT.title)
+		expect(doc.text).toContain(VALID_INPUT.summary)
+		expect(doc.text).toContain(VALID_INPUT.body)
+	})
+
+	it("strips text + embedding from the API view", async () => {
+		const h = handle()
+		const page = await createWikiPage(h, VALID_INPUT)
+		expect(page).not.toHaveProperty("text")
+		expect(page).not.toHaveProperty("embedding")
+	})
+
 	it("generates and stores an embedding when an embed hook is provided", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
@@ -170,6 +188,35 @@ describe("updateWikiPage", () => {
 		const q = update.$set.questions[0]
 		expect(q.status).toBe("open")
 		expect(q.createdAt).toBeInstanceOf(Date)
+	})
+
+	it("recomputes text field when title/summary/body is patched", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		// Mock findOne to return an existing page with old title/body.
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			title: "Old Title",
+			summary: "old summary",
+			body: "old body",
+			claims: [],
+			relationships: [],
+		})
+		await updateWikiPage(h, "x", "workspace", "ws-1", {
+			summary: "new summary",
+		})
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		// text must be recomputed from old title + new summary + old body
+		expect(update.$set.text).toContain("Old Title")
+		expect(update.$set.text).toContain("new summary")
+		expect(update.$set.text).toContain("old body")
+		expect(update.$set.text).not.toContain("old summary")
 	})
 
 	it("updateWikiPage preserves existing claims when adding new ones (no data loss)", async () => {

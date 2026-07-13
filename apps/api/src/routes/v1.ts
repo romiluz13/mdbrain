@@ -2429,9 +2429,6 @@ export function createV1Router(): Hono {
 			const handle = await readWikiDbHandle(String(body.agentId ?? ""))
 			const result = await searchWikiPages(handle, {
 				query,
-				queryVector: Array.isArray(body.queryVector)
-					? (body.queryVector as number[])
-					: undefined,
 				scope: body.scope ? String(body.scope) : undefined,
 				scopeRef: body.scopeRef ? String(body.scopeRef) : undefined,
 				kind: body.kind ? String(body.kind) : undefined,

@@ -142,6 +142,8 @@ export interface WikiPage extends WikiPageInput {
 		context?: string
 	}>
 	embedding?: number[]
+	// Auto-embed text field: title + summary + body (for Atlas Voyage AI)
+	text?: string
 	createdAt: Date
 	updatedAt: Date
 }
@@ -213,10 +215,11 @@ export function getWikiDbHandle(manager: unknown): WikiDbHandle {
 // ---------------------------------------------------------------------------
 
 function toView(doc: Record<string, unknown>): WikiPageView {
-	const { _id, embedding, ...rest } = doc as Record<string, unknown> & {
+	const { _id, embedding, text, ...rest } = doc as Record<string, unknown> & {
 		_id: { toString(): string }
 	}
 	void embedding // omitted from the view
+	void text // internal auto-embed field, not exposed via API
 	const out: Record<string, unknown> = { _id: _id.toString(), ...rest }
 	for (const dateField of [
 		"validFrom",
@@ -295,6 +298,10 @@ function normalizeInput(input: WikiPageInput): OptionalId<WikiPage> {
 		validFrom: now,
 		freshness: "fresh",
 		backlinks: [],
+		// Auto-embed text field: MongoDB Atlas generates embeddings via Voyage
+		// AI from this field. Concatenation of title + summary + body (mirrors
+		// memory-engine autoEmbedVectorField("text") pattern).
+		text: `${input.title} ${input.summary} ${input.body}`,
 		createdAt: now,
 		updatedAt: now,
 		// Optional fields — only set when they have values (avoids MongoDB
@@ -462,6 +469,24 @@ export async function updateWikiPage(
 	}
 	if (patch.relationships !== undefined)
 		setFields.relationships = patch.relationships
+
+	// Recompute the auto-embed text field when title/summary/body changes.
+	// Uses merged old + new values so partial patches still produce correct text.
+	if (
+		patch.title !== undefined ||
+		patch.summary !== undefined ||
+		patch.body !== undefined
+	) {
+		const oldPageForText = (await coll.findOne({ slug, scope, scopeRef })) as {
+			title?: string
+			summary?: string
+			body?: string
+		} | null
+		const mergedTitle = patch.title ?? oldPageForText?.title ?? ""
+		const mergedSummary = patch.summary ?? oldPageForText?.summary ?? ""
+		const mergedBody = patch.body ?? oldPageForText?.body ?? ""
+		setFields.text = `${mergedTitle} ${mergedSummary} ${mergedBody}`
+	}
 
 	// Fetch the old page to compute which relationship targets are being removed
 	// (so their backlinks can be cleaned).

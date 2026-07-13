@@ -279,19 +279,19 @@ describe("ensureWikiSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("WIKI_PAGES_SEARCH_INDEX_TARGETS", () => {
-	it("vector target has embedding field with numDimensions + similarity", () => {
+	it("vector target has autoEmbed field with voyage model", () => {
 		const fields = WIKI_PAGES_SEARCH_INDEX_TARGETS.vector.definition
 			.fields as Array<{
 			type: string
 			path?: string
-			numDimensions?: number
-			similarity?: string
+			modality?: string
+			model?: string
 		}>
-		const vectorField = fields.find((f) => f.type === "vector")
-		expect(vectorField).toBeDefined()
-		expect(vectorField!.path).toBe("embedding")
-		expect(vectorField!.numDimensions).toBe(1024)
-		expect(vectorField!.similarity).toBe("cosine")
+		const autoEmbedField = fields.find((f) => f.type === "autoEmbed")
+		expect(autoEmbedField).toBeDefined()
+		expect(autoEmbedField!.path).toBe("text")
+		expect(autoEmbedField!.modality).toBe("text")
+		expect(autoEmbedField!.model).toBe("voyage-4-large")
 	})
 
 	it("vector target includes governance filter axes", () => {

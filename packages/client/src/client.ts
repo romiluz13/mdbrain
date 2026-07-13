@@ -1026,7 +1026,6 @@ export class MdbrainClient {
 
 	async wikiSearch(input: {
 		query: string
-		queryVector?: number[]
 		scope?: string
 		scopeRef?: string
 		kind?: string
@@ -1040,7 +1039,6 @@ export class MdbrainClient {
 	}): Promise<unknown> {
 		return apiPost(this._opts, "/v1/wiki/search", {
 			query: input.query,
-			queryVector: input.queryVector,
 			scope: input.scope,
 			scopeRef: input.scopeRef,
 			kind: input.kind,

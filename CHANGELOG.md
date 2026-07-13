@@ -15,6 +15,14 @@ All notable changes to Mdbrain will be documented in this file.
 - Web console wiki browsing tab.
 - Stress test script (`bun run stress-test`).
 
+### Changed
+
+- Wiki search migrated from pre-computed `queryVector` to MongoDB Atlas
+  auto-embeddings via Voyage AI (`voyage-4-large`). The `queryVector` parameter
+  is removed from `WikiSearchParams`, `@mdbrain/client` `wikiSearch()`, and the
+  `/v1/wiki/search` route. Wiki pages now auto-embed from a derived `text` field
+  (title + summary + body) — no app-side embedding required.
+
 ### Fixed
 
 - Wiki schema initialization: `mdbrainBridgeGetManager` now calls

@@ -344,9 +344,9 @@ Sources (git repo, Obsidian vault, Confluence, Notion, Slack, CRM, conversations
 
 All research underpinning this design is in `docs/research/llm-wiki/`:
 
-- `01-landscape.out` — category landscape (Karpathy, OpenWiki, OKF, Mem0, Letta, Graphiti, Cognee, GraphRAG, LightRAG, Glean, Notion AI)
-- `02-github-code.out` — code-level analysis of 10+ OSS repos
-- `03-youtube.out` — YouTube coverage (architectures, pain points, MongoDB perception gap)
+- `raw/01-landscape.out` — category landscape (Karpathy, OpenWiki, OKF, Mem0, Letta, Graphiti, Cognee, GraphRAG, LightRAG, Glean, Notion AI)
+- `raw/02-github-code.out` — code-level analysis of 10+ OSS repos
+- `raw/03-youtube.out` — YouTube coverage (architectures, pain points, MongoDB perception gap)
 - `04-mongodb-why.md` — the one-system MongoDB argument (semantic+structured+temporal in one consistency boundary)
 - `05-codebase.md` — mdbrain existing-impl recon
 - `06-commercial.md` — Memclaw/Qontext/mybrains.ai/factory.ai verification

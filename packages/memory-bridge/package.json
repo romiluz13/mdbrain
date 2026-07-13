@@ -41,7 +41,9 @@
 	"devDependencies": {
 		"@mdbrain/tools": "workspace:*",
 		"typescript": "^5.8.0",
-		"vitest": "^4.1.0"
+		"vitest": "^4.1.0",
+		"@types/node": "^22.10.0",
+		"@mdbrain/client": "workspace:*"
 	},
 	"homepage": "https://github.com/romiluz13/mdbrain#readme",
 	"bugs": {

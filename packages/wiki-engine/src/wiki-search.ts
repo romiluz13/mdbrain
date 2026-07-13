@@ -71,7 +71,6 @@ function recipeDefaults(
 
 export interface WikiSearchParams {
 	query: string
-	queryVector?: number[] | null
 	scope?: string
 	scopeRef?: string
 	kind?: string
@@ -122,18 +121,21 @@ function buildVectorStage(
 	cfg: RecipeConfig,
 	prefilter: Document,
 ): Document | null {
-	if (!params.queryVector || params.queryVector.length === 0) return null
+	// Auto-embed mode: MongoDB Atlas generates the query embedding via
+	// Voyage AI from the query text. No pre-computed queryVector needed.
+	// Mirrors memory-engine buildVectorSearchStage (mongodb-search.ts:496-503).
+	if (!params.query || !params.query.trim()) return null
 	const numCandidates = Math.max(
 		cfg.maxResults * cfg.numCandidatesMultiplier,
 		100,
 	)
 	return {
 		index: WIKI_PAGES_SEARCH_INDEX_TARGETS.vector.name,
-		path: "embedding",
-		queryVector: params.queryVector,
+		query: { text: params.query },
+		model: "voyage-4-large",
+		path: "text",
 		numCandidates,
 		limit: cfg.maxResults * 4,
-		// $vectorSearch filter accepts MQL-style pre-filter on indexed filter paths.
 		filter: prefilter,
 	}
 }
@@ -160,10 +162,11 @@ function buildTextCompound(query: string, prefilter: Document): Document {
 }
 
 function toView(doc: Document): WikiPageView {
-	const { _id, embedding, ...rest } = doc as Record<string, unknown> & {
+	const { _id, embedding, text, ...rest } = doc as Record<string, unknown> & {
 		_id: { toString(): string }
 	}
 	void embedding
+	void text
 	const out: Record<string, unknown> = { _id: _id.toString(), ...rest }
 	for (const dateField of [
 		"validFrom",

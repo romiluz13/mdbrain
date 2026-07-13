@@ -288,7 +288,7 @@ export class MongoDBRelevanceRuntime {
 			return "degraded"
 		}
 		const topScore = results[0]?.score ?? 0
-		if (topScore < 0.2 || Boolean(fallbackPath)) {
+		if (topScore < 0.2 || fallbackPath) {
 			return "degraded"
 		}
 		return "ok"

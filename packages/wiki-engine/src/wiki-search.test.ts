@@ -69,19 +69,20 @@ describe("searchWikiPages", () => {
 		expect(res.total).toBe(0)
 	})
 
-	it("uses vector-only mode for the 'fast' recipe when a queryVector is provided", async () => {
+	it("uses vector-only mode for the 'fast' recipe (auto-embed)", async () => {
 		const captured: Document[][] = []
 		const { db } = mockDb({ push: (p) => captured.push(p) })
 		const h: WikiDbHandle = { db, prefix: "test_" }
 		await searchWikiPages(h, {
 			query: "accounts",
-			queryVector: [0.1, 0.2],
 			recipe: "fast",
 		})
 		expect(captured.length).toBe(1)
-		// First stage should be $vectorSearch (vector-only).
+		// First stage should be $vectorSearch (vector-only, auto-embed).
 		expect(captured[0][0]).toHaveProperty("$vectorSearch")
-		expect(captured[0][0].$vectorSearch.queryVector).toEqual([0.1, 0.2])
+		expect(captured[0][0].$vectorSearch.query).toEqual({ text: "accounts" })
+		expect(captured[0][0].$vectorSearch.model).toBe("voyage-4-large")
+		expect(captured[0][0].$vectorSearch.path).toBe("text")
 		// No $rankFusion in vector-only mode.
 		const hasRankFusion = captured[0].some((s) => "$rankFusion" in s)
 		expect(hasRankFusion).toBe(false)
@@ -93,33 +94,20 @@ describe("searchWikiPages", () => {
 		expect(addFields?.$addFields?.searchScore?.$meta).toBe("vectorSearchScore")
 	})
 
-	it("uses text-only mode when no queryVector is provided", async () => {
-		const captured: Document[][] = []
-		const { db } = mockDb({ push: (p) => captured.push(p) })
-		const h: WikiDbHandle = { db, prefix: "test_" }
-		await searchWikiPages(h, { query: "accounts", recipe: "hybrid" })
-		expect(captured[0][0]).toHaveProperty("$search")
-		const hasRankFusion = captured[0].some((s) => "$rankFusion" in s)
-		expect(hasRankFusion).toBe(false)
-		// Score extraction must use searchScore for the $search (text-only) branch.
-		const addFields = captured[0].find((s) => "$addFields" in s) as
-			| { $addFields: { searchScore?: { $meta: string } } }
-			| undefined
-		expect(addFields?.$addFields?.searchScore?.$meta).toBe("searchScore")
-	})
-
-	it("uses $rankFusion for hybrid mode when a queryVector is provided", async () => {
+	it("uses $rankFusion for hybrid mode (auto-embed vector + text)", async () => {
 		const captured: Document[][] = []
 		const { db } = mockDb({ push: (p) => captured.push(p) })
 		const h: WikiDbHandle = { db, prefix: "test_" }
 		await searchWikiPages(h, {
 			query: "accounts",
-			queryVector: [0.1, 0.2, 0.3],
 			recipe: "hybrid",
 		})
 		expect(captured[0][0]).toHaveProperty("$rankFusion")
 		const pipelines = captured[0][0].$rankFusion.input.pipelines
 		expect(pipelines.vector[0]).toHaveProperty("$vectorSearch")
+		expect(pipelines.vector[0].$vectorSearch.query).toEqual({
+			text: "accounts",
+		})
 		expect(pipelines.text[0]).toHaveProperty("$search")
 		// $rankFusion must enable scoreDetails and the pipeline must extract
 		// the fused score from $meta:"scoreDetails" → .value (regression guard
@@ -140,7 +128,6 @@ describe("searchWikiPages", () => {
 		const h: WikiDbHandle = { db, prefix: "test_" }
 		await searchWikiPages(h, {
 			query: "x",
-			queryVector: [0.1],
 			recipe: "fast",
 			scope: "workspace",
 			scopeRef: "ws-1",
@@ -166,7 +153,6 @@ describe("searchWikiPages", () => {
 		const h: WikiDbHandle = { db, prefix: "test_" }
 		await searchWikiPages(h, {
 			query: "x",
-			queryVector: [0.1],
 			recipe: "hybrid",
 			scope: "tenant",
 			scopeRef: "t-1",
@@ -194,7 +180,7 @@ describe("searchWikiPages", () => {
 		} as unknown as Collection
 		const db = { collection: vi.fn(() => coll) } as unknown as Db
 		const h: WikiDbHandle = { db, prefix: "test_" }
-		const res = await searchWikiPages(h, { query: "x", queryVector: [0.1] })
+		const res = await searchWikiPages(h, { query: "x" })
 		expect(res.results).toEqual([])
 		expect(res.total).toBe(0)
 	})
@@ -205,7 +191,6 @@ describe("searchWikiPages", () => {
 		const h: WikiDbHandle = { db, prefix: "test_" }
 		await searchWikiPages(h, {
 			query: "x",
-			queryVector: [0.1],
 			maxResults: 500,
 		})
 		// The final $limit should be 100 (capped).

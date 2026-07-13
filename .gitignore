@@ -35,6 +35,10 @@ artifacts/
 .cursor/
 archive/
 
+# Loop engine scratch files
+.loop-*
+*.loop-*
+
 # Docker runtime
 docker/mongodb/.runtime/
 
