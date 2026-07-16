@@ -1718,7 +1718,7 @@ describe("detectCapabilities", () => {
 	it("detects fusion stages from buildInfo version when available", async () => {
 		const db = {
 			admin: vi.fn(() => ({
-				command: vi.fn(async () => ({ versionArray: [8, 2, 0, 0] })),
+				command: vi.fn(async () => ({ versionArray: [8, 3, 0, 0] })),
 			})),
 			collection: vi.fn(() => ({
 				listSearchIndexes: vi.fn(() => ({
@@ -1730,6 +1730,25 @@ describe("detectCapabilities", () => {
 		const caps = await detectCapabilities(db, "test_chunks")
 		expect(caps.rankFusion).toBe(true)
 		expect(caps.scoreFusion).toBe(true)
+		expect(caps.vectorSearch).toBe(true)
+		expect(caps.textSearch).toBe(true)
+	})
+
+	it("does not enable scoreFusion below MongoDB 8.3 GA", async () => {
+		const db = {
+			admin: vi.fn(() => ({
+				command: vi.fn(async () => ({ versionArray: [8, 2, 0, 0] })),
+			})),
+			collection: vi.fn(() => ({
+				listSearchIndexes: vi.fn(() => ({
+					toArray: vi.fn(async () => []),
+				})),
+			})),
+		} as unknown as Db
+
+		const caps = await detectCapabilities(db, "test_chunks")
+		expect(caps.rankFusion).toBe(true) // rankFusion GA is 8.0
+		expect(caps.scoreFusion).toBe(false) // scoreFusion GA is 8.3, not 8.2
 		expect(caps.vectorSearch).toBe(true)
 		expect(caps.textSearch).toBe(true)
 	})

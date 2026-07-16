@@ -3723,7 +3723,7 @@ export async function detectCapabilities(
 		const buildInfo = await db.admin().command({ buildInfo: 1 })
 		const versionArray = (buildInfo as { versionArray?: unknown }).versionArray
 		result.rankFusion = hasServerVersionAtLeast(versionArray, 8, 0)
-		result.scoreFusion = hasServerVersionAtLeast(versionArray, 8, 2)
+		result.scoreFusion = hasServerVersionAtLeast(versionArray, 8, 3)
 	} catch {
 		try {
 			await db

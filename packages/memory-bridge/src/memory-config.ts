@@ -49,10 +49,9 @@ export function buildMdbrainConfig(
 	const filePath = resolveMdbrainConfigFilePath(env)
 	const fromFile = readMdbrainJsonFile(filePath)
 
-	const uriFromEnv =
-		env.MDBRAIN_MONGODB_URI?.trim() || env.MDBRAIN_FORCE_MONGODB_URI?.trim()
+	const forceUri = env.MDBRAIN_FORCE_MONGODB_URI?.trim()
 	const uriFromFile = fromFile?.memory?.mongodb?.uri?.trim()
-	const uri = uriFromEnv || uriFromFile
+	const uri = forceUri || uriFromFile || env.MDBRAIN_MONGODB_URI?.trim()
 	const collectionPrefixFromEnv = env.MDBRAIN_MONGODB_COLLECTION_PREFIX?.trim()
 
 	const mergedMongo: MemoryConfig["mongodb"] = {

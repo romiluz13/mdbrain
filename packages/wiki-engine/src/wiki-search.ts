@@ -18,6 +18,9 @@ import {
 	type WikiDbHandle,
 	type WikiPageView,
 } from "./wiki-bridge.js"
+import { createSubsystemLogger } from "@mdbrain/lib"
+
+const log = createSubsystemLogger("wiki:search")
 
 // ---------------------------------------------------------------------------
 // Recipe profiles (fast/hybrid/deep) — mirrors memory-engine SearchRecipe.
@@ -254,7 +257,14 @@ async function hybridSearch(
 	// Native $rerank stage (MongoDB 8.3+, Public Preview June 2026).
 	// Runs server-side in the aggregation pipeline — no app-side HTTP round trip.
 	// Per MongoDB docs: { $rerank: { query: "text", model: "rerank-2.5", top_k: N } }
+	//
+	// The $rerank stage is tracked by index so that on an unsupported server
+	// (pre-8.3 or no Preview) we can retry the aggregation WITHOUT it, returning
+	// unranked results instead of blanking the entire search. See the catch
+	// block below — do NOT let a rerank-only failure collapse all results.
+	let rerankStageIndex = -1
 	if (params.nativeRerank) {
+		rerankStageIndex = pipeline.length
 		pipeline.push({
 			$rerank: {
 				query: params.query,
@@ -265,9 +275,8 @@ async function hybridSearch(
 	}
 	pipeline.push({ $limit: cfg.maxResults })
 
-	try {
-		const docs = await coll.aggregate(pipeline).toArray()
-		return docs.map((doc) => ({
+	const mapResults = (docs: Document[]): WikiSearchResult[] =>
+		docs.map((doc) => ({
 			page: toView(doc as Document),
 			score: typeof doc.searchScore === "number" ? doc.searchScore : 0,
 			source:
@@ -277,8 +286,30 @@ async function hybridSearch(
 						? "text"
 						: "hybrid",
 		}))
-	} catch {
-		// Search indexes unavailable (no mongot) or pipeline error → empty.
+
+	try {
+		const docs = await coll.aggregate(pipeline).toArray()
+		return mapResults(docs)
+	} catch (err) {
+		// If $rerank was requested but the server doesn't support it (MongoDB
+		// 8.3+ Public Preview), the whole aggregation throws. Retry without the
+		// $rerank stage so callers still get unranked results instead of an
+		// empty set. Do NOT blank the entire search for a rerank-only failure.
+		if (rerankStageIndex >= 0) {
+			const msg = err instanceof Error ? err.message : String(err)
+			log.warn(
+				`$rerank stage failed (${msg}); retrying wiki search without rerank`,
+			)
+			const withoutRerank = pipeline.filter((_, i) => i !== rerankStageIndex)
+			try {
+				const docs = await coll.aggregate(withoutRerank).toArray()
+				return mapResults(docs)
+			} catch {
+				// Search indexes genuinely unavailable (no mongot) → empty.
+				return []
+			}
+		}
+		// No rerank was requested → this is a genuine search-index failure.
 		return []
 	}
 }

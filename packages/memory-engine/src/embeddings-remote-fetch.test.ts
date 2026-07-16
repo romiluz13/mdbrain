@@ -32,7 +32,11 @@ describe("fetchRemoteEmbeddingVectors", () => {
 			errorPrefix: "embedding fetch failed",
 		})
 
-		expect(vectors).toEqual([[0.1, 0.2], [], [0.3]])
+		// Vectors are now L2-normalized by fetchRemoteEmbeddingVectors
+		expect(vectors[0][0]).toBeCloseTo(0.4472135954999579)
+		expect(vectors[0][1]).toBeCloseTo(0.8944271909999159)
+		expect(vectors[1]).toEqual([])
+		expect(vectors[2]).toEqual([1])
 		expect(postJsonMock).toHaveBeenCalledWith(
 			expect.objectContaining({
 				url: "https://memory.example/v1/embeddings",

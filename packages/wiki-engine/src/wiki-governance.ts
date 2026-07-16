@@ -12,7 +12,7 @@
 //
 // T10.
 
-import type { Document, Filter } from "mongodb"
+import { ObjectId, type Document, type Filter } from "mongodb"
 import { wikiPagesCollection } from "./wiki-schema.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 
@@ -135,8 +135,9 @@ export async function getWikiPageByIdGoverned(
 ): Promise<Document | null> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const filter = buildGovernanceFilter(ctx, opts)
+	const _id = ObjectId.isValid(id) ? new ObjectId(id) : id
 	return coll.findOne({
-		$and: [{ _id: id as unknown as Document }, filter],
+		$and: [{ _id }, filter] as Filter<Document>[],
 	})
 }
 

@@ -38,6 +38,14 @@ archive/
 # Loop engine scratch files
 .loop-*
 *.loop-*
+.loop-*.md
+.loop-ref-*.txt
+
+# Audit scratch (local-only)
+docs/audit/
+
+# Pi subagent scratch
+.pi-subagents/
 
 # Docker runtime
 docker/mongodb/.runtime/

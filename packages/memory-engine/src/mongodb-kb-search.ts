@@ -3,15 +3,15 @@ import {
 	type MemoryMongoDBEmbeddingMode,
 	createSubsystemLogger,
 } from "@mdbrain/lib"
-import { summarizeExplain } from "./mongodb-relevance.js"
 import type { DetectedCapabilities } from "./mongodb-schema.js"
 import {
 	buildVectorSearchStage,
 	MONGODB_MAX_NUM_CANDIDATES,
 	runSearchAggregateWithRetry,
-	splitAtlasSearchFilter,
 	type SearchExplainOptions,
+	splitAtlasSearchFilter,
 } from "./mongodb-search.js"
+import { summarizeExplain } from "./mongodb-relevance.js"
 import type { MemorySearchResult } from "./types.js"
 
 const log = createSubsystemLogger("memory:mongodb:kb-search")
@@ -35,11 +35,9 @@ function toKBSearchResult(doc: Document): MemorySearchResult {
 	}
 }
 
-function normalizeKBFilter(raw?: {
-	tags?: string[]
-	category?: string
-	source?: string
-}): { tags?: string[]; category?: string; source?: string } | null {
+function normalizeKBFilter(
+	raw: { tags?: string[]; category?: string; source?: string } | undefined,
+): { tags?: string[]; category?: string; source?: string } | null {
 	if (!raw) {
 		return null
 	}
@@ -60,7 +58,7 @@ function normalizeKBFilter(raw?: {
 
 async function resolveKBChunkFilter(params: {
 	kbDocs?: Collection
-	filter?: { tags?: string[]; category?: string; source?: string }
+	filter: { tags?: string[]; category?: string; source?: string } | undefined
 }): Promise<Document | undefined> {
 	const normalized = normalizeKBFilter(params.filter)
 	if (!normalized) {
@@ -72,7 +70,6 @@ async function resolveKBChunkFilter(params: {
 		)
 		return undefined
 	}
-
 	const kbDocFilter: Document = {}
 	if (normalized.tags?.length) {
 		kbDocFilter.tags = { $all: normalized.tags }
@@ -83,7 +80,6 @@ async function resolveKBChunkFilter(params: {
 	if (normalized.source) {
 		kbDocFilter["source.type"] = normalized.source
 	}
-
 	// Keep this bounded to avoid oversized $in filters.
 	const docs = await params.kbDocs
 		.find(kbDocFilter, { projection: { _id: 1 } })
@@ -150,6 +146,13 @@ export async function searchKB(
 			})
 
 			if (vsStage) {
+				// Hybrid KB search via $rankFusion (RRF). Mirrors the memory-engine
+				// pattern at mongodb-search.ts:861-893: scoreDetails:true exposes
+				// the fused score under the "scoreDetails" $meta keyword, then we
+				// project score: "$scoreDetails.value". Do NOT use
+				// $meta:"searchScore" here — that is the Atlas $search key, not the
+				// $rankFusion key, and would collapse every result's score to 0
+				// (silently dropping all results past the minScore filter).
 				const pipeline: Document[] = [
 					{
 						$rankFusion: {
@@ -171,9 +174,12 @@ export async function searchKB(
 									],
 								},
 							},
+							combination: { weights: { vector: 1, text: 1 } },
+							scoreDetails: true,
 						},
 					},
 					{ $limit: opts.maxResults },
+					{ $addFields: { scoreDetails: { $meta: "scoreDetails" } } },
 					{
 						$project: {
 							_id: 0,
@@ -183,7 +189,7 @@ export async function searchKB(
 							text: 1,
 							docId: 1,
 							updatedAt: 1,
-							score: { $meta: "searchScore" },
+							score: "$scoreDetails.value",
 						},
 					},
 				]
