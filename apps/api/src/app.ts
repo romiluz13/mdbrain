@@ -289,7 +289,63 @@ export function registerGracefulShutdown(
 export function createApp(): Hono {
 	const app = new Hono()
 
-	app.use("/*", cors())
+	const corsOrigins = process.env.MDBRAIN_API_CORS_ORIGINS?.trim()
+	app.use(
+		"/*",
+		cors(
+			corsOrigins
+				? { origin: corsOrigins.split(",").map((o) => o.trim()) }
+				: {},
+		),
+	)
+
+	// Simple in-memory rate limiter (per-IP, sliding window).
+	// No external deps — sufficient for single-instance dev/small-scale deploy.
+	// Configure via MDBRAIN_API_RATE_LIMIT_MAX (default 100) and
+	// MDBRAIN_API_RATE_LIMIT_WINDOW_MS (default 60000). Set MAX=0 to disable.
+	// IP resolution: when MDBRAIN_API_TRUST_PROXY=true, trusts X-Forwarded-For
+	// (for deployments behind a reverse proxy that overwrites the header).
+	// Default: uses x-real-ip or "unknown" — does NOT trust X-Forwarded-For
+	// to prevent header-spoofing bypass of the rate limit.
+	const rateLimitWindowMs = Number(
+		process.env.MDBRAIN_API_RATE_LIMIT_WINDOW_MS ?? 60_000,
+	)
+	const rateLimitMax = Number(process.env.MDBRAIN_API_RATE_LIMIT_MAX ?? 100)
+	const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+
+	app.use("/v1/*", async (c, next) => {
+		if (rateLimitMax <= 0) {
+			await next()
+			return
+		}
+		const trustProxy = process.env.MDBRAIN_API_TRUST_PROXY === "true"
+		const ip = trustProxy
+			? (c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+				c.req.header("x-real-ip") ??
+				"unknown")
+			: (c.req.header("x-real-ip") ?? "unknown")
+		const now = Date.now()
+		const entry = rateLimitMap.get(ip)
+		if (!entry || now > entry.resetAt) {
+			rateLimitMap.set(ip, { count: 1, resetAt: now + rateLimitWindowMs })
+			await next()
+			return
+		}
+		entry.count++
+		if (entry.count > rateLimitMax) {
+			c.header("Retry-After", String(Math.ceil((entry.resetAt - now) / 1000)))
+			return c.json(
+				{
+					error: {
+						code: "RATE_LIMITED",
+						message: "Rate limit exceeded. Try again later.",
+					},
+				},
+				429,
+			)
+		}
+		await next()
+	})
 
 	const token = process.env.MDBRAIN_API_KEY?.trim()
 	const scopedPolicies = parseScopedApiKeyPolicies()
@@ -317,6 +373,14 @@ export function createApp(): Hono {
 			await next()
 		})
 	} else if (!unauthenticatedApiWarningEmitted) {
+		const isProduction =
+			process.env.NODE_ENV === "production" ||
+			process.env.MDBRAIN_ENV === "production"
+		if (isProduction) {
+			throw new Error(
+				"MDBRAIN_API_KEY is not set and MDBRAIN_API_SCOPED_KEYS is empty. Refusing to start in production mode with unauthenticated /v1 routes. Set MDBRAIN_API_KEY or MDBRAIN_API_SCOPED_KEYS, or set NODE_ENV=development.",
+			)
+		}
 		unauthenticatedApiWarningEmitted = true
 		console.warn(
 			"WARNING: MDBRAIN_API_KEY is not set and MDBRAIN_API_SCOPED_KEYS is empty; /v1 routes are unauthenticated. Use only for trusted local development.",

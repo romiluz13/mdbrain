@@ -1,5 +1,6 @@
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
+import { redactSecrets } from "@mdbrain/lib"
 
 export type ApiErrorBody = {
 	error: {
@@ -18,5 +19,8 @@ export function jsonError(
 	code: string,
 	message: string,
 ) {
-	return c.json(apiErrorJson(code, message), status)
+	// Redact secrets (MongoDB URIs, API keys, bearer tokens) from error
+	// messages before returning to clients. Internal errors often contain
+	// connection strings or driver diagnostics that must not leak.
+	return c.json(apiErrorJson(code, redactSecrets(message)), status)
 }
