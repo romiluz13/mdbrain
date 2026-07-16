@@ -124,5 +124,5 @@ export async function assertPublicHostname(hostname: string): Promise<void> {
 }
 
 export const defaultSsrfPolicy: SsrFPolicy = {
-	allowPrivateNetwork: true,
+	allowPrivateNetwork: false,
 }
