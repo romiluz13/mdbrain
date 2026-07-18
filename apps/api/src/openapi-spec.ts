@@ -2483,6 +2483,345 @@ export const openApiSpec = {
 				},
 			},
 		},
+		"/v1/self-edit": {
+			post: {
+				summary: "Edit an agent self-edit block (user, persona, instructions)",
+				requestBody: {
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: ["block", "content"],
+								properties: {
+									block: {
+										type: "string",
+										enum: ["user", "persona", "instructions"],
+									},
+									action: {
+										type: "string",
+										enum: ["append", "replace", "prepend"],
+									},
+									content: { type: "string" },
+									agentId: { type: "string" },
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"200": { description: "Self-edit result" },
+					"400": { description: "Validation error" },
+					"500": { description: "Self-edit failed" },
+				},
+			},
+		},
+		"/v1/wiki": {
+			post: {
+				summary: "Create a wiki page",
+				requestBody: {
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: ["kind", "title", "slug", "scope", "scopeRef"],
+								properties: {
+									kind: { type: "string" },
+									title: { type: "string" },
+									slug: { type: "string" },
+									summary: { type: "string" },
+									body: { type: "string" },
+									frontmatter: { type: "object" },
+									scope: { type: "string" },
+									scopeRef: { type: "string" },
+									trustTier: { type: "string" },
+									agentId: { type: "string" },
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"201": { description: "Wiki page created" },
+					"409": { description: "Duplicate slug" },
+					"400": { description: "Validation error" },
+				},
+			},
+			get: {
+				summary: "List wiki pages",
+				parameters: [
+					{
+						name: "scope",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scopeRef",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{ name: "kind", in: "query", schema: { type: "string" } },
+					{ name: "state", in: "query", schema: { type: "string" } },
+					{ name: "limit", in: "query", schema: { type: "integer" } },
+					{ name: "agentId", in: "query", schema: { type: "string" } },
+				],
+				responses: { "200": { description: "Wiki page list" } },
+			},
+		},
+		"/v1/wiki/{slug}": {
+			get: {
+				summary: "Get a wiki page by slug",
+				parameters: [
+					{
+						name: "slug",
+						in: "path",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scope",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scopeRef",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "format",
+						in: "query",
+						schema: {
+							type: "string",
+							enum: ["json", "markdown", "html"],
+						},
+					},
+					{ name: "agentId", in: "query", schema: { type: "string" } },
+				],
+				responses: {
+					"200": { description: "Wiki page" },
+					"404": { description: "Wiki page not found" },
+				},
+			},
+			patch: {
+				summary: "Update a wiki page by slug (bumps revision)",
+				parameters: [
+					{
+						name: "slug",
+						in: "path",
+						required: true,
+						schema: { type: "string" },
+					},
+				],
+				requestBody: {
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: ["scope", "scopeRef"],
+								properties: {
+									kind: { type: "string" },
+									title: { type: "string" },
+									summary: { type: "string" },
+									body: { type: "string" },
+									frontmatter: { type: "object" },
+									scope: { type: "string" },
+									scopeRef: { type: "string" },
+									trustTier: { type: "string" },
+									agentId: { type: "string" },
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"200": { description: "Wiki page updated" },
+					"404": { description: "Wiki page not found" },
+				},
+			},
+			delete: {
+				summary:
+					"Delete (soft by default; hard=true for permanent) a wiki page by slug",
+				parameters: [
+					{
+						name: "slug",
+						in: "path",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scope",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scopeRef",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{ name: "hard", in: "query", schema: { type: "boolean" } },
+					{ name: "agentId", in: "query", schema: { type: "string" } },
+				],
+				responses: {
+					"200": { description: "Wiki page deleted" },
+					"404": { description: "Wiki page not found" },
+				},
+			},
+		},
+		"/v1/wiki/okf-import": {
+			post: {
+				summary: "Import an OKF bundle into wiki pages",
+				requestBody: {
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: [
+									"bundleDir",
+									"scope",
+									"scopeRef",
+									"trustTier",
+									"okfBundleId",
+								],
+								properties: {
+									bundleDir: { type: "string" },
+									scope: { type: "string" },
+									scopeRef: { type: "string" },
+									trustTier: {
+										type: "string",
+										enum: ["restricted", "standard", "admin"],
+									},
+									okfBundleId: { type: "string" },
+									agentId: { type: "string" },
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"200": { description: "OKF import result" },
+					"400": { description: "Validation error" },
+					"500": { description: "OKF import failed" },
+				},
+			},
+		},
+		"/v1/wiki/okf-export": {
+			post: {
+				summary: "Export wiki pages to an OKF bundle",
+				requestBody: {
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: ["scope", "scopeRef", "outDir"],
+								properties: {
+									scope: { type: "string" },
+									scopeRef: { type: "string" },
+									outDir: { type: "string" },
+									okfBundleId: { type: "string" },
+									agentId: { type: "string" },
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"200": { description: "OKF export result" },
+					"400": { description: "Validation error" },
+					"500": { description: "OKF export failed" },
+				},
+			},
+		},
+		"/v1/wiki/search": {
+			post: {
+				summary: "Hybrid wiki search (vector + text + rank fusion)",
+				requestBody: {
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: ["query"],
+								properties: {
+									query: { type: "string" },
+									scope: { type: "string" },
+									scopeRef: { type: "string" },
+									kind: { type: "string" },
+									trustTier: { type: "string" },
+									state: { type: "string" },
+									privacyTier: { type: "string" },
+									recipe: {
+										type: "string",
+										enum: ["fast", "hybrid", "deep"],
+									},
+									maxResults: { type: "integer" },
+									minScore: { type: "number" },
+									agentId: { type: "string" },
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"200": { description: "Wiki search results" },
+					"500": { description: "Wiki search failed" },
+				},
+			},
+		},
+		"/v1/wiki/lint": {
+			get: {
+				summary:
+					"List wiki pages and unresolved contradictions for lint review",
+				parameters: [
+					{
+						name: "scope",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scopeRef",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{ name: "agentId", in: "query", schema: { type: "string" } },
+				],
+				responses: {
+					"200": { description: "Wiki lint report" },
+					"500": { description: "Wiki lint failed" },
+				},
+			},
+		},
+		"/v1/wiki/maintain": {
+			post: {
+				summary: "Trigger wiki maintenance (git-diff + Dreamer)",
+				requestBody: {
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: ["scope", "scopeRef"],
+								properties: {
+									scope: { type: "string" },
+									scopeRef: { type: "string" },
+									agentId: { type: "string" },
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"200": { description: "Maintenance accepted" },
+					"400": { description: "Validation error" },
+					"500": { description: "Wiki maintain failed" },
+				},
+			},
+		},
 	},
 	components: {
 		schemas: {

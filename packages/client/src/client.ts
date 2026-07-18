@@ -157,6 +157,13 @@ async function apiPatch<T>(
 	})
 }
 
+async function apiDelete<T>(
+	opts: MdbrainClientOptions,
+	path: string,
+): Promise<T> {
+	return apiFetch<T>(opts, path, { method: "DELETE" })
+}
+
 function q(
 	agentId?: string,
 	extra?: Record<string, string | number | undefined>,
@@ -1151,7 +1158,59 @@ export class MdbrainClient {
 		if (input.agentId) qs.set("agentId", input.agentId)
 		const limit = input.limit ?? 100
 		qs.set("limit", String(limit))
-		return apiGet(this._opts, `/v1/wiki?${qs}`)
+		return apiGet(this._opts, `/v1/wiki/lint?${qs}`)
+	}
+
+	async wikiDelete(input: {
+		slug: string
+		scope: string
+		scopeRef: string
+		hard?: boolean
+		agentId?: string
+	}): Promise<{
+		ok: boolean
+		slug: string
+		scope: string
+		scopeRef: string
+		hard: boolean
+	}> {
+		const params = new URLSearchParams({
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.hard) params.set("hard", "true")
+		if (input.agentId) params.set("agentId", input.agentId)
+		return apiDelete(this._opts, `/v1/wiki/${input.slug}?${params}`)
+	}
+
+	async wikiImportOkf(input: {
+		bundleDir: string
+		scope: string
+		scopeRef: string
+		trustTier: "restricted" | "standard" | "admin"
+		okfBundleId: string
+		agentId?: string
+	}): Promise<unknown> {
+		return apiPost(this._opts, "/v1/wiki/okf-import", {
+			bundleDir: input.bundleDir,
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+			trustTier: input.trustTier,
+			okfBundleId: input.okfBundleId,
+			agentId: input.agentId,
+		})
+	}
+
+	async wikiMaintain(input: {
+		scope: string
+		scopeRef: string
+		agentId?: string
+	}): Promise<unknown> {
+		return apiPost(this._opts, "/v1/wiki/maintain", {
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+			agentId: input.agentId,
+		})
 	}
 }
 

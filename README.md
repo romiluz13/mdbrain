@@ -80,7 +80,9 @@ For wiki relationship graphs (page → related page → related page), 1-3 hops 
 
 ### Built once. Runs anywhere
 
-Same APIs across Atlas cloud, self-managed, edge, and local dev. MDBrain uses Atlas Local Preview (`docker compose -f docker/mongodb/docker-compose.preview.yml up -d`) — the exact same `mongot` + Atlas Search engine runs on your laptop as in production. No vendor lock-in. No "works on cloud, breaks locally."
+Same APIs across Atlas cloud and self-managed (Atlas Local Preview). `$vectorSearch`, `$search`, `$rankFusion`, and `$rerank` require Atlas Search (`mongot`) — available on Atlas cloud and Atlas Local Preview, not plain MongoDB Community. MDBrain uses Atlas Local Preview (`docker compose -f docker/mongodb/docker-compose.preview.yml up -d`) — the exact same `mongot` + Atlas Search engine runs on your laptop as in production. No vendor lock-in within the Atlas ecosystem.
+
+Note: `$vectorSearch`, `$search`, `$rankFusion`, and `$rerank` require Atlas Search (`mongot`). Atlas Local Preview provides the same engine locally; plain MongoDB Community does not support these stages.
 
 | Capability | PostgreSQL + pgvector | MongoDB Atlas |
 | --- | --- | --- |
@@ -106,9 +108,9 @@ Same APIs across Atlas cloud, self-managed, edge, and local dev. MDBrain uses At
 | **OKF interchange** | In progress | None | None | **Import + export round-trip** |
 | **Governance** | None | None | None | **Scope, trust tiers, permissions** |
 | **Contradiction detection** | None | ADD-only bias (stores contradictions) | None | **Cross-page, runs before dedup** |
-| **Self-maintenance** | Scheduled runs | Reactive | Reactive | **Git-diff + Dreamer 5-phase** |
-| **MCP tools** | Planned | None | None | **5 tools shipped** |
-| **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **6 (Obsidian, GitHub, Confluence, Notion, Slack, CRM)** |
+| **Self-maintenance** | Scheduled runs | Reactive | Reactive | **Git-diff + Dreamer 5-phase (wiki Dreamer simplified)** |
+| **MCP tools** | Planned | None | None | **53 tools (5 wiki)** |
+| **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **6 (2 full: Obsidian, GitHub; 4 stubs: Confluence, Notion, Slack, CRM)** |
 | **Web console** | None (CLI only) | None | None | **Next.js wiki browser** |
 | **Backlinks** | None | None | Graph edges | **Auto-computed from relationships** |
 | **Supersession audit** | None | None | None | **Retained, not deleted** |
@@ -210,11 +212,11 @@ CRM        ──┘                       │               │
 
 **Contradiction detection** — Cross-page contradictions are detected BEFORE dedup/near-duplicate gating (prevents the arXiv pipeline-ordering bug). Contradictions are recorded, surfaced via `wiki_lint`, and can be resolved (newest_wins, authority_wins, human_escalation).
 
-**Self-maintenance** — Two strategies, unified through the same governance gates: git-diff maintenance (detects changed source files via `maintenanceHash`, regenerates only affected pages) and Dreamer 5-phase promotion (novelty scan, similarity, injection classification, extraction, promotion for event/conversation sources).
+**Self-maintenance** — Two strategies, unified through the same governance gates: git-diff maintenance (detects changed source files via `maintenanceHash`, regenerates only affected pages) and Dreamer 5-phase promotion (novelty scan, similarity, injection classification, extraction, promotion for event/conversation sources). Wiki Dreamer promotion is currently simplified — full vector similarity matching is on the roadmap.
 
-**MCP tools** — Five tools for agent access: `wiki_search`, `wiki_get`, `wiki_apply` (upsert), `wiki_export_okf`, `wiki_lint`. Connect from Claude Desktop, Cursor, or any MCP-compatible agent.
+**MCP tools** — 53 tools for agent access (5 wiki-specific): `wiki_search`, `wiki_get`, `wiki_apply` (upsert), `wiki_export_okf`, `wiki_lint`. Connect from Claude Desktop, Cursor, or any MCP-compatible agent.
 
-**Connectors** — Six source connectors: Obsidian (bidirectional), GitHub (read-first, git-diff maintenance), Confluence, Notion, Slack, and CRM (Salesforce/HubSpot). All implement the Connector ABC (authenticate / discover / ingest / mapPermissions).
+**Connectors** — Six source connectors: Obsidian (bidirectional, full), GitHub (read-first, git-diff maintenance), and Confluence, Notion, Slack, CRM (Salesforce/HubSpot) as stubs with connector ABC implemented — full ingestion is on the roadmap.
 
 **Backlinks** — Auto-computed from relationship targets. Incremental recomputation on page create/update/delete. Excluded for soft-deleted (superseded) pages.
 
@@ -260,7 +262,7 @@ Browse pages (filterable by kind), view full page details (claims, contradiction
 | `@mdbrain/memory-engine` | MongoDB memory manager (events, episodes, structured_mem, entities, graph) |
 | `@mdbrain/memory-bridge` | Bridge layer (config resolution, manager lifecycle) |
 | `@mdbrain/client` | TypeScript HTTP client (wiki + memory methods) |
-| `@mdbrain/tools` | AI SDK tools |
+| `@mdbrain/tools` | AI SDK tools (core subset — 28 of 53 MCP tools; wiki + admin tools are MCP-only) |
 | `@mdbrain/lib` | Shared utilities |
 | `@mdbrain/api` | Hono HTTP API server (private) |
 | `@mdbrain/mcp` | MCP server (private) |
