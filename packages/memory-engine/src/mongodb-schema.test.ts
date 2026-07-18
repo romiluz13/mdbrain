@@ -1779,12 +1779,12 @@ describe("detectCapabilities", () => {
 		expect(caps.rankFusion).toBe(false)
 	})
 
-	it("detects rankFusion when stage is recognized but fails on empty data", async () => {
+	it("detects rankFusion as unsupported when probe fails with non-unrecognized error", async () => {
 		const db = {
 			collection: vi.fn(() => ({
 				aggregate: vi.fn(() => ({
 					toArray: vi.fn(async () => {
-						// Recognized but fails with a runtime error (not "unrecognized")
+						// Runtime error (not "unrecognized") — fail-closed means NOT supported
 						throw new Error("Cannot run $rankFusion on empty pipelines")
 					}),
 				})),
@@ -1800,9 +1800,9 @@ describe("detectCapabilities", () => {
 		} as unknown as Db
 
 		const caps = await detectCapabilities(db)
-		// Stage recognized (error isn't "unrecognized") → capability = true
-		expect(caps.rankFusion).toBe(true)
-		expect(caps.scoreFusion).toBe(true)
+		// Fail-closed: probe failed → capability = false regardless of error type
+		expect(caps.rankFusion).toBe(false)
+		expect(caps.scoreFusion).toBe(false)
 	})
 
 	it("detects vectorSearch and textSearch when listSearchIndexes succeeds", async () => {

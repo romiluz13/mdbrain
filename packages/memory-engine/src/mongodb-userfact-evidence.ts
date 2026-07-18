@@ -299,6 +299,8 @@ export async function writeUserfactEvidence(params: {
 		eventIds: params.eventIds,
 	})
 	if (docs.length === 0) return 0
-	await params.chunksCollection.insertMany(docs, { ordered: false })
-	return docs.length
+	const result = await params.chunksCollection.insertMany(docs, {
+		ordered: false,
+	})
+	return result.insertedCount
 }

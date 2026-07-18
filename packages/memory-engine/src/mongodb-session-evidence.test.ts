@@ -6,8 +6,6 @@ import {
 	writeSessionEvidenceOptionA,
 	writeSessionEvidenceOptionB,
 	extractSessionIdFromCanonicalId,
-	type SessionEvidenceMode,
-	type SessionEvidenceDocument,
 } from "./mongodb-session-evidence.js"
 import type { MemoryBenchmarkConversation } from "./types.js"
 import type { Collection } from "mongodb"
@@ -319,7 +317,7 @@ describe("writeSessionEvidenceOptionA", () => {
 			scopeRef: "agent:bench-agent",
 			eventIds: new Map([["q1::session_1", ["evt1"]]]),
 		})
-		expect(count).toBe(1)
+		expect(count).toBe(2)
 		expect(col.insertMany).toHaveBeenCalledTimes(1)
 		const insertedDocs = (col.insertMany as ReturnType<typeof vi.fn>).mock
 			.calls[0][0]
@@ -379,7 +377,7 @@ describe("writeSessionEvidenceOptionB", () => {
 			scopeRef: "agent:bench-agent",
 			eventIds: new Map([["q1::session_1", ["evt1"]]]),
 		})
-		expect(count).toBe(1)
+		expect(count).toBe(2)
 		expect(col.insertMany).toHaveBeenCalledTimes(1)
 	})
 

@@ -3771,11 +3771,10 @@ export async function detectCapabilities(
 				])
 				.toArray()
 			result.rankFusion = true
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err)
-			if (!isStageUnsupported(msg)) {
-				result.rankFusion = true
-			}
+		} catch {
+			// Fail-closed: if the probe fails for ANY reason (unsupported stage,
+			// auth error, network error), assume the stage is NOT supported.
+			// Only set true when the probe succeeds (handled in the try body above).
 		}
 
 		try {
@@ -3794,11 +3793,10 @@ export async function detectCapabilities(
 				])
 				.toArray()
 			result.scoreFusion = true
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err)
-			if (!isStageUnsupported(msg)) {
-				result.scoreFusion = true
-			}
+		} catch {
+			// Fail-closed: if the probe fails for ANY reason (unsupported stage,
+			// auth error, network error), assume the stage is NOT supported.
+			// Only set true when the probe succeeds (handled in the try body above).
 		}
 	}
 

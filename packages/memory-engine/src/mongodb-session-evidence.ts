@@ -208,8 +208,10 @@ export async function writeSessionEvidenceOptionA(params: {
 		eventIds: params.eventIds,
 	})
 	if (docs.length === 0) return 0
-	await params.chunksCollection.insertMany(docs, { ordered: false })
-	return docs.length
+	const result = await params.chunksCollection.insertMany(docs, {
+		ordered: false,
+	})
+	return result.insertedCount
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +234,8 @@ export async function writeSessionEvidenceOptionB(params: {
 		eventIds: params.eventIds,
 	})
 	if (docs.length === 0) return 0
-	await params.sessionChunksCollection.insertMany(docs, { ordered: false })
-	return docs.length
+	const result = await params.sessionChunksCollection.insertMany(docs, {
+		ordered: false,
+	})
+	return result.insertedCount
 }

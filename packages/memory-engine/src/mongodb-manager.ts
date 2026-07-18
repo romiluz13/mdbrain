@@ -1959,8 +1959,7 @@ function redactMongoURI(uri: string): string {
 		}
 		return parsed.toString()
 	} catch {
-		// If URL parsing fails, do a simple regex-based redaction
-		return uri.replace(/\/\/([^:]+):([^@]+)@/, "//***:***@")
+		return "***redacted-malformed-uri***"
 	}
 }
 
