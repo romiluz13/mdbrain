@@ -95,7 +95,21 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 		deleteOne: vi.fn(async () => ({ deletedCount: 1 })),
 		aggregate: vi.fn(() => ({ toArray: async () => [] })),
 	} as unknown as Collection
-	const db = { collection: vi.fn(() => coll) } as unknown as Db
+	// wiki_revisions is a separate collection from wiki_pages — routing every
+	// name to the same mock `coll` would make importOkfBundle's best-effort
+	// revision-history writes land in the wiki_pages store and corrupt
+	// document counts these tests assert on.
+	const revisionsColl = {
+		insertOne: vi.fn(async () => ({
+			acknowledged: true,
+			insertedId: { toString: () => "rev" },
+		})),
+	} as unknown as Collection
+	const db = {
+		collection: vi.fn((name: string) =>
+			name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		),
+	} as unknown as Db
 	return { db, coll }
 }
 

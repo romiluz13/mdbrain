@@ -429,6 +429,14 @@ const WIKI_PAGES_SCHEMA: Document = {
 				},
 			},
 
+			// Transclusion targets: slugs this page embeds via {{page:slug}} /
+			// {{page:slug#Section}} markers in its body (auto-computed on write,
+			// not manually edited — mirrors backlinks).
+			transcludes: {
+				bsonType: "array",
+				items: { bsonType: "string" },
+			},
+
 			// Search
 			embedding: {
 				bsonType: "array",
@@ -446,8 +454,60 @@ const WIKI_PAGES_SCHEMA: Document = {
 	},
 }
 
+// ---------------------------------------------------------------------------
+// wiki_revisions — full-content revision history (one document per edit).
+//
+// Distinct from wiki_pages.revision (a bare monotonic counter, no stored
+// content history, no undo). Every create/update/delete writes a snapshot
+// here of the page as it existed at that revision, so a specific past
+// revision can be viewed or restored. Mirrors MediaWiki's "every edit is a
+// revision" model rather than storing only current-state + a diff.
+// ---------------------------------------------------------------------------
+
+/** Returns the wiki_revisions collection for the given db + prefix. */
+export function wikiRevisionsCollection(db: Db, prefix: string): Collection {
+	return db.collection(`${prefix}wiki_revisions`)
+}
+
+const WIKI_REVISIONS_SCHEMA: Document = {
+	$jsonSchema: {
+		bsonType: "object",
+		required: [
+			"pageSlug",
+			"scope",
+			"scopeRef",
+			"revision",
+			"editKind",
+			"snapshot",
+			"createdAt",
+		],
+		properties: {
+			pageSlug: { bsonType: "string" },
+			scope: { enum: SCOPE_VALUES },
+			scopeRef: { bsonType: "string" },
+			revision: { bsonType: "number", minimum: 1 },
+			editKind: { enum: ["create", "update", "delete"] },
+			editor: {
+				bsonType: "object",
+				properties: {
+					id: { bsonType: "string" },
+					name: { bsonType: "string" },
+					runId: { bsonType: "string" },
+				},
+			},
+			// Full page state as of this revision (title/body/frontmatter/claims/
+			// etc.) — deliberately not re-validated field-by-field against
+			// WIKI_PAGES_SCHEMA here; it's a point-in-time snapshot, not a live
+			// document, and page-level validation already ran when it was written.
+			snapshot: { bsonType: "object" },
+			createdAt: { bsonType: "date" },
+		},
+	},
+}
+
 const VALIDATED_WIKI_COLLECTIONS: Record<string, Document> = {
 	wiki_pages: WIKI_PAGES_SCHEMA,
+	wiki_revisions: WIKI_REVISIONS_SCHEMA,
 }
 
 // ---------------------------------------------------------------------------
@@ -464,7 +524,7 @@ export async function ensureWikiCollections(
 			.map((c) => c.name)
 			.toArray(),
 	)
-	const needed = ["wiki_pages"].map((n) => `${prefix}${n}`)
+	const needed = ["wiki_pages", "wiki_revisions"].map((n) => `${prefix}${n}`)
 	for (const name of needed) {
 		if (!existing.has(name)) {
 			const baseName = name.slice(prefix.length)
@@ -552,6 +612,19 @@ export async function ensureWikiStandardIndexes(
 	]
 	await coll.createIndexes(indexes)
 	log.info(`ensured standard indexes on ${coll.collectionName}`)
+
+	const revisionsColl = wikiRevisionsCollection(db, prefix)
+	const revisionIndexes: IndexDescription[] = [
+		// One document per (page, revision) — also the natural sort key for
+		// chronological listing, since revision increases monotonically with time.
+		{
+			key: { pageSlug: 1, scope: 1, scopeRef: 1, revision: -1 },
+			unique: true,
+			name: "page_revision_unique",
+		},
+	]
+	await revisionsColl.createIndexes(revisionIndexes)
+	log.info(`ensured standard indexes on ${revisionsColl.collectionName}`)
 }
 
 // ---------------------------------------------------------------------------

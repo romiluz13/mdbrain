@@ -122,9 +122,22 @@ describe("ensureWikiCollections", () => {
 	})
 
 	it("is idempotent — does not recreate if already present", async () => {
-		const db = mockDb(["test_wiki_pages"])
+		const db = mockDb(["test_wiki_pages", "test_wiki_revisions"])
 		await ensureWikiCollections(db, "test_")
 		expect(db.createCollection).not.toHaveBeenCalled()
+	})
+
+	it("creates wiki_revisions when missing", async () => {
+		const db = mockDb([])
+		await ensureWikiCollections(db, "test_")
+		expect(db.createCollection).toHaveBeenCalledWith(
+			"test_wiki_revisions",
+			expect.objectContaining({
+				validator: expect.any(Object),
+				validationLevel: "moderate",
+				validationAction: "error",
+			}),
+		)
 	})
 })
 

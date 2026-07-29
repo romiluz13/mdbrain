@@ -12,6 +12,7 @@ export const WIKI_ENGINE_VERSION = "0.1.0"
 
 export {
 	wikiPagesCollection,
+	wikiRevisionsCollection,
 	ensureWikiCollections,
 	ensureWikiSchemaValidation,
 	ensureWikiStandardIndexes,
@@ -26,6 +27,14 @@ export {
 	WIKI_PAGE_STATE_VALUES,
 	WIKI_FRESHNESS_VALUES,
 } from "./wiki-schema.js"
+
+export {
+	recordWikiPageRevision,
+	listWikiPageRevisions,
+	getWikiPageRevision,
+	type WikiRevisionEditKind,
+	type WikiPageRevisionRecord,
+} from "./wiki-revisions.js"
 
 export {
 	createWikiPage,

@@ -125,6 +125,24 @@ describe("createWikiPage", () => {
 		expect(doc.embedding).toBeUndefined()
 	})
 
+	it("records a revision entry with editKind=create and revision=1", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const revisionsColl = mockCollection()
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) =>
+				name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		)
+		await createWikiPage(h, VALID_INPUT)
+		expect(revisionsColl.insertOne).toHaveBeenCalledTimes(1)
+		const [revisionDoc] = (
+			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		expect(revisionDoc.editKind).toBe("create")
+		expect(revisionDoc.revision).toBe(1)
+		expect(revisionDoc.pageSlug).toBe("tables/accounts")
+	})
+
 	it("throws WikiDuplicateSlugError on E11000", async () => {
 		const { db, coll } = mockDb()
 		;(
@@ -180,6 +198,36 @@ describe("updateWikiPage", () => {
 		expect(update.$inc).toEqual({ revision: 1 })
 		expect(update.$set.updatedAt).toBeInstanceOf(Date)
 		expect(update.$set.summary).toBe("new")
+	})
+
+	it("records a revision entry with editKind=update after a successful update", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			value: {
+				_id: { toString: () => "id-x" },
+				slug: "x",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				revision: 3,
+				summary: "new",
+			},
+		})
+		const revisionsColl = mockCollection()
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) =>
+				name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		)
+		await updateWikiPage(h, "x", "workspace", "ws-1", { summary: "new" })
+		expect(revisionsColl.insertOne).toHaveBeenCalledTimes(1)
+		const [revisionDoc] = (
+			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		expect(revisionDoc.editKind).toBe("update")
+		expect(revisionDoc.revision).toBe(3)
+		expect(revisionDoc.snapshot.summary).toBe("new")
 	})
 
 	it("normalizes patched questions (adds status + createdAt)", async () => {
@@ -276,11 +324,44 @@ describe("deleteWikiPage", () => {
 		const h: WikiDbHandle = { db, prefix: "test_" }
 		await deleteWikiPage(h, "x", "workspace", "ws-1")
 		const [filter, update] = (
-			coll.updateOne as unknown as ReturnType<typeof vi.fn>
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
 		).mock.calls[0]
 		expect(filter.state).toEqual({ $ne: "superseded" })
 		expect(update.$set.state).toBe("superseded")
 		expect(update.$set.validTo).toBeInstanceOf(Date)
+		expect(update.$inc.revision).toBe(1)
+	})
+
+	it("records a revision entry with editKind=delete when a page is soft-deleted", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			value: {
+				slug: "x",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				revision: 2,
+				state: "superseded",
+			},
+		})
+		const revisionsColl = mockCollection()
+		const collectionCalls: string[] = []
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) => {
+				collectionCalls.push(name)
+				return name.endsWith("wiki_revisions") ? revisionsColl : coll
+			},
+		)
+		const deleted = await deleteWikiPage(h, "x", "workspace", "ws-1")
+		expect(deleted).toBe(true)
+		expect(revisionsColl.insertOne).toHaveBeenCalledTimes(1)
+		const [revisionDoc] = (
+			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		expect(revisionDoc.editKind).toBe("delete")
+		expect(revisionDoc.revision).toBe(2)
 	})
 
 	it("hard-deletes when hard=true", async () => {

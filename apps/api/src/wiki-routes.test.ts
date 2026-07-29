@@ -23,6 +23,9 @@ const wikiMocks = vi.hoisted(() => ({
 	importOkfBundle: vi.fn(),
 	exportOkfBundle: vi.fn(),
 	searchWikiPages: vi.fn(),
+	listUnresolvedContradictions: vi.fn(),
+	listWikiPageRevisions: vi.fn(),
+	getWikiPageRevision: vi.fn(),
 }))
 
 const bridgeMocks = vi.hoisted(() => ({
@@ -434,6 +437,125 @@ describe("wiki routes", () => {
 			})
 			expect(res.status).toBe(400)
 			expect((await asJson(res)).error?.message).toMatch(/outDir/)
+		})
+	})
+
+	describe("GET /v1/wiki/revisions", () => {
+		it("returns revision list when the caller can read the live page", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			wikiMocks.listWikiPageRevisions.mockResolvedValue([
+				{
+					pageSlug: "tables/accounts",
+					scope: "workspace",
+					scopeRef: "ws-1",
+					revision: 2,
+					editKind: "update",
+					createdAt: "2026-07-10T00:00:00.000Z",
+				},
+			])
+			const res = await createApp().request(
+				"/v1/wiki/revisions?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
+			)
+			expect(res.status).toBe(200)
+			const json = (await res.json()) as { revisions: unknown[] }
+			expect(json.revisions).toHaveLength(1)
+			expect(wikiMocks.listWikiPageRevisions).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					pageSlug: "tables/accounts",
+					scope: "workspace",
+					scopeRef: "ws-1",
+				}),
+			)
+		})
+
+		it("does NOT fall through to the GET /wiki/* get-by-slug handler — confirms no route collision with the wildcard", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			wikiMocks.listWikiPageRevisions.mockResolvedValue([])
+			await createApp().request(
+				"/v1/wiki/revisions?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
+			)
+			// getWikiPage IS called (for the governance check), but with the real
+			// requested slug — never with slug="revisions", which is what would
+			// happen if GET /wiki/* had swallowed this request instead.
+			expect(wikiMocks.getWikiPage).toHaveBeenCalledWith(
+				expect.anything(),
+				"tables/accounts",
+				"workspace",
+				"ws-1",
+				expect.anything(),
+			)
+			expect(wikiMocks.renderMarkdown).not.toHaveBeenCalled()
+			expect(wikiMocks.renderHtml).not.toHaveBeenCalled()
+		})
+
+		it("returns 404 when the caller cannot read the live page (governance-gated)", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(undefined)
+			const res = await createApp().request(
+				"/v1/wiki/revisions?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
+			)
+			expect(res.status).toBe(404)
+			expect(wikiMocks.listWikiPageRevisions).not.toHaveBeenCalled()
+		})
+
+		it("rejects missing slug", async () => {
+			const res = await createApp().request(
+				"/v1/wiki/revisions?scope=workspace&scopeRef=ws-1",
+			)
+			expect(res.status).toBe(400)
+		})
+	})
+
+	describe("GET /v1/wiki/revisions/:revision", () => {
+		it("returns a specific revision snapshot", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			wikiMocks.getWikiPageRevision.mockResolvedValue({
+				pageSlug: "tables/accounts",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				revision: 2,
+				editKind: "update",
+				snapshot: { title: "Accounts Table (old)" },
+				createdAt: "2026-07-10T00:00:00.000Z",
+			})
+			const res = await createApp().request(
+				"/v1/wiki/revisions/2?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
+			)
+			expect(res.status).toBe(200)
+			const json = (await res.json()) as { revision: number }
+			expect(json.revision).toBe(2)
+			expect(wikiMocks.getWikiPageRevision).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					pageSlug: "tables/accounts",
+					revision: 2,
+				}),
+			)
+		})
+
+		it("returns 404 when the revision does not exist", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			wikiMocks.getWikiPageRevision.mockResolvedValue(undefined)
+			const res = await createApp().request(
+				"/v1/wiki/revisions/99?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it("returns 404 when the caller cannot read the live page", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(undefined)
+			const res = await createApp().request(
+				"/v1/wiki/revisions/1?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
+			)
+			expect(res.status).toBe(404)
+			expect(wikiMocks.getWikiPageRevision).not.toHaveBeenCalled()
+		})
+
+		it("rejects a non-numeric revision", async () => {
+			const res = await createApp().request(
+				"/v1/wiki/revisions/abc?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
+			)
+			expect(res.status).toBe(400)
 		})
 	})
 

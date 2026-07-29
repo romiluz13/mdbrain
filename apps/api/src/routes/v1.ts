@@ -61,6 +61,8 @@ import {
 	exportOkfBundle,
 	searchWikiPages,
 	listUnresolvedContradictions,
+	listWikiPageRevisions,
+	getWikiPageRevision,
 	WikiDuplicateSlugError,
 	type WikiPageInput,
 	type GovernanceContext,
@@ -2236,6 +2238,148 @@ export function createV1Router(): Hono {
 		}
 	})
 
+	// Wiki lint (/v1/wiki/lint) — T12: lists pages + unresolved contradictions
+	v1.get("/wiki/lint", async (c) => {
+		const scope = c.req.query("scope")
+		const scopeRef = c.req.query("scopeRef")
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef are required",
+			)
+		try {
+			const handle = await readWikiDbHandle(
+				String(c.req.query("agentId") ?? ""),
+			)
+			const [pagesResult, contradictions] = await Promise.all([
+				listWikiPages(handle, {
+					scope,
+					scopeRef,
+					limit: MAX_LIST_LIMIT,
+				}),
+				listUnresolvedContradictions(handle, scope, scopeRef),
+			])
+			return c.json({
+				pages: pagesResult.pages,
+				total: pagesResult.total,
+				unresolvedContradictions: contradictions,
+			})
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_LINT_FAILED", message)
+		}
+	})
+
+	// Wiki revision history (/v1/wiki/revisions, /v1/wiki/revisions/:revision).
+	// Gated behind the same governed read a caller would need for the live
+	// page — revision history must never be a side channel around governance
+	// (a caller who can't currently read a page can't read its history either).
+	v1.get("/wiki/revisions", async (c) => {
+		const slug = c.req.query("slug")
+		const scope = c.req.query("scope")
+		const scopeRef = c.req.query("scopeRef")
+		const limit = Number(c.req.query("limit") ?? "50")
+		if (!slug) return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef are required",
+			)
+		try {
+			const handle = await readWikiDbHandle(
+				String(c.req.query("agentId") ?? ""),
+			)
+			const trustTier = c.req.query("trustTier")
+			const page = await getWikiPage(
+				handle,
+				slug,
+				scope,
+				scopeRef,
+				buildWikiGovContext(scope, scopeRef, trustTier ?? undefined),
+			)
+			if (!page)
+				return jsonError(
+					c,
+					404,
+					"WIKI_NOT_FOUND",
+					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
+				)
+			const revisions = await listWikiPageRevisions(handle, {
+				pageSlug: slug,
+				scope,
+				scopeRef,
+				limit: Number.isFinite(limit) ? limit : undefined,
+			})
+			return c.json({ revisions })
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_REVISIONS_FAILED", message)
+		}
+	})
+
+	v1.get("/wiki/revisions/:revision", async (c) => {
+		const slug = c.req.query("slug")
+		const scope = c.req.query("scope")
+		const scopeRef = c.req.query("scopeRef")
+		const revision = Number(c.req.param("revision"))
+		if (!slug) return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef are required",
+			)
+		if (!Number.isFinite(revision) || revision < 1)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"revision must be a positive integer",
+			)
+		try {
+			const handle = await readWikiDbHandle(
+				String(c.req.query("agentId") ?? ""),
+			)
+			const trustTier = c.req.query("trustTier")
+			const page = await getWikiPage(
+				handle,
+				slug,
+				scope,
+				scopeRef,
+				buildWikiGovContext(scope, scopeRef, trustTier ?? undefined),
+			)
+			if (!page)
+				return jsonError(
+					c,
+					404,
+					"WIKI_NOT_FOUND",
+					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
+				)
+			const record = await getWikiPageRevision(handle, {
+				pageSlug: slug,
+				scope,
+				scopeRef,
+				revision,
+			})
+			if (!record)
+				return jsonError(
+					c,
+					404,
+					"WIKI_REVISION_NOT_FOUND",
+					`revision ${revision} of "${slug}" not found`,
+				)
+			return c.json(record)
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_REVISIONS_FAILED", message)
+		}
+	})
+
 	v1.get("/wiki/*", async (c) => {
 		const slug = readWikiSlug(c)
 		const scope = String(c.req.query("scope") ?? "")
@@ -2505,40 +2649,6 @@ export function createV1Router(): Hono {
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_SEARCH_FAILED", message)
-		}
-	})
-
-	// Wiki lint (/v1/wiki/lint) — T12: lists pages + unresolved contradictions
-	v1.get("/wiki/lint", async (c) => {
-		const scope = c.req.query("scope")
-		const scopeRef = c.req.query("scopeRef")
-		if (!scope || !scopeRef)
-			return jsonError(
-				c,
-				400,
-				"VALIDATION_ERROR",
-				"scope and scopeRef are required",
-			)
-		try {
-			const handle = await readWikiDbHandle(
-				String(c.req.query("agentId") ?? ""),
-			)
-			const [pagesResult, contradictions] = await Promise.all([
-				listWikiPages(handle, {
-					scope,
-					scopeRef,
-					limit: MAX_LIST_LIMIT,
-				}),
-				listUnresolvedContradictions(handle, scope, scopeRef),
-			])
-			return c.json({
-				pages: pagesResult.pages,
-				total: pagesResult.total,
-				unresolvedContradictions: contradictions,
-			})
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "WIKI_LINT_FAILED", message)
 		}
 	})
 

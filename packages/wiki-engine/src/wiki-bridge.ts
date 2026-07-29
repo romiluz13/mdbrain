@@ -26,6 +26,7 @@ import {
 	buildGovernanceFilter,
 	type GovernanceContext,
 } from "./wiki-governance.js"
+import { recordWikiPageRevision } from "./wiki-revisions.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -389,6 +390,15 @@ export async function createWikiPage(
 				)
 			}
 		}
+		await recordWikiPageRevision(handle, {
+			pageSlug: input.slug,
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+			revision: 1,
+			editKind: "create",
+			editor: input.sourceAgent,
+			snapshot: inserted,
+		})
 		return toView(inserted)
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err)
@@ -638,7 +648,19 @@ export async function updateWikiPage(
 		oldRelationshipTargets: oldTargets,
 		newRelationshipTargets: newTargets,
 	})
-	return toView(value as unknown as Record<string, unknown>)
+	const valueRecord = value as unknown as Record<string, unknown>
+	await recordWikiPageRevision(handle, {
+		pageSlug: slug,
+		scope,
+		scopeRef,
+		revision: valueRecord.revision as number,
+		editKind: "update",
+		editor: valueRecord.sourceAgent as
+			| { id: string; name: string; runId?: string }
+			| undefined,
+		snapshot: valueRecord,
+	})
+	return toView(valueRecord)
 }
 
 /** Deletes a wiki page (hard delete) OR marks state=superseded (soft).
@@ -657,13 +679,32 @@ export async function deleteWikiPage(
 	if (opts.hard) {
 		const result = await coll.deleteOne({ slug, scope, scopeRef })
 		deleted = result.deletedCount > 0
+		// No revision entry on hard delete — there is no living page to
+		// snapshot, and prior revisions in wiki_revisions already survive it
+		// (a separate collection, not cascade-deleted) for audit purposes.
 	} else {
 		const now = new Date()
-		const result = await coll.updateOne(
+		const result = await coll.findOneAndUpdate(
 			{ slug, scope, scopeRef, state: { $ne: "superseded" } },
-			{ $set: { state: "superseded", updatedAt: now, validTo: now } },
+			{
+				$set: { state: "superseded", updatedAt: now, validTo: now },
+				$inc: { revision: 1 },
+			},
+			{ returnDocument: "after" },
 		)
-		deleted = result.matchedCount > 0
+		const value = result?.value ?? null
+		deleted = value !== null
+		if (value) {
+			const valueRecord = value as unknown as Record<string, unknown>
+			await recordWikiPageRevision(handle, {
+				pageSlug: slug,
+				scope,
+				scopeRef,
+				revision: valueRecord.revision as number,
+				editKind: "delete",
+				snapshot: valueRecord,
+			})
+		}
 	}
 	if (deleted) {
 		// Recompute backlinks: pages that referenced this slug lose a backlink.
