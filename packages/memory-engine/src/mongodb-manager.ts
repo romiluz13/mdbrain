@@ -2326,9 +2326,35 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 	// MemorySearchManager.search
 	// ---------------------------------------------------------------------------
 
-	private buildConversationChunkFilter(params?: {
+	/**
+	 * Resolve the tenant identity a read must be confined to.
+	 *
+	 * Every read path resolves identity through here so that an absent `scope`
+	 * can never degrade into "all scopes" — the filter builders below take
+	 * `scope`/`scopeRef` as required arguments, and this is the only sanctioned
+	 * way to produce them.
+	 */
+	private resolveSearchIdentity(opts?: {
 		scope?: MemoryScope
 		scopeRef?: string
+		sessionKey?: string
+	}): { scope: MemoryScope; scopeRef: string } {
+		const scope: MemoryScope =
+			opts?.scope ?? (opts?.sessionKey ? "session" : "agent")
+		const scopeRef =
+			opts?.scopeRef ??
+			resolveScopeRef({
+				scope,
+				agentId: this.agentId,
+				sessionId: opts?.sessionKey,
+				workspaceDir: this.workspaceDir,
+			})
+		return { scope, scopeRef }
+	}
+
+	private buildConversationChunkFilter(params: {
+		scope: MemoryScope
+		scopeRef: string
 	}): Document {
 		const sources = ["conversation", "sessions"]
 		const sessionMode = resolveSessionEvidenceMode(
@@ -2360,8 +2386,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 		return {
 			source: { $in: sources },
 			agentId: this.agentId,
-			...(params?.scope ? { scope: params.scope } : {}),
-			...(params?.scopeRef ? { scopeRef: params.scopeRef } : {}),
+			scope: params.scope,
+			scopeRef: params.scopeRef,
 			status: { $ne: "deleted" },
 		}
 	}
@@ -2376,13 +2402,16 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 		}
 	}
 
-	private buildScopeAwareBridgeChunkFilter(
-		activeSources: ActiveSources,
-		params: { scope: MemoryScope; scopeRef: string },
-	): Document | undefined {
-		if (!activeSources.conversation || isBenchmarkStrictMode()) {
-			return undefined
-		}
+	/**
+	 * Bridge notes live in the workspace namespace, so they are only readable by
+	 * a caller whose own identity IS that workspace. Any other identity gets
+	 * `undefined`, and the caller must skip the bridge lane entirely rather than
+	 * search with no filter.
+	 */
+	private buildBridgeChunkFilterForIdentity(params: {
+		scope: MemoryScope
+		scopeRef: string
+	}): Document | undefined {
 		if (
 			params.scope !== "workspace" ||
 			params.scopeRef !== this.workspaceScopeRef
@@ -2390,6 +2419,16 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 			return undefined
 		}
 		return this.buildBridgeChunkFilter()
+	}
+
+	private buildScopeAwareBridgeChunkFilter(
+		activeSources: ActiveSources,
+		params: { scope: MemoryScope; scopeRef: string },
+	): Document | undefined {
+		if (!activeSources.conversation || isBenchmarkStrictMode()) {
+			return undefined
+		}
+		return this.buildBridgeChunkFilterForIdentity(params)
 	}
 
 	private getBridgeChunkBudget(maxResults: number): number {
@@ -2506,6 +2545,20 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 		)
 		const bridgeMaxResults = this.getBridgeChunkBudget(maxResults)
 		const emptyResults: MemorySearchResult[] = []
+		// The legacy path is a fallback for searchV2, so it must be confined to
+		// exactly the same tenant identity searchV2 would have used. Resolving it
+		// here (rather than passing `opts` through raw) is what keeps an absent
+		// `scope` from widening the read to every scope under this agentId.
+		const identity = this.resolveSearchIdentity(opts)
+		const bridgeFilter = this.buildBridgeChunkFilterForIdentity(identity)
+		// Runtime and bridge are two independent mongoSearch calls that can
+		// degrade differently (e.g. runtime stays hybrid, bridge falls back to
+		// keyword because it has fewer matching docs). Each lane's trace is kept
+		// separate so its own results are normalized by the method that actually
+		// ran for THAT lane, not whichever lane's trace event happened to be
+		// pushed last into a shared array.
+		const runtimeTrace: SearchTraceEvent[] = []
+		const bridgeTrace: SearchTraceEvent[] = []
 		const [
 			runtimeConversationResults,
 			bridgeConversationResults,
@@ -2523,10 +2576,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 							minScore,
 							numCandidates: mongoCfg.numCandidates,
 							sessionKey: opts?.sessionKey,
-							filter: this.buildConversationChunkFilter({
-								scope: opts?.scope,
-								scopeRef: opts?.scopeRef,
-							}),
+							filter: this.buildConversationChunkFilter(identity),
 							fusionMethod: mongoCfg.fusionMethod,
 							capabilities: this.capabilities,
 							vectorIndexName: `${this.prefix}chunks_vector`,
@@ -2537,10 +2587,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 							explain: explainOpts,
 							onTrace: (event) => {
 								traceEvents.push(event)
+								runtimeTrace.push(event)
 							},
 						},
 					),
-			!activeSources.conversation
+			!activeSources.conversation || !bridgeFilter
 				? emptyResults
 				: mongoSearch(
 						chunksCollection(this.db, this.prefix),
@@ -2551,7 +2602,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 							minScore,
 							numCandidates: mongoCfg.numCandidates,
 							sessionKey: opts?.sessionKey,
-							filter: this.buildBridgeChunkFilter(),
+							filter: bridgeFilter,
 							fusionMethod: mongoCfg.fusionMethod,
 							capabilities: this.capabilities,
 							vectorIndexName: `${this.prefix}chunks_vector`,
@@ -2562,6 +2613,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 							explain: explainOpts,
 							onTrace: (event) => {
 								traceEvents.push(event)
+								bridgeTrace.push(event)
 							},
 						},
 					),
@@ -2598,7 +2650,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 						{
 							maxResults: Math.max(3, Math.floor(maxResults / 3)),
 							minScore,
-							filter: { agentId: this.agentId },
+							filter: {
+								agentId: this.agentId,
+								scope: identity.scope,
+								scopeRef: identity.scopeRef,
+							},
 							numCandidates: mongoCfg.numCandidates,
 							capabilities: this.capabilities,
 							vectorIndexName: `${this.prefix}structured_mem_vector`,
@@ -2614,15 +2670,18 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 					}),
 		])
 
-		const conversationResults = [
-			...runtimeConversationResults,
-			...bridgeConversationResults,
-		]
-		const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg)
-		const normalizedLegacy = normalizeSearchResults(
-			conversationResults,
-			legacyMethod,
+		const runtimeMethod: SearchMethod = this.resolveObservedSearchMethod(
+			runtimeTrace,
+			mongoCfg,
 		)
+		const bridgeMethod: SearchMethod = this.resolveObservedSearchMethod(
+			bridgeTrace,
+			mongoCfg,
+		)
+		const normalizedLegacy = [
+			...normalizeSearchResults(runtimeConversationResults, runtimeMethod),
+			...normalizeSearchResults(bridgeConversationResults, bridgeMethod),
+		]
 		const normalizedKb = normalizeSearchResults(kbResults, "kb")
 		const normalizedStructured = normalizeSearchResults(
 			structuredResults,
@@ -3271,12 +3330,25 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 		const explainSources = resolveExplainSources(sourceScope, activeSources)
 		const bridgeMaxResults = this.getBridgeChunkBudget(maxResults)
 		const emptyResults: MemorySearchResult[] = []
+		// relevanceExplain is a diagnostic view of what search() would return, so
+		// it resolves the same identity from the same inputs and must never read
+		// wider than the search path it is explaining.
+		const identity = this.resolveSearchIdentity({
+			sessionKey: params.sessionKey,
+		})
+		const bridgeFilter = this.buildBridgeChunkFilterForIdentity(identity)
 
 		let mergedResults: MemorySearchResult[] = []
 		if (sourceScope === "memory") {
 			if (!explainSources.conversation) {
 				mergedResults = emptyResults
 			} else {
+				// Kept separate so a lane that degrades independently (e.g. bridge
+				// falling back to keyword while runtime stays hybrid) is normalized
+				// by the method that actually ran for that lane. See the identical
+				// note in search().
+				const runtimeTrace: SearchTraceEvent[] = []
+				const bridgeTrace: SearchTraceEvent[] = []
 				const [runtimeHits, bridgeHits] = await Promise.all([
 					mongoSearch(
 						chunksCollection(this.db, this.prefix),
@@ -3287,7 +3359,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 							minScore,
 							numCandidates: mongoCfg.numCandidates,
 							sessionKey: params.sessionKey,
-							filter: this.buildConversationChunkFilter(),
+							filter: this.buildConversationChunkFilter(identity),
 							fusionMethod: mongoCfg.fusionMethod,
 							capabilities: this.capabilities,
 							vectorIndexName: `${this.prefix}chunks_vector`,
@@ -3296,39 +3368,54 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 							textWeight: 0.3,
 							embeddingMode: mongoCfg.embeddingMode,
 							explain: explainOpts,
-							onTrace: (event) => traces.push(event),
+							onTrace: (event) => {
+								traces.push(event)
+								runtimeTrace.push(event)
+							},
 						},
 					),
-					mongoSearch(
-						chunksCollection(this.db, this.prefix),
-						query,
-						queryVector,
-						{
-							maxResults,
-							minScore,
-							numCandidates: mongoCfg.numCandidates,
-							sessionKey: params.sessionKey,
-							filter: this.buildBridgeChunkFilter(),
-							fusionMethod: mongoCfg.fusionMethod,
-							capabilities: this.capabilities,
-							vectorIndexName: `${this.prefix}chunks_vector`,
-							textIndexName: `${this.prefix}chunks_text`,
-							vectorWeight: 0.7,
-							textWeight: 0.3,
-							embeddingMode: mongoCfg.embeddingMode,
-							explain: explainOpts,
-							onTrace: (event) => traces.push(event),
-						},
-					),
+					!bridgeFilter
+						? emptyResults
+						: mongoSearch(
+								chunksCollection(this.db, this.prefix),
+								query,
+								queryVector,
+								{
+									maxResults,
+									minScore,
+									numCandidates: mongoCfg.numCandidates,
+									sessionKey: params.sessionKey,
+									filter: bridgeFilter,
+									fusionMethod: mongoCfg.fusionMethod,
+									capabilities: this.capabilities,
+									vectorIndexName: `${this.prefix}chunks_vector`,
+									textIndexName: `${this.prefix}chunks_text`,
+									vectorWeight: 0.7,
+									textWeight: 0.3,
+									embeddingMode: mongoCfg.embeddingMode,
+									explain: explainOpts,
+									onTrace: (event) => {
+										traces.push(event)
+										bridgeTrace.push(event)
+									},
+								},
+							),
 				])
-				const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg)
+				const runtimeMethod: SearchMethod = this.resolveObservedSearchMethod(
+					runtimeTrace,
+					mongoCfg,
+				)
+				const bridgeMethod: SearchMethod = this.resolveObservedSearchMethod(
+					bridgeTrace,
+					mongoCfg,
+				)
 				const normalizedRuntime = normalizeSearchResults(
 					runtimeHits,
-					legacyMethod,
+					runtimeMethod,
 				)
 				const normalizedBridge = normalizeSearchResults(
 					bridgeHits,
-					legacyMethod,
+					bridgeMethod,
 				)
 				mergedResults = applyPostRetrievalScoring(
 					query,
@@ -3372,7 +3459,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 						{
 							maxResults,
 							minScore,
-							filter: { agentId: this.agentId },
+							filter: {
+								agentId: this.agentId,
+								scope: identity.scope,
+								scopeRef: identity.scopeRef,
+							},
 							numCandidates: mongoCfg.numCandidates,
 							capabilities: this.capabilities,
 							vectorIndexName: `${this.prefix}structured_mem_vector`,
@@ -3381,6 +3472,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 						},
 					)
 		} else {
+			// Kept separate so a lane that degrades independently is normalized by
+			// the method that actually ran for that lane. See the identical note
+			// in search().
+			const runtimeTrace: SearchTraceEvent[] = []
+			const bridgeTrace: SearchTraceEvent[] = []
 			const [
 				runtimeConversationResults,
 				bridgeConversationResults,
@@ -3399,7 +3495,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 								minScore,
 								numCandidates: mongoCfg.numCandidates,
 								sessionKey: params.sessionKey,
-								filter: this.buildConversationChunkFilter(),
+								filter: this.buildConversationChunkFilter(identity),
 								fusionMethod: mongoCfg.fusionMethod,
 								capabilities: this.capabilities,
 								vectorIndexName: `${this.prefix}chunks_vector`,
@@ -3408,11 +3504,14 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 								textWeight: 0.3,
 								embeddingMode: mongoCfg.embeddingMode,
 								explain: explainOpts,
-								onTrace: (event) => traces.push(event),
+								onTrace: (event) => {
+									traces.push(event)
+									runtimeTrace.push(event)
+								},
 							},
 						),
 				// Bridge-note chunks — same collection, different namespace filter
-				!explainSources.conversation
+				!explainSources.conversation || !bridgeFilter
 					? emptyResults
 					: mongoSearch(
 							chunksCollection(this.db, this.prefix),
@@ -3423,7 +3522,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 								minScore,
 								numCandidates: mongoCfg.numCandidates,
 								sessionKey: params.sessionKey,
-								filter: this.buildBridgeChunkFilter(),
+								filter: bridgeFilter,
 								fusionMethod: mongoCfg.fusionMethod,
 								capabilities: this.capabilities,
 								vectorIndexName: `${this.prefix}chunks_vector`,
@@ -3432,7 +3531,10 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 								textWeight: 0.3,
 								embeddingMode: mongoCfg.embeddingMode,
 								explain: explainOpts,
-								onTrace: (event) => traces.push(event),
+								onTrace: (event) => {
+									traces.push(event)
+									bridgeTrace.push(event)
+								},
 							},
 						),
 				// KB chunks — skip if reference source is disabled
@@ -3467,7 +3569,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 							{
 								maxResults: Math.max(3, Math.floor(maxResults / 3)),
 								minScore,
-								filter: { agentId: this.agentId },
+								filter: {
+									agentId: this.agentId,
+									scope: identity.scope,
+									scopeRef: identity.scopeRef,
+								},
 								numCandidates: mongoCfg.numCandidates,
 								capabilities: this.capabilities,
 								vectorIndexName: `${this.prefix}structured_mem_vector`,
@@ -3481,15 +3587,18 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 							return [] as MemorySearchResult[]
 						}),
 			])
-			const conversationResults = [
-				...runtimeConversationResults,
-				...bridgeConversationResults,
-			]
-			const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg)
-			const normalizedLegacy = normalizeSearchResults(
-				conversationResults,
-				legacyMethod,
+			const runtimeMethod: SearchMethod = this.resolveObservedSearchMethod(
+				runtimeTrace,
+				mongoCfg,
 			)
+			const bridgeMethod: SearchMethod = this.resolveObservedSearchMethod(
+				bridgeTrace,
+				mongoCfg,
+			)
+			const normalizedLegacy = [
+				...normalizeSearchResults(runtimeConversationResults, runtimeMethod),
+				...normalizeSearchResults(bridgeConversationResults, bridgeMethod),
+			]
 			const normalizedKb = normalizeSearchResults(kbResults, "kb")
 			const normalizedStructured = normalizeSearchResults(
 				structuredResults,
@@ -3994,7 +4103,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 						datasetName: params.datasetName,
 						sessionId,
 						role: (turn as MemoryBenchmarkTurn).role,
-						error: err,
+						error: err instanceof Error ? err.message : String(err),
 					})
 				}
 			}
@@ -4348,7 +4457,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 				if (!isBenchmarkStrictMode()) {
 					log.warn("benchmark vector convergence probe failed", {
 						agentId,
-						error: err,
+						error: err instanceof Error ? err.message : String(err),
 					})
 					return
 				}
@@ -4591,7 +4700,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 				if (!isBenchmarkStrictMode()) {
 					log.warn("benchmark event search convergence probe failed", {
 						agentId,
-						error: err,
+						error: err instanceof Error ? err.message : String(err),
 					})
 					return
 				}
@@ -5209,7 +5318,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 									}
 									log.warn("LLM enrichment failed, falling back to regex", {
 										scenarioId: scenario.scenarioId,
-										error: err,
+										error: err instanceof Error ? err.message : String(err),
 									})
 									// Full fallback to regex userfact extraction
 									if (userfactEvidenceMode === "enabled") {
@@ -5242,7 +5351,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 								sessionMode: effectiveSessionEvidenceMode,
 								userfactMode: userfactEvidenceMode,
 								scenarioId: scenario.scenarioId,
-								error: err,
+								error: err instanceof Error ? err.message : String(err),
 							})
 							if (isBenchmarkStrictMode()) {
 								const message = err instanceof Error ? err.message : String(err)
@@ -5447,7 +5556,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 						log.warn("benchmark evaluation query failed", {
 							scenarioId: scenario.scenarioId,
 							caseId: evaluation.caseId,
-							error: err,
+							error: err instanceof Error ? err.message : String(err),
 						})
 						executions.push(
 							evaluateRankingCase({
@@ -5684,15 +5793,13 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 	// ---------------------------------------------------------------------------
 
 	private detectSearchMethod(mongoCfg: ResolvedMongoDBConfig): SearchMethod {
-		// Determine which search method mongoSearch() likely used based on
-		// capabilities and fusion method configuration.
+		// Best guess from configuration alone. Only correct when mongoSearch
+		// actually took the path its capabilities allow — prefer
+		// resolveObservedSearchMethod, which uses the trace of what ran.
 		const canVector =
 			mongoCfg.embeddingMode === "automated" && this.capabilities.vectorSearch
 
 		if (canVector && this.capabilities.textSearch) {
-			// Both server-side fusion and JS-merge fallback produce hybrid-like
-			// scores in ~[0,1] range (server fusion via $meta:"searchScore",
-			// JS merge via our RRF normalization in mergeHybridResultsMongoDB).
 			return "hybrid"
 		}
 		if (canVector) {
@@ -5700,6 +5807,40 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 		}
 		// Text-only or $text fallback
 		return "text"
+	}
+
+	/**
+	 * Resolve which search method actually produced these results, from the
+	 * trace mongoSearch emits, falling back to the configuration guess only
+	 * when nothing succeeded.
+	 *
+	 * This picks the normalizer, so guessing wrong corrupts ranking rather than
+	 * just mislabeling. mongoSearch degrades through hybrid → vector → keyword
+	 * → $text, and the last two return raw BM25/textScore values on an
+	 * unbounded scale. Calling those "hybrid" sends them to the [0,1] clamp,
+	 * which pins every lexical hit above ~1 to exactly 1.0 — sorting degraded
+	 * results above genuine cosine hits from the KB and structured lanes, whose
+	 * scores are normalized honestly. normalizeBM25Score exists precisely for
+	 * this case; it was simply never reached.
+	 */
+	private resolveObservedSearchMethod(
+		traceEvents: SearchTraceEvent[],
+		mongoCfg: ResolvedMongoDBConfig,
+	): SearchMethod {
+		const succeeded = [...traceEvents].toReversed().find((event) => event.ok)
+		switch (succeeded?.method) {
+			case "scoreFusion":
+			case "rankFusion":
+			case "js-merge":
+				return "hybrid"
+			case "vector":
+				return "vector"
+			case "keyword":
+			case "$text":
+				return "text"
+			default:
+				return this.detectSearchMethod(mongoCfg)
+		}
 	}
 
 	// ---------------------------------------------------------------------------
@@ -7054,6 +7195,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 								db: this.db,
 								prefix: this.prefix,
 								agentId: this.agentId,
+								scope: params.scope,
+								scopeRef: params.scopeRef,
 								results: result.results,
 								maxResults: params.maxResults,
 							})
@@ -7598,7 +7741,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 					})
 					entityCount = entityResult.entities.length
 				} catch (err) {
-					log.warn("entity extraction failed after event write", { error: err })
+					log.warn("entity extraction failed after event write", {
+						error: err instanceof Error ? err.message : String(err),
+					})
 				}
 			}
 
@@ -7671,7 +7816,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 				})
 			} catch (err) {
 				log.warn("lane coverage update failed after event write", {
-					error: err,
+					error: err instanceof Error ? err.message : String(err),
 				})
 			}
 
@@ -7886,7 +8031,7 @@ export async function writeEventAndProject(
 			entityCount = entityResult.entities.length
 		} catch (err) {
 			log.warn("entity extraction failed during writeEventAndProject", {
-				error: err,
+				error: err instanceof Error ? err.message : String(err),
 				eventId: written.eventId,
 			})
 		}
@@ -7912,7 +8057,10 @@ export async function writeEventAndProject(
 		} catch (err) {
 			log.warn(
 				"structured/procedure extraction failed during writeEventAndProject",
-				{ error: err, eventId: written.eventId },
+				{
+					error: err instanceof Error ? err.message : String(err),
+					eventId: written.eventId,
+				},
 			)
 		}
 
@@ -7931,7 +8079,7 @@ export async function writeEventAndProject(
 			episodeTriggered = episodeResult.triggered
 		} catch (err) {
 			log.warn("episode trigger check failed during writeEventAndProject", {
-				error: err,
+				error: err instanceof Error ? err.message : String(err),
 				eventId: written.eventId,
 			})
 		}
@@ -7997,7 +8145,7 @@ export async function writeEventAndProject(
 			})
 		} catch (err) {
 			log.warn("lane coverage update failed during writeEventAndProject", {
-				error: err,
+				error: err instanceof Error ? err.message : String(err),
 				eventId: written.eventId,
 			})
 		}
@@ -8044,10 +8192,12 @@ export async function writeEventAndProject(
 			},
 		}).catch((recErr) => {
 			log.warn("recordIngestRun failed during error recovery", {
-				error: recErr,
+				error: recErr instanceof Error ? recErr.message : String(recErr),
 			})
 		})
-		log.error("writeEventAndProject failed", { error: err })
+		log.error("writeEventAndProject failed", {
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -8411,7 +8561,7 @@ export async function searchV2(
 			}
 		} catch (err) {
 			log.warn("Failed to load lane coverage for planner", {
-				error: err,
+				error: err instanceof Error ? err.message : String(err),
 				agentId,
 			})
 		}
@@ -9373,7 +9523,10 @@ export async function searchV2(
 			},
 		}
 	} catch (err) {
-		log.error("searchV2 failed", { query, error: err })
+		log.error("searchV2 failed", {
+			query,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -9738,7 +9891,9 @@ export async function getV2Status(
 			],
 		}
 	} catch (err) {
-		log.error("getV2Status failed", { error: err })
+		log.error("getV2Status failed", {
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }

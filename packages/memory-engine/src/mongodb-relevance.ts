@@ -566,7 +566,7 @@ export class MongoDBRelevanceRuntime {
 				log.warn("failed to persist benchmark regression metric", {
 					datasetVersion,
 					metricName,
-					error: err,
+					error: err instanceof Error ? err.message : String(err),
 				})
 			}
 		}

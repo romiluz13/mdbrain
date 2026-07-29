@@ -620,7 +620,9 @@ export async function writeProcedure(params: {
 			...(params.mutationMeta ? { meta: params.mutationMeta } : {}),
 		},
 	}).catch((err) => {
-		log.warn("procedure audit failed", { error: err })
+		log.warn("procedure audit failed", {
+			error: err instanceof Error ? err.message : String(err),
+		})
 	})
 	return { upserted: outcome.upserted, id: outcome.id }
 }
@@ -767,7 +769,9 @@ export async function invalidateProcedureByHandle(params: {
 				...(params.mutationMeta ? { meta: params.mutationMeta } : {}),
 			},
 		}).catch((err) => {
-			log.warn("procedure invalidate audit failed", { error: err })
+			log.warn("procedure invalidate audit failed", {
+				error: err instanceof Error ? err.message : String(err),
+			})
 		})
 	}
 	return procedureLifecycleItemFromDoc(newSnapshot)
@@ -896,11 +900,16 @@ export async function recordProcedureOutcome(params: {
 				...(mutationMeta ? { meta: mutationMeta } : {}),
 			},
 		}).catch((error) => {
-			log.warn("recordProcedureOutcome audit failed", { error })
+			log.warn("recordProcedureOutcome audit failed", {
+				error: error instanceof Error ? error.message : String(error),
+			})
 		})
 		return true
 	} catch (err) {
-		log.error("recordProcedureOutcome failed", { procedureId, error: err })
+		log.error("recordProcedureOutcome failed", {
+			procedureId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -957,7 +966,9 @@ export async function reportProcedureOutcomeByHandle(params: {
 			},
 		},
 	}).catch((error) => {
-		log.warn("procedure outcome audit failed", { error })
+		log.warn("procedure outcome audit failed", {
+			error: error instanceof Error ? error.message : String(error),
+		})
 	})
 	return procedureLifecycleItemFromDoc(updated)
 }
@@ -1034,7 +1045,10 @@ export async function evolveProcedure(params: {
 		if (err instanceof Error && err.message.startsWith("Procedure not found")) {
 			throw err
 		}
-		log.error("evolveProcedure failed", { procedureId, error: err })
+		log.error("evolveProcedure failed", {
+			procedureId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -1281,7 +1295,9 @@ export async function searchProcedures(
 							})
 						}
 					} catch (err) {
-						log.warn("procedure vector explain failed", { error: err })
+						log.warn("procedure vector explain failed", {
+							error: err instanceof Error ? err.message : String(err),
+						})
 					}
 				}
 				const docs = await runSearchAggregateWithRetry(collection, pipeline)

@@ -120,7 +120,9 @@ export async function checkCache(params: {
 					{ $inc: { hitCount: 1 }, $set: { lastHitAt: now } },
 				)
 				.catch((err) => {
-					log.warn("cache hit count update failed", { error: err })
+					log.warn("cache hit count update failed", {
+						error: err instanceof Error ? err.message : String(err),
+					})
 				})
 			emitTelemetry(db, prefix, {
 				meta: { agentId, operation: "cache-check" },
@@ -137,7 +139,9 @@ export async function checkCache(params: {
 			}
 		}
 	} catch (err) {
-		log.warn("cache exact lookup failed", { error: err })
+		log.warn("cache exact lookup failed", {
+			error: err instanceof Error ? err.message : String(err),
+		})
 		emitTelemetry(db, prefix, {
 			meta: { agentId, operation: "cache-check" },
 			durationMs: Date.now() - cacheStart,
@@ -199,7 +203,9 @@ export async function checkCache(params: {
 					{ $inc: { hitCount: 1 }, $set: { lastHitAt: now } },
 				)
 				.catch((err) => {
-					log.warn("cache hit count update failed (semantic)", { error: err })
+					log.warn("cache hit count update failed (semantic)", {
+						error: err instanceof Error ? err.message : String(err),
+					})
 				})
 			emitTelemetry(db, prefix, {
 				meta: { agentId, operation: "cache-check" },
@@ -217,7 +223,9 @@ export async function checkCache(params: {
 		}
 	} catch (err) {
 		// Semantic tier failure is non-fatal — degrade to cache miss
-		log.warn("cache semantic lookup failed", { error: err })
+		log.warn("cache semantic lookup failed", {
+			error: err instanceof Error ? err.message : String(err),
+		})
 	}
 
 	emitTelemetry(db, prefix, {
@@ -292,6 +300,8 @@ export function writeCache(params: {
 			{ upsert: true },
 		)
 		.catch((err) => {
-			log.warn("cache write failed", { error: err })
+			log.warn("cache write failed", {
+				error: err instanceof Error ? err.message : String(err),
+			})
 		})
 }

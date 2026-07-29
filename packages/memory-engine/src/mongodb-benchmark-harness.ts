@@ -125,7 +125,7 @@ async function replayConversationDataset(params: {
 					datasetName: params.datasetName,
 					sessionId,
 					role: turn.role,
-					error: err,
+					error: err instanceof Error ? err.message : String(err),
 				})
 			}
 		}

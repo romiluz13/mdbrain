@@ -184,7 +184,9 @@ export async function crossEncoderRerank(params: {
 			latencyMs,
 		}
 	} catch (err) {
-		log.warn("rerank failed, falling back to input order", { error: err })
+		log.warn("rerank failed, falling back to input order", {
+			error: err instanceof Error ? err.message : String(err),
+		})
 		// M1: Emit failure telemetry in catch block
 		emitTelemetry(db, prefix, {
 			meta: { agentId, operation: "rerank" },

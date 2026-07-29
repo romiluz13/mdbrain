@@ -113,7 +113,9 @@ export async function synthesizeProfile(params: {
 		try {
 			return await fn()
 		} catch (err) {
-			log.warn(`synthesizeProfile: ${label} query failed`, { error: err })
+			log.warn(`synthesizeProfile: ${label} query failed`, {
+				error: err instanceof Error ? err.message : String(err),
+			})
 			return null
 		}
 	}
@@ -311,7 +313,10 @@ export async function synthesizeProfile(params: {
 			synthesizedAt: new Date(),
 		}
 	} catch (err) {
-		log.error("synthesizeProfile failed", { agentId, error: err })
+		log.error("synthesizeProfile failed", {
+			agentId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		emitTelemetry(db, prefix, {
 			meta: { agentId, operation: "profile-synthesis" },
 			durationMs: Date.now() - profileStart,

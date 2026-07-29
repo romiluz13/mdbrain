@@ -92,10 +92,10 @@ describe("benchmark harness", () => {
 					}),
 				}),
 			)
-			expect(
-				(writeTurn.mock.calls[0]?.[0] as { metadata?: Record<string, unknown> })
-					.metadata,
-			).not.toHaveProperty("benchmarkDataset")
+			const firstCallArg = writeTurn.mock.calls[0]?.[0] as
+				| { metadata?: Record<string, unknown> }
+				| undefined
+			expect(firstCallArg?.metadata).not.toHaveProperty("benchmarkDataset")
 		} finally {
 			await rm(dir, { recursive: true, force: true })
 		}

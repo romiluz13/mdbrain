@@ -1060,7 +1060,10 @@ export function planRetrieval(
 			...(skippedLanes.length > 0 ? { skippedLanes } : {}),
 		}
 	} catch (err) {
-		log.error("planRetrieval failed", { query, error: err })
+		log.error("planRetrieval failed", {
+			query,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }

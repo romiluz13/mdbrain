@@ -1,5 +1,5 @@
 import type { Db, Document } from "mongodb"
-import { createSubsystemLogger } from "@mdbrain/lib"
+import { type MemoryScope, createSubsystemLogger } from "@mdbrain/lib"
 import { renderEventChunkText } from "./mongodb-events.js"
 import { eventsCollection } from "./mongodb-schema.js"
 import type { MemorySearchResult } from "./types.js"
@@ -31,11 +31,26 @@ export async function expandSearchContext(params: {
 	db: Db
 	prefix: string
 	agentId: string
+	/**
+	 * Tenant identity the neighbor lookup must stay inside. Required, because
+	 * expansion re-queries the events collection directly — an unscoped lookup
+	 * would pull neighbors from any scope that happens to share a sessionId.
+	 */
+	scope: MemoryScope
+	scopeRef: string
 	results: MemorySearchResult[]
 	maxResults?: number
 	windowSize?: number // neighbors per side (default: 1)
 }): Promise<MemorySearchResult[]> {
-	const { db, prefix, agentId, results, windowSize = 1 } = params
+	const {
+		db,
+		prefix,
+		agentId,
+		scope,
+		scopeRef,
+		results,
+		windowSize = 1,
+	} = params
 	const maxResults = params.maxResults ?? results.length + 10
 
 	// Identify event-based chunks that can be expanded
@@ -88,6 +103,8 @@ export async function expandSearchContext(params: {
 		const windowMs = 24 * 60 * 60 * 1000 // 24h default window for neighbor fetch
 		const filter: Document = {
 			agentId,
+			scope,
+			scopeRef,
 			sessionId,
 			timestamp: {
 				$gte: new Date(minTs - windowMs),
@@ -105,7 +122,7 @@ export async function expandSearchContext(params: {
 		} catch (err) {
 			log.warn(
 				`context expansion query failed for session=${sessionId}, skipping`,
-				{ error: err },
+				{ error: err instanceof Error ? err.message : String(err) },
 			)
 			continue
 		}

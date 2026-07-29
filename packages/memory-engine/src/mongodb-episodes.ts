@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import type { Db, Document } from "mongodb"
 import { type MemoryScope, createSubsystemLogger } from "@mdbrain/lib"
 import {
@@ -55,8 +55,18 @@ export type EpisodeSummarizerResult = {
 	topics?: string[]
 }
 
+/**
+ * The episode `type` is passed so a summarizer can say something different
+ * about the same events depending on the lens being applied. Without it, a
+ * "daily", a "topic" and a "decision" episode over one window are guaranteed to
+ * be byte-identical clones that all surface together in a single search and
+ * crowd out genuinely distinct evidence.
+ *
+ * Optional so existing summarizers keep type-checking; they simply ignore it.
+ */
 export type EpisodeSummarizer = (
 	events: Array<{ role: string; body: string; timestamp: Date }>,
+	type?: EpisodeType,
 ) => Promise<EpisodeSummarizerResult>
 
 const EPISODE_QUERY_STOPWORDS = new Set([
@@ -149,6 +159,24 @@ function resolveTriggeredEpisodeWindow(params: {
 	return events
 }
 
+/**
+ * Stable content address for the set of events an episode summarizes.
+ *
+ * Sorted so that a different retrieval order over the same events yields the
+ * same address, and hashed so the identity stays a fixed-width scalar however
+ * many events an episode covers (they run to hundreds).
+ */
+export function hashSourceEventIds(sourceEventIds: string[]): string {
+	return createHash("sha256")
+		.update(
+			sourceEventIds
+				.map((id) => id.trim())
+				.toSorted()
+				.join(" "),
+		)
+		.digest("hex")
+}
+
 // ---------------------------------------------------------------------------
 // Materialize episode from raw events
 // ---------------------------------------------------------------------------
@@ -235,7 +263,7 @@ export async function materializeEpisode(params: {
 			mediumTermSummary,
 			longTermSummary,
 			topics,
-		} = await summarizer(summarizerInput)
+		} = await summarizer(summarizerInput, type)
 
 		// 3b. Validate summarizer output
 		if (!title || typeof title !== "string" || !title.trim()) {
@@ -249,6 +277,7 @@ export async function materializeEpisode(params: {
 		const episodeId = randomUUID()
 		const now = new Date()
 		const sourceEventIds = events.map((e) => e.eventId)
+		const sourceEventsHash = hashSourceEventIds(sourceEventIds)
 
 		const setDoc: Document = {
 			type,
@@ -260,6 +289,7 @@ export async function materializeEpisode(params: {
 			timeRange: { start: timeRange.start, end: timeRange.end },
 			sourceEventCount: events.length,
 			sourceEventIds,
+			sourceEventsHash,
 			updatedAt: now,
 		}
 		if (tags !== undefined) {
@@ -278,16 +308,26 @@ export async function materializeEpisode(params: {
 			setDoc.topics = topics
 		}
 
-		// 5. Idempotent upsert: filter on {agentId, type, timeRange.start, timeRange.end}
-		//    episodeId goes in $setOnInsert so it is stable across re-materializations
+		// 5. Idempotent upsert keyed on the CONTENT — the set of events summarized —
+		//    rather than on the query window that happened to select them.
+		//
+		//    The window is not a stable identity. checkAutoEpisodeTriggers derives
+		//    timeRange from resolveTriggeredEpisodeWindow, whose boundaries are the
+		//    first and last timestamps of whichever slice it picked, so two passes
+		//    over the same events can differ by a fraction of a second. That jitter
+		//    used to mint a whole new episode over identical content: observed on a
+		//    live cluster as three episode documents with byte-identical summaries
+		//    and the same 18 sourceEventIds, all surfacing together in one search.
+		//
+		//    timeRange remains on the document as derived data ($set above).
+		//    episodeId stays in $setOnInsert so it is stable across re-materializations.
 		const col = episodesCollection(db, prefix)
 		const identityFilter = {
 			agentId,
 			type,
 			scope: resolvedScope,
 			scopeRef,
-			"timeRange.start": timeRange.start,
-			"timeRange.end": timeRange.end,
+			sourceEventsHash,
 		}
 		const updateResult = await col.updateOne(
 			identityFilter,

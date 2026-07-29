@@ -1005,7 +1005,9 @@ export async function invalidateStructuredMemoryByHandle(params: {
 				...(params.mutationMeta ? { meta: params.mutationMeta } : {}),
 			},
 		}).catch((err) => {
-			log.warn("structured memory invalidate audit failed", { error: err })
+			log.warn("structured memory invalidate audit failed", {
+				error: err instanceof Error ? err.message : String(err),
+			})
 		})
 	}
 	return structuredLifecycleItemFromDoc(newSnapshot)
@@ -1103,7 +1105,9 @@ export async function applyStructuredMemoryFeedbackByHandle(params: {
 			meta: mutationMeta,
 		},
 	}).catch((err) => {
-		log.warn("structured memory feedback audit failed", { error: err })
+		log.warn("structured memory feedback audit failed", {
+			error: err instanceof Error ? err.message : String(err),
+		})
 	})
 	return structuredLifecycleItemFromDoc(updated)
 }
@@ -1386,7 +1390,9 @@ export async function searchStructuredMemory(
 							})
 						}
 					} catch (err) {
-						log.warn("structured vector explain failed", { error: err })
+						log.warn("structured vector explain failed", {
+							error: err instanceof Error ? err.message : String(err),
+						})
 					}
 				}
 

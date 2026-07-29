@@ -554,8 +554,8 @@ describe("ensureStandardIndexes", () => {
 		// + 1 consolidation_runs (agent_time)
 		// + 3 sourceRef dedup (events, structured, procedures)
 		// + 1 partial index (structured active facts) + 2 sourceEvent dedup indexes
-		// + 3 session_chunks = 85 (was 84; +1 for bi-temporal SE-1)
-		expect(count).toBe(85)
+		// + 3 session_chunks + 1 uq_episodes_source_events = 86
+		expect(count).toBe(86)
 		expect(chunks.createIndex).toHaveBeenCalledTimes(4)
 		expect(cache.createIndex).toHaveBeenCalledTimes(2)
 		expect(kb.createIndex).toHaveBeenCalledTimes(5)
@@ -592,7 +592,7 @@ describe("ensureStandardIndexes", () => {
 		expect(entities.createIndex).toHaveBeenCalledTimes(5)
 		expect(relations.createIndex).toHaveBeenCalledTimes(4)
 		expect(entityLinks.createIndex).toHaveBeenCalledTimes(2)
-		expect(episodes.createIndex).toHaveBeenCalledTimes(4)
+		expect(episodes.createIndex).toHaveBeenCalledTimes(5)
 		expect(ingestRuns.createIndex).toHaveBeenCalledTimes(1)
 		expect(projectionRuns.createIndex).toHaveBeenCalledTimes(1)
 
@@ -640,7 +640,7 @@ describe("ensureStandardIndexes", () => {
 			) as unknown as {
 				createIndex: ReturnType<typeof vi.fn>
 			}
-			expect(count).toBe(89)
+			expect(count).toBe(90)
 			expect(memoryEvidence.createIndex).toHaveBeenCalledTimes(4)
 			expect(memoryEvidence.createIndex).toHaveBeenCalledWith(
 				{ canonicalId: 1 },
@@ -826,7 +826,7 @@ describe("ensureStandardIndexes", () => {
 		// 1 structured scope + 1 structured revisions + 4 procedures + 1 procedure_revisions +
 		// 3 query_cache + 2 telemetry + 2 access_events + 3 memory_mutations
 		// + 1 lane_coverage + 1 consolidation_runs + 3 session_chunks = 85
-		expect(count).toBe(85)
+		expect(count).toBe(86)
 	})
 
 	it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -1082,8 +1082,9 @@ describe("ensureSearchIndexes", () => {
 			(c: unknown[]) => (c[0] as Document).type === "search",
 		)
 		expect(textCall).toBeDefined()
-		const textFields = (textCall?.[0] as Document).definition.mappings.fields
-		expect(textFields.sessionId).toEqual({ type: "token" })
+		const textCallArg = textCall?.[0] as Document | undefined
+		const textFields = textCallArg?.definition.mappings.fields
+		expect(textFields?.sessionId).toEqual({ type: "token" })
 	})
 
 	it("updates stale chunk search indexes when definitions drift", async () => {
@@ -2162,7 +2163,8 @@ describe("query_cache vector search index", () => {
 				(call) =>
 					(call[0] as { name?: string }).name === "test_memory_evidence_vector",
 			)
-			const fields = (vectorCall?.[0] as Document).definition.fields
+			const vectorCallArg = vectorCall?.[0] as Document | undefined
+			const fields = vectorCallArg?.definition.fields ?? []
 			const filterPaths = fields
 				.filter((field: Document) => field.type === "filter")
 				.map((field: Document) => field.path)
@@ -2363,7 +2365,7 @@ describe("ensureStandardIndexes total count with query_cache and time series ind
 		// 1 structured scope + 1 structured revisions + 4 procedures + 1 procedure_revisions +
 		// 3 query_cache + 2 telemetry + 2 access_events + 3 memory_mutations
 		// + 1 lane_coverage + 1 consolidation_runs + 3 session_chunks = 85
-		expect(count).toBe(85)
+		expect(count).toBe(86)
 	})
 })
 

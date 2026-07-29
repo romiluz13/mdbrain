@@ -198,7 +198,9 @@ async function settled<T>(
 	try {
 		return await fn()
 	} catch (error) {
-		log.warn(`hydrateActiveSlate: ${label} query failed`, { error })
+		log.warn(`hydrateActiveSlate: ${label} query failed`, {
+			error: error instanceof Error ? error.message : String(error),
+		})
 		return null
 	}
 }

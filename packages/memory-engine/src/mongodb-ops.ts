@@ -70,7 +70,10 @@ export async function recordIngestRun(params: {
 		await ingestRunsCollection(db, prefix).insertOne(doc)
 		return runId
 	} catch (err) {
-		log.error("recordIngestRun failed", { runId, error: err })
+		log.error("recordIngestRun failed", {
+			runId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -93,7 +96,10 @@ export async function recordProjectionRun(params: {
 		})
 		return runId
 	} catch (err) {
-		log.error("recordProjectionRun failed", { runId, error: err })
+		log.error("recordProjectionRun failed", {
+			runId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -118,7 +124,10 @@ export async function getRecentIngestRuns(params: {
 			.toArray()
 		return docs as unknown as IngestRun[]
 	} catch (err) {
-		log.error("getRecentIngestRuns failed", { agentId, error: err })
+		log.error("getRecentIngestRuns failed", {
+			agentId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -147,7 +156,7 @@ export async function getRecentProjectionRuns(params: {
 		log.error("getRecentProjectionRuns failed", {
 			agentId,
 			projectionType,
-			error: err,
+			error: err instanceof Error ? err.message : String(err),
 		})
 		throw err
 	}
@@ -166,7 +175,10 @@ export async function getLatestIngestRun(params: {
 		)
 		return (doc as IngestRun | null) ?? null
 	} catch (err) {
-		log.error("getLatestIngestRun failed", { agentId, error: err })
+		log.error("getLatestIngestRun failed", {
+			agentId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -188,7 +200,7 @@ export async function getLatestProjectionRun(params: {
 		log.error("getLatestProjectionRun failed", {
 			agentId,
 			projectionType,
-			error: err,
+			error: err instanceof Error ? err.message : String(err),
 		})
 		throw err
 	}
@@ -215,7 +227,7 @@ export async function getProjectionLag(params: {
 		log.error("getProjectionLag failed", {
 			agentId,
 			projectionType,
-			error: err,
+			error: err instanceof Error ? err.message : String(err),
 		})
 		throw err
 	}

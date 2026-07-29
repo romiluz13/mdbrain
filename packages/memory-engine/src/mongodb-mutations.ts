@@ -61,7 +61,10 @@ export async function recordMutation(params: {
 		await mutationsCollection(db, prefix).insertOne(doc)
 		return { mutationId }
 	} catch (err) {
-		log.warn("recordMutation failed", { mutationId, error: err })
+		log.warn("recordMutation failed", {
+			mutationId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }
@@ -111,7 +114,10 @@ export async function getMutationHistory(params: {
 			.toArray()
 		return docs as unknown as MutationRecord[]
 	} catch (err) {
-		log.error("getMutationHistory failed", { agentId, error: err })
+		log.error("getMutationHistory failed", {
+			agentId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		throw err
 	}
 }

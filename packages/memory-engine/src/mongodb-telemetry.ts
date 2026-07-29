@@ -104,7 +104,7 @@ export async function flushTelemetry(db: Db, prefix: string): Promise<void> {
 	} catch (err) {
 		log.warn("telemetry flush failed; retaining events for next flush", {
 			count: batch.length,
-			error: err,
+			error: err instanceof Error ? err.message : String(err),
 		})
 		// Put the failed batch back at the front; new events stay after it.
 		telemetryBuffer.unshift(...batch)

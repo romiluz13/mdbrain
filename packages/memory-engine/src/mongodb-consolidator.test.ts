@@ -658,6 +658,73 @@ describe("consolidateMemory", () => {
 		expect(result.eventsProcessed).toBe(1)
 	})
 
+	it("scores an old event identically to a fresh one (age-invariance)", async () => {
+		// The contract, not just the count. Write eligibility used to multiply
+		// importance by 0.5**(ageDays/7), so a 60-day-old preference contributed
+		// ~0.001 where a same-day one contributed 0.15 — the same fact, promoted
+		// or silently dropped depending only on when it was said. A count-only
+		// assertion would pass again the day someone reintroduces a milder decay;
+		// equality is what pins it.
+		const { consolidateMemory } = await import("./mongodb-consolidator.js")
+		const { scanNovelty } = await import("./mongodb-novelty.js")
+		;(scanNovelty as ReturnType<typeof vi.fn>).mockImplementationOnce(
+			async () => ({ events: [], scannedCount: 0, agentId: "agent-1" }),
+		)
+		const now = new Date("2026-07-29T00:00:00.000Z")
+		const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000)
+		const consolidationRunsCol = mockCollection({
+			findOne: vi.fn(async () => null),
+		})
+		const eventsCol = mockCollection({
+			find: vi.fn(() => ({
+				sort: vi.fn(() => ({
+					limit: vi.fn(() => ({
+						toArray: vi.fn(async () => [
+							{
+								eventId: "fresh",
+								agentId: "agent-1",
+								body: "I prefer tabs over spaces",
+								timestamp: now,
+								role: "user",
+							},
+							{
+								eventId: "old",
+								agentId: "agent-1",
+								body: "I prefer tabs over spaces",
+								timestamp: sixtyDaysAgo,
+								role: "user",
+							},
+						]),
+					})),
+				})),
+			})),
+		})
+		const db = mockDb({
+			test_consolidation_runs: consolidationRunsCol,
+			test_events: eventsCol,
+		})
+
+		const result = await consolidateMemory({
+			db,
+			prefix: "test_",
+			agentId: "agent-1",
+			options: { minIntervalMs: 0 },
+		})
+
+		const fresh = result.candidates.find((c) => c.eventId === "fresh")
+		const old = result.candidates.find((c) => c.eventId === "old")
+		expect(fresh).toBeDefined()
+		expect(old).toBeDefined()
+		expect(old?.combinedScore).toBe(fresh?.combinedScore)
+		// Both must clear the default gate — neither is a duplicate, and the
+		// novelty report returned nothing, which means "unscored", not "stale".
+		expect(fresh?.combinedScore).toBeGreaterThanOrEqual(0.15)
+		// The decay figure survives as an observability field, and still differs.
+		expect(old?.importanceDecay).toBeLessThan(
+			fresh?.importanceDecay ?? Number.POSITIVE_INFINITY,
+		)
+	})
+
 	it("uses 0.15 as default minCombinedScore when not specified", async () => {
 		const { consolidateMemory } = await import("./mongodb-consolidator.js")
 		const consolidationRunsCol = mockCollection({
@@ -1530,4 +1597,54 @@ describe("Dreamer entity extraction integration (Phase 3.4)", () => {
 			{ seed: 20260512, numRuns: 300 },
 		)
 	}, 30_000)
+})
+
+describe("matchPatterns", () => {
+	it("extracts decisions phrased in the first person plural", async () => {
+		// Regression. The decision pattern matched only "I decided/chose/...",
+		// so every "we decided" statement fell through to no category and was
+		// never promoted. Every existing unit test used "I decided", which is
+		// why the gap survived.
+		for (const body of [
+			"We decided to use MongoDB for the memory layer",
+			"We chose Vitest over Jest for testing",
+			"We picked Turborepo for the build system",
+			"We selected Node 20 as the minimum",
+			"We went with Biome instead of ESLint",
+		]) {
+			const { matchPatterns } = await import("./mongodb-consolidator.js")
+			expect(matchPatterns(body), body).toMatchObject({ type: "decision" })
+		}
+	})
+
+	it("still extracts decisions phrased in the first person singular", async () => {
+		const { matchPatterns } = await import("./mongodb-consolidator.js")
+		expect(matchPatterns("I decided to use Bun instead of Node")).toMatchObject(
+			{ type: "decision" },
+		)
+	})
+
+	it("keeps the whole body as the value and the predicate as the key", async () => {
+		const { matchPatterns } = await import("./mongodb-consolidator.js")
+		const body = "We chose Vitest over Jest for testing"
+		expect(matchPatterns(body)).toEqual({
+			type: "decision",
+			key: "Vitest over Jest for testing",
+			value: body,
+		})
+	})
+
+	it("does not invent a decision from unrelated first-person-plural text", async () => {
+		// The category patterns are documented as conservative: false negatives
+		// are acceptable, false positives are not. Widening to "we" must not
+		// start classifying ordinary narration as a decision.
+		const { matchPatterns } = await import("./mongodb-consolidator.js")
+		for (const body of [
+			"We discussed the tradeoffs for a while",
+			"We were wondering about the schema",
+			"We deployed on Friday",
+		]) {
+			expect(matchPatterns(body)?.type, body).not.toBe("decision")
+		}
+	})
 })

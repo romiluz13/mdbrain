@@ -1441,7 +1441,9 @@ export async function extractAndUpsertEntities(params: {
 					ordered: false,
 				})
 			} catch (bulkErr) {
-				log.warn("bulkWrite entity upserts partial failure", { error: bulkErr })
+				log.warn("bulkWrite entity upserts partial failure", {
+					error: bulkErr instanceof Error ? bulkErr.message : String(bulkErr),
+				})
 			}
 		}
 
@@ -1548,7 +1550,7 @@ export async function extractAndUpsertEntities(params: {
 					})
 				} catch (bulkErr) {
 					log.warn("bulkWrite relation upserts partial failure", {
-						error: bulkErr,
+						error: bulkErr instanceof Error ? bulkErr.message : String(bulkErr),
 					})
 				}
 			}
@@ -1559,7 +1561,7 @@ export async function extractAndUpsertEntities(params: {
 					})
 				} catch (bulkErr) {
 					log.warn("bulkWrite entity-link upserts partial failure", {
-						error: bulkErr,
+						error: bulkErr instanceof Error ? bulkErr.message : String(bulkErr),
 					})
 				}
 			}
