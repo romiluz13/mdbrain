@@ -1148,6 +1148,11 @@ export const toolList = [
 					description: "Directory to write the bundle.",
 				},
 				okfBundleId: { type: "string" },
+				trustTier: {
+					type: "string",
+					description:
+						"Caller's trust tier (restricted|standard|admin) — export is governance-filtered exactly like a governed read, never an unfiltered dump.",
+				},
 				agentId: { type: "string" },
 			},
 			required: ["scope", "scopeRef", "outDir"],
@@ -2153,6 +2158,8 @@ export async function handleToolCall(
 				outDir: typeof args.outDir === "string" ? args.outDir : "",
 				okfBundleId:
 					typeof args.okfBundleId === "string" ? args.okfBundleId : undefined,
+				trustTier:
+					typeof args.trustTier === "string" ? args.trustTier : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }

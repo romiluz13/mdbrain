@@ -17,6 +17,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import yaml from "js-yaml"
+import type { Document } from "mongodb"
 import {
 	createWikiPage,
 	getWikiPage,
@@ -29,6 +30,10 @@ import {
 	type WikiRelationshipInput,
 	type WikiQuestionInput,
 } from "./wiki-bridge.js"
+import {
+	filterPagesByGovernance,
+	type GovernanceContext,
+} from "./wiki-governance.js"
 
 // ---------------------------------------------------------------------------
 // Path safety — prevent directory traversal in OKF import/export
@@ -45,7 +50,15 @@ function isPathWithinRoot(candidate: string, root: string): boolean {
 }
 
 /** Resolves and validates a directory path against allowed roots. Throws if
- *  the path escapes all allowed roots or contains parent-directory traversal. */
+ *  the path escapes all allowed roots or contains parent-directory traversal.
+ *
+ *  Fails closed by default: with no MDBRAIN_OKF_ALLOWED_ROOTS configured, any
+ *  absolute path (including outside the deployment) would otherwise be a
+ *  valid import/export target — an arbitrary filesystem read (import) or
+ *  write (export) reachable by any authenticated API caller. Local-first dev
+ *  can opt back into the old unrestricted behavior explicitly via
+ *  MDBRAIN_OKF_ALLOW_UNRESTRICTED=true; production deployments must set
+ *  MDBRAIN_OKF_ALLOWED_ROOTS. */
 function validateOkfPath(dir: string, allowedRoots: string[]): string {
 	if (!dir.trim()) {
 		throw new Error("directory path is required")
@@ -58,9 +71,15 @@ function validateOkfPath(dir: string, allowedRoots: string[]): string {
 	}
 	const resolved = path.resolve(dir)
 	if (allowedRoots.length === 0) {
-		// No roots configured — allow resolved absolute paths (backward compat
-		// for local-first dev where the caller controls the filesystem)
-		return resolved
+		if (process.env.MDBRAIN_OKF_ALLOW_UNRESTRICTED === "true") {
+			return resolved
+		}
+		throw new Error(
+			"OKF import/export requires MDBRAIN_OKF_ALLOWED_ROOTS to be configured " +
+				"(comma-separated allowed directory roots), or explicit opt-in via " +
+				"MDBRAIN_OKF_ALLOW_UNRESTRICTED=true for local-first dev. Refusing " +
+				"to resolve an unrestricted filesystem path.",
+		)
 	}
 	const allowed = allowedRoots.some((root) =>
 		isPathWithinRoot(resolved, path.resolve(root)),
@@ -113,41 +132,62 @@ function* iterateMatches(
 	}
 }
 
-/** Parses a single .md file into frontmatter + body. */
+/** Parses a single .md file into frontmatter + body. Returns a diagnostic
+ *  reason on skip instead of a bare null, so a caller can record WHY a
+ *  concept was dropped rather than have it silently vanish from the import
+ *  result. */
 function parseConceptFile(
 	filePath: string,
 	relativePath: string,
-): OkfConcept | null {
+): { concept: OkfConcept | null; skipReason: string | null } {
 	// Cap file size to prevent DoS via oversized concept files.
 	const MAX_CONCEPT_BYTES = 1024 * 1024 // 1 MiB
 	const stat = fs.statSync(filePath)
 	if (stat.size > MAX_CONCEPT_BYTES) {
-		return null
+		return {
+			concept: null,
+			skipReason: `file exceeds ${MAX_CONCEPT_BYTES} byte limit (${stat.size} bytes)`,
+		}
 	}
 	const raw = fs.readFileSync(filePath, "utf-8")
-	const { frontmatter, body } = splitFrontmatter(raw)
+	const { frontmatter, body, error } = splitFrontmatter(raw)
+	if (error) {
+		return { concept: null, skipReason: error }
+	}
 	if (!frontmatter || !frontmatter.type) {
-		// Not a valid OKF concept (missing required `type`) — skip.
-		return null
+		return {
+			concept: null,
+			skipReason: "missing required frontmatter field `type`",
+		}
 	}
 	const conceptId = relativePath.replace(/\.md$/, "").replace(/\\/g, "/")
-	return { conceptId, filePath: relativePath, frontmatter, body }
+	return {
+		concept: { conceptId, filePath: relativePath, frontmatter, body },
+		skipReason: null,
+	}
 }
 
-/** Splits a markdown file into YAML frontmatter + body. */
+/** Splits a markdown file into YAML frontmatter + body. `error` is set when a
+ *  frontmatter block was present but unparseable (malformed YAML, oversized),
+ *  as distinct from a document that legitimately has no frontmatter at all. */
 function splitFrontmatter(raw: string): {
 	frontmatter: OkfFrontmatter | null
 	body: string
+	error: string | null
 } {
 	const lines = raw.split("\n")
 	if (lines[0]?.trim() !== FRONTMATTER_DELIMITER) {
-		return { frontmatter: null, body: raw }
+		return { frontmatter: null, body: raw, error: null }
 	}
 	const end = lines.findIndex(
 		(l, i) => i > 0 && l.trim() === FRONTMATTER_DELIMITER,
 	)
 	if (end === -1) {
-		return { frontmatter: null, body: raw }
+		return {
+			frontmatter: null,
+			body: raw,
+			error: "unterminated frontmatter block (no closing ---)",
+		}
 	}
 	const yamlBlock = lines.slice(1, end).join("\n")
 	const body = lines
@@ -157,7 +197,11 @@ function splitFrontmatter(raw: string): {
 	// Cap YAML block size to prevent DoS via oversized frontmatter.
 	const MAX_YAML_BYTES = 256 * 1024 // 256 KiB
 	if (Buffer.byteLength(yamlBlock, "utf8") > MAX_YAML_BYTES) {
-		return { frontmatter: null, body }
+		return {
+			frontmatter: null,
+			body,
+			error: `frontmatter exceeds ${MAX_YAML_BYTES} byte limit`,
+		}
 	}
 	// Use js-yaml's DEFAULT_SCHEMA (safe schema) to prevent unsafe tag
 	// execution (e.g. !!js/function). The 256 KiB size cap above prevents
@@ -168,16 +212,26 @@ function splitFrontmatter(raw: string): {
 		const parsed = yaml.load(yamlBlock, {
 			schema: yaml.DEFAULT_SCHEMA,
 		}) as OkfFrontmatter | null
-		return { frontmatter: parsed ?? null, body }
-	} catch {
-		return { frontmatter: null, body }
+		return { frontmatter: parsed ?? null, body, error: null }
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err)
+		return {
+			frontmatter: null,
+			body,
+			error: `invalid YAML frontmatter: ${msg}`,
+		}
 	}
 }
 
 /** Walks a bundle directory and returns all concept .md files (excluding
- *  index.md and log.md, which are handled separately). */
-function readBundleConcepts(bundleDir: string): OkfConcept[] {
+ *  index.md and log.md, which are handled separately), plus a diagnostic
+ *  entry for every file that was skipped and why. */
+function readBundleConcepts(bundleDir: string): {
+	concepts: OkfConcept[]
+	skipped: Array<{ path: string; reason: string }>
+} {
 	const concepts: OkfConcept[] = []
+	const skipped: Array<{ path: string; reason: string }> = []
 	function walk(dir: string) {
 		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 			const full = path.join(dir, entry.name)
@@ -186,13 +240,17 @@ function readBundleConcepts(bundleDir: string): OkfConcept[] {
 			} else if (entry.isFile() && entry.name.endsWith(".md")) {
 				if (entry.name === "index.md" || entry.name === "log.md") continue
 				const relative = path.relative(bundleDir, full)
-				const concept = parseConceptFile(full, relative)
-				if (concept) concepts.push(concept)
+				const { concept, skipReason } = parseConceptFile(full, relative)
+				if (concept) {
+					concepts.push(concept)
+				} else if (skipReason) {
+					skipped.push({ path: relative, reason: skipReason })
+				}
 			}
 		}
 	}
 	walk(bundleDir)
-	return concepts
+	return { concepts, skipped }
 }
 
 // ---------------------------------------------------------------------------
@@ -223,13 +281,13 @@ export async function importOkfBundle(
 		? process.env.MDBRAIN_OKF_ALLOWED_ROOTS.split(",").map((r) => r.trim())
 		: []
 	const safeBundleDir = validateOkfPath(bundleDir, allowedRoots)
-	const concepts = readBundleConcepts(safeBundleDir)
+	const { concepts, skipped } = readBundleConcepts(safeBundleDir)
 	const indexRelationships = parseIndexRelationships(safeBundleDir)
 	const result: OkfImportResult = {
 		imported: 0,
-		skipped: 0,
+		skipped: skipped.length,
 		conceptIds: [],
-		errors: [],
+		errors: skipped.map((s) => ({ conceptId: s.path, error: s.reason })),
 	}
 
 	for (const concept of concepts) {
@@ -243,6 +301,17 @@ export async function importOkfBundle(
 				input.scopeRef,
 			)
 			if (existing) {
+				// Only allow overwrite of pages that were themselves produced by a
+				// prior OKF import. A page authored manually through the wiki UI (no
+				// okfConceptId) never had its content sourced from a bundle, so a
+				// slug collision there is far more likely a naming accident than an
+				// intentional re-import — refuse rather than silently clobbering it.
+				if (!existing.okfConceptId) {
+					throw new Error(
+						`slug "${input.slug}" already exists as a manually-authored page ` +
+							"(not previously OKF-imported) — refusing to overwrite",
+					)
+				}
 				await updateWikiPage(handle, input.slug, input.scope, input.scopeRef, {
 					title: input.title,
 					aliases: input.aliases,
@@ -299,7 +368,7 @@ function parseIndexRelationships(
 		}
 		linkRegex.lastIndex = 0
 		for (const m of iterateMatches(linkRegex, line)) {
-			current.push({ text: m[1], target: m[2].replace(/\.md$/, "") })
+			current.push({ text: m[1], target: normalizeLinkTarget(m[2]) })
 		}
 		wikiLinkRegex.lastIndex = 0
 		for (const m of iterateMatches(wikiLinkRegex, line)) {
@@ -479,14 +548,40 @@ function extractBodySections(body: string): {
 	}
 }
 
+/** Removes fenced (```) code blocks so markdown links inside example code are
+ *  never mistaken for real relationships. Replaces each fence's content with
+ *  blank lines (preserving line count) rather than deleting it outright, so
+ *  callers that report line numbers on the original text stay aligned. */
+function stripCodeFences(text: string): string {
+	const lines = text.split("\n")
+	let inFence = false
+	return lines
+		.map((line) => {
+			if (/^\s*```/.test(line)) {
+				inFence = !inFence
+				return ""
+			}
+			return inFence ? "" : line
+		})
+		.join("\n")
+}
+
+/** Normalizes a markdown link target to a bare OKF concept ID: strips a
+ *  trailing .md and a leading "/" (the OKF spec's recommended bundle-root-
+ *  relative absolute link form, e.g. `/tables/users.md` → `tables/users`). */
+function normalizeLinkTarget(target: string): string {
+	return target.replace(/\.md$/, "").replace(/^\//, "")
+}
+
 /** Extracts relationships from markdown links in the body. */
 function extractRelationshipsFromLinks(body: string): WikiRelationshipInput[] {
 	const rels: WikiRelationshipInput[] = []
 	const seen = new Set<string>()
+	const scanned = stripCodeFences(body)
 	const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g
-	for (const m of iterateMatches(linkRegex, body)) {
-		const target = m[2].replace(/\.md$/, "")
-		if (target.startsWith("http") || target.startsWith("#")) continue
+	for (const m of iterateMatches(linkRegex, scanned)) {
+		if (m[2].startsWith("http") || m[2].startsWith("#")) continue
+		const target = normalizeLinkTarget(m[2])
 		if (seen.has(target)) continue
 		seen.add(target)
 		rels.push({
@@ -497,8 +592,11 @@ function extractRelationshipsFromLinks(body: string): WikiRelationshipInput[] {
 			confidence: 0.6,
 		})
 	}
+	// [[wikilink]] parsing kept for backward compatibility with bundles
+	// mdbrain exported before it switched to spec-form links — no longer
+	// produced on export (see wikiPageToOkfMarkdown).
 	const wikiLinkRegex = /\[\[([^\]]+)\]\]/g
-	for (const m of iterateMatches(wikiLinkRegex, body)) {
+	for (const m of iterateMatches(wikiLinkRegex, scanned)) {
 		const target = m[1]
 		if (seen.has(target)) continue
 		seen.add(target)
@@ -533,14 +631,24 @@ export async function exportOkfBundle(
 		scopeRef: string
 		okfBundleId?: string
 		outDir: string
+		/** Requester's governance context. Required — export must never surface
+		 *  a page the requester couldn't otherwise read via a governed GET, so
+		 *  exported pages are filtered exactly as a governed read would be
+		 *  (scope + role/department/privacyTier permissions). There is no
+		 *  supported "export everything, ungoverned" mode. */
+		governance: GovernanceContext
 	},
 ): Promise<OkfExportResult> {
-	const { pages } = await listAllWikiPages(
+	const { pages: allPages } = await listAllWikiPages(
 		handle,
 		opts.scope,
 		opts.scopeRef,
 		opts.okfBundleId,
 	)
+	const pages = filterPagesByGovernance(
+		allPages as unknown as Document[],
+		opts.governance,
+	) as unknown as WikiPageView[]
 	const allowedRoots = process.env.MDBRAIN_OKF_ALLOWED_ROOTS
 		? process.env.MDBRAIN_OKF_ALLOWED_ROOTS.split(",").map((r) => r.trim())
 		: []
@@ -607,23 +715,36 @@ function wikiPageToOkfMarkdown(page: WikiPageView): string {
 		const d = ts instanceof Date ? ts : new Date(String(ts))
 		if (!Number.isNaN(d.getTime())) fm.timestamp = d.toISOString()
 	}
-	// Preserve OKF extensions: any frontmatter key we don't recognize is kept
-	// (OKF contract: consumers SHOULD preserve unknown keys). The known keys
-	// above are type/title/description/resource/tags/timestamp/entityTypes/
-	// privacyTier — plus our internal-only fields that must NOT be projected.
-	const knownOrInternal = new Set([
+	// entityTypes/privacyTier are OKF frontmatter extension keys mdbrain reads
+	// on import (conceptToWikiInput) — they must round-trip back out on export,
+	// or a bundle that used them loses data on export → reimport. They are
+	// distinct from the truly internal-only fields (embedding/backlinks/
+	// trustTier/permissions), which never appear in page.frontmatter at all
+	// and so are never at risk of being emitted here.
+	if (
+		Array.isArray(page.frontmatter.entityTypes) &&
+		page.frontmatter.entityTypes.length
+	) {
+		fm.entityTypes = page.frontmatter.entityTypes
+	}
+	if (typeof page.frontmatter.privacyTier === "string") {
+		fm.privacyTier = page.frontmatter.privacyTier
+	}
+	// Preserve remaining OKF extensions: any frontmatter key we don't
+	// recognize is kept (OKF contract: consumers SHOULD preserve unknown
+	// keys).
+	const known = new Set([
 		"type",
 		"title",
 		"description",
 		"resource",
 		"tags",
 		"timestamp",
-		// internal-only (not OKF-expressible) — omitted from export
 		"entityTypes",
 		"privacyTier",
 	])
 	for (const [k, v] of Object.entries(page.frontmatter)) {
-		if (!knownOrInternal.has(k) && v !== undefined && v !== null) {
+		if (!known.has(k) && v !== undefined && v !== null) {
 			fm[k] = v
 		}
 	}
@@ -675,7 +796,16 @@ function wikiPageToOkfMarkdown(page: WikiPageView): string {
 		sections.push("## Relationships")
 		sections.push("")
 		for (const r of relationships) {
-			sections.push(`- [${r.kind}] → [[${r.targetPageSlug}]] ${r.targetTitle}`)
+			// Spec-form standard Markdown link (bundle-root-relative, the OKF
+			// spec's recommended form) — NOT the [[wikilink]] syntax mdbrain
+			// previously emitted, which only mdbrain's own parser understood.
+			// [[wikilink]] parsing is kept on import for backward compatibility
+			// with bundles mdbrain exported before this fix, but it is no longer
+			// produced, so a bundle mdbrain exports today resolves correctly in
+			// any spec-compliant OKF consumer, not just mdbrain itself.
+			sections.push(
+				`- [${r.kind}] → [${r.targetTitle}](/${r.targetPageSlug}.md)`,
+			)
 		}
 		sections.push("")
 	}

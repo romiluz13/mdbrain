@@ -406,12 +406,24 @@ describe("wiki routes", () => {
 					scope: "workspace",
 					scopeRef: "ws-1",
 					outDir: "/tmp/out",
+					okfBundleId: "bundle-1",
+					trustTier: "admin",
 				}),
 			})
 			expect(res.status).toBe(200)
 			const json = await asJson(res)
 			expect(json.exported).toBe(3)
 			expect(wikiMocks.exportOkfBundle).toHaveBeenCalledTimes(1)
+			const [, params] = wikiMocks.exportOkfBundle.mock.calls[0]
+			expect(params.scope).toBe("workspace")
+			expect(params.scopeRef).toBe("ws-1")
+			expect(params.outDir).toBe("/tmp/out")
+			expect(params.okfBundleId).toBe("bundle-1")
+			// Export must always be governance-filtered — never an unfiltered dump.
+			expect(params.governance).toBeDefined()
+			expect(params.governance.scope).toBe("workspace")
+			expect(params.governance.scopeRef).toBe("ws-1")
+			expect(params.governance.trustTier).toBe("admin")
 		})
 
 		it("rejects missing outDir", async () => {

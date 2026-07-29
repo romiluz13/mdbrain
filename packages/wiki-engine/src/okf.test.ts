@@ -104,15 +104,25 @@ describe("OKF import + export round-trip", () => {
 	let store: ReturnType<typeof makeStore>
 	let handle: WikiDbHandle
 
+	const previousAllowedRoots = process.env.MDBRAIN_OKF_ALLOWED_ROOTS
+
 	beforeEach(() => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mdbrain-okf-"))
 		store = makeStore()
 		const { db } = mockDb(store)
 		handle = { db, prefix: "test_" }
+		// validateOkfPath fails closed by default (see okf.ts) — tests must opt
+		// the tmp sandbox in explicitly, exactly like a real deployment would.
+		process.env.MDBRAIN_OKF_ALLOWED_ROOTS = os.tmpdir()
 	})
 
 	afterEach(() => {
 		fs.rmSync(tmpDir, { recursive: true, force: true })
+		if (previousAllowedRoots === undefined) {
+			delete process.env.MDBRAIN_OKF_ALLOWED_ROOTS
+		} else {
+			process.env.MDBRAIN_OKF_ALLOWED_ROOTS = previousAllowedRoots
+		}
 	})
 
 	function writeBundle(dir: string, files: Record<string, string>) {
@@ -189,6 +199,7 @@ type: index
 			scopeRef: "ws-1",
 			okfBundleId: "bundle-1",
 			outDir: exportDir,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
 		})
 		expect(exportResult.exported).toBe(2)
 		expect(fs.existsSync(path.join(exportDir, "tables/accounts.md"))).toBe(true)
@@ -247,6 +258,7 @@ type: index
 			scopeRef: "ws-1",
 			okfBundleId: "bundle-1",
 			outDir: exportDir2,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
 		})
 		const exportedAccounts = fs.readFileSync(
 			path.join(exportDir2, "tables/accounts.md"),
@@ -286,6 +298,90 @@ Body.
 		expect(store.docs.size).toBe(1)
 	})
 
+	it("refuses to overwrite a manually-authored page with a colliding slug", async () => {
+		// Simulate a page created through the wiki UI (not via OKF import): it
+		// has no okfConceptId. A bundle importing a concept with the same slug
+		// must not silently clobber it.
+		const key = store.key("tables/accounts", "workspace", "ws-1")
+		store.docs.set(key, {
+			_id: { toString: () => "manual-id" },
+			slug: "tables/accounts",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			title: "Manually Authored Accounts Page",
+			body: "Hand-written content.",
+			frontmatter: { type: "concept" },
+			claims: [],
+			questions: [],
+			relationships: [],
+			revision: 1,
+			// no okfConceptId — this page was never OKF-imported.
+		})
+
+		const srcDir = path.join(tmpDir, "src")
+		writeBundle(srcDir, {
+			"tables/accounts.md": `---
+type: table
+title: Bundle Accounts
+---
+
+Bundle content.
+`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "bundle-x",
+		})
+		expect(result.imported).toBe(0)
+		expect(result.skipped).toBe(1)
+		expect(result.errors[0]?.error).toContain("refusing to overwrite")
+
+		// The manually-authored page must be untouched.
+		const unchanged = store.docs.get(key)!
+		expect(unchanged.title).toBe("Manually Authored Accounts Page")
+		expect(unchanged.body).toBe("Hand-written content.")
+	})
+
+	it("allows re-importing a bundle over a page it previously OKF-imported", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		writeBundle(srcDir, {
+			"concept.md": `---
+type: concept
+title: Version One
+---
+
+First version.
+`,
+		})
+		await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "bundle-y",
+		})
+		writeBundle(srcDir, {
+			"concept.md": `---
+type: concept
+title: Version Two
+---
+
+Second version.
+`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "bundle-y",
+		})
+		expect(result.imported).toBe(1)
+		expect(result.errors).toEqual([])
+		const doc = store.docs.get(store.key("concept", "workspace", "ws-1"))!
+		expect(doc.title).toBe("Version Two")
+	})
+
 	it("preserves unknown OKF frontmatter extensions on import + export", async () => {
 		const srcDir = path.join(tmpDir, "src")
 		writeBundle(srcDir, {
@@ -315,6 +411,7 @@ Body.
 			scope: "workspace",
 			scopeRef: "ws-1",
 			outDir: exportDir,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
 		})
 		const out = fs.readFileSync(path.join(exportDir, "concept.md"), "utf-8")
 		expect(out).toContain("customField: preserved-value")
@@ -359,12 +456,91 @@ Body.
 			scope: "workspace",
 			scopeRef: "ws-1",
 			outDir: exportDir,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
 		})
 		const out = fs.readFileSync(path.join(exportDir, "person/acme.md"), "utf-8")
 		expect(out).toContain("## Person Card")
 		expect(out).toContain("Canonical ID:** jane")
 		expect(out).toContain("Handles:** @jane")
 		expect(out).toContain("Timezone:** IST")
+	})
+
+	it("filters export through governance — never exports a page the requester couldn't otherwise read", async () => {
+		const baseDoc = {
+			kind: "concept" as const,
+			aliases: [],
+			body: "",
+			claims: [],
+			contradictions: [],
+			questions: [],
+			relationships: [],
+			personCard: null,
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			state: "active",
+			revision: 1,
+			validFrom: new Date(),
+			freshness: "fresh",
+			backlinks: [],
+			embedding: [],
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		}
+		store.docs.set(store.key("open-page", "workspace", "ws-1"), {
+			...baseDoc,
+			_id: { toString: () => "id-open" },
+			title: "Open Page",
+			slug: "open-page",
+			summary: "Visible to everyone.",
+			frontmatter: { type: "concept" },
+			permissions: {},
+		})
+		store.docs.set(store.key("restricted-page", "workspace", "ws-1"), {
+			...baseDoc,
+			_id: { toString: () => "id-restricted" },
+			title: "Restricted Page",
+			slug: "restricted-page",
+			summary: "Only admins/finance should see this.",
+			frontmatter: { type: "concept" },
+			permissions: { privacyTier: "confidential", allowedRoles: ["finance"] },
+		})
+
+		const exportDir = path.join(tmpDir, "exported-governed")
+		const result = await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			outDir: exportDir,
+			// Standard trust tier, no roles — should see the open page only.
+			governance: {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+			},
+		})
+		expect(result.exported).toBe(1)
+		expect(fs.existsSync(path.join(exportDir, "open-page.md"))).toBe(true)
+		expect(fs.existsSync(path.join(exportDir, "restricted-page.md"))).toBe(
+			false,
+		)
+
+		// A caller with the matching role sees it.
+		const exportDir2 = path.join(tmpDir, "exported-governed-finance")
+		const result2 = await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			outDir: exportDir2,
+			governance: {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				roles: ["finance"],
+			},
+		})
+		expect(result2.exported).toBe(2)
+		expect(fs.existsSync(path.join(exportDir2, "restricted-page.md"))).toBe(
+			true,
+		)
 	})
 
 	it("derives index.md sibling relationships from single-link lines", async () => {
@@ -419,6 +595,7 @@ Body.
 			scope: "workspace",
 			scopeRef: "ws-1",
 			outDir: exportDir,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
 		})
 		const out = fs.readFileSync(path.join(exportDir, "x.md"), "utf-8")
 		// OKF-expressible fields present
@@ -430,5 +607,76 @@ Body.
 		expect(out).not.toContain("backlinks")
 		expect(out).not.toContain("trustTier")
 		expect(out).not.toContain("allowedRoles")
+	})
+
+	describe("path safety defaults", () => {
+		const previousAllowedRoots = process.env.MDBRAIN_OKF_ALLOWED_ROOTS
+		const previousUnrestricted = process.env.MDBRAIN_OKF_ALLOW_UNRESTRICTED
+
+		afterEach(() => {
+			if (previousAllowedRoots === undefined) {
+				delete process.env.MDBRAIN_OKF_ALLOWED_ROOTS
+			} else {
+				process.env.MDBRAIN_OKF_ALLOWED_ROOTS = previousAllowedRoots
+			}
+			if (previousUnrestricted === undefined) {
+				delete process.env.MDBRAIN_OKF_ALLOW_UNRESTRICTED
+			} else {
+				process.env.MDBRAIN_OKF_ALLOW_UNRESTRICTED = previousUnrestricted
+			}
+		})
+
+		it("refuses an unrestricted path with MDBRAIN_OKF_ALLOWED_ROOTS unset (fails closed by default)", async () => {
+			delete process.env.MDBRAIN_OKF_ALLOWED_ROOTS
+			delete process.env.MDBRAIN_OKF_ALLOW_UNRESTRICTED
+			writeBundle(tmpDir, {
+				"a.md": "---\ntype: concept\ntitle: A\n---\n\nBody.\n",
+			})
+			await expect(
+				importOkfBundle(handle, tmpDir, {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "standard",
+					okfBundleId: "b",
+				}),
+			).rejects.toThrow(/MDBRAIN_OKF_ALLOWED_ROOTS/)
+		})
+
+		it("allows an unrestricted path only with explicit MDBRAIN_OKF_ALLOW_UNRESTRICTED=true opt-in", async () => {
+			delete process.env.MDBRAIN_OKF_ALLOWED_ROOTS
+			process.env.MDBRAIN_OKF_ALLOW_UNRESTRICTED = "true"
+			writeBundle(tmpDir, {
+				"a.md": "---\ntype: concept\ntitle: A\n---\n\nBody.\n",
+			})
+			const result = await importOkfBundle(handle, tmpDir, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				okfBundleId: "b",
+			})
+			expect(result.imported).toBe(1)
+		})
+
+		it("rejects a path outside a configured MDBRAIN_OKF_ALLOWED_ROOTS", async () => {
+			const otherDir = fs.mkdtempSync(
+				path.join(os.tmpdir(), "mdbrain-okf-other-"),
+			)
+			try {
+				process.env.MDBRAIN_OKF_ALLOWED_ROOTS = otherDir
+				writeBundle(tmpDir, {
+					"a.md": "---\ntype: concept\ntitle: A\n---\n\nBody.\n",
+				})
+				await expect(
+					importOkfBundle(handle, tmpDir, {
+						scope: "workspace",
+						scopeRef: "ws-1",
+						trustTier: "standard",
+						okfBundleId: "b",
+					}),
+				).rejects.toThrow(/must resolve inside/)
+			} finally {
+				fs.rmSync(otherDir, { recursive: true, force: true })
+			}
+		})
 	})
 })
