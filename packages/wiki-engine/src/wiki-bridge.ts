@@ -53,6 +53,21 @@ export interface WikiPageInput {
 		migratedFrom?: string
 		// Maintenance provenance: content hash for git-diff change detection.
 		maintenanceHash?: string
+		// OKF v0.2 provenance/trust vocabulary (spec §5, §7) — preserved
+		// losslessly on round-trip, not currently mapped into trustTier.
+		status?: "draft" | "stable" | "deprecated"
+		generated?: { by: string; at?: string }
+		verified?: Array<{ by: string; at?: string }>
+		stale_after?: string
+		sources?: Array<{
+			resource: string
+			id?: string
+			title?: string
+			author?: string
+			usage_count?: number
+			last_modified?: string
+			usage_window?: { from: string; to: string }
+		}>
 	}
 	claims?: WikiClaimInput[]
 	questions?: WikiQuestionInput[]

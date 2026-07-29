@@ -100,6 +100,10 @@ const EVIDENCE_KIND_VALUES = [
 
 const QUESTION_STATUS_VALUES = ["open", "answered"] as const
 
+// OKF v0.2 frontmatter provenance vocabulary (spec §5) — default is "stable"
+// per spec when the key is absent, enforced at the application layer, not here.
+const OKF_STATUS_VALUES = ["draft", "stable", "deprecated"] as const
+
 const WIKI_PAGES_SCHEMA: Document = {
 	$jsonSchema: {
 		bsonType: "object",
@@ -164,6 +168,53 @@ const WIKI_PAGES_SCHEMA: Document = {
 					privacyTier: { enum: PRIVACY_TIER_VALUES },
 					// Migration provenance: "structured_mem:<id>" or "procedures:<id>".
 					migratedFrom: { bsonType: "string" },
+					// OKF v0.2 provenance/trust vocabulary (spec §5, §7).
+					status: { enum: OKF_STATUS_VALUES },
+					generated: {
+						bsonType: "object",
+						required: ["by"],
+						properties: {
+							by: { bsonType: "string" },
+							at: { bsonType: "string" },
+						},
+					},
+					verified: {
+						bsonType: "array",
+						items: {
+							bsonType: "object",
+							required: ["by"],
+							properties: {
+								by: { bsonType: "string" },
+								at: { bsonType: "string" },
+							},
+						},
+					},
+					stale_after: {
+						bsonType: "string",
+						description: "YYYY-MM-DD",
+					},
+					sources: {
+						bsonType: "array",
+						items: {
+							bsonType: "object",
+							required: ["resource"],
+							properties: {
+								resource: { bsonType: "string" },
+								id: { bsonType: "string" },
+								title: { bsonType: "string" },
+								author: { bsonType: "string" },
+								usage_count: { bsonType: "number" },
+								last_modified: { bsonType: "string" },
+								usage_window: {
+									bsonType: "object",
+									properties: {
+										from: { bsonType: "string" },
+										to: { bsonType: "string" },
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 

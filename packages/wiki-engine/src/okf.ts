@@ -1,11 +1,30 @@
 // @mdbrain/wiki-engine — OKF (Open Knowledge Format) interchange.
 //
-// OKF spec (GoogleCloudPlatform/knowledge-catalog, v0.1):
+// OKF spec (GoogleCloudPlatform/knowledge-catalog, v0.2 — okf/SPEC.md):
 //   - Knowledge Bundle = directory of concept .md files
 //   - Concept ID = file path with .md removed (tables/users.md → "tables/users")
 //   - Frontmatter: required `type`; recommended title/description/resource/tags/timestamp
 //   - Reserved files: index.md (directory listing), log.md (update history)
-//   - Links = standard markdown links between concepts → relationships
+//   - Links = standard markdown links between concepts → relationships. The
+//     spec's recommended form is a bundle-root-relative absolute link
+//     (`/tables/users.md`); mdbrain previously exported its own [[wikilink]]
+//     syntax, which only mdbrain's own parser understood — export now emits
+//     spec-form links, with [[wikilink]] parsing kept on import only for
+//     backward compatibility with bundles exported before that fix.
+//   - Provenance/trust vocabulary (§5, §7 — v0.2's core addition over v0.1):
+//     `status` (draft|stable|deprecated, default stable), `generated` (single
+//     {by, at} — by is an Actor Convention string, at is ISO 8601),
+//     `verified` (one or a list of {by, at} — normalized to a list
+//     internally per spec §5.2, "consumers MUST treat a bare mapping as a
+//     one-element list"), `stale_after` (YYYY-MM-DD), `sources` (array of
+//     {resource, id?, title?, author?, usage_count?, last_modified?,
+//     usage_window?}). Actor Convention: `<producer>/<version>` for
+//     agents/tools, `human:<id>` for a person, `process:<id>` for an
+//     automated process. These fields round-trip losslessly but are NOT
+//     currently mapped into mdbrain's own trustTier — the spec notes trust
+//     classification keys off the `human:` prefix (§5.3), which is a
+//     judgment call left for a future pass rather than an automatic mapping
+//     here.
 //   - Extensions: producers MAY add extra frontmatter keys; consumers preserve them
 //
 // MBrain internal wiki_pages schema is a strict SUPERSET of OKF. OKF is the
@@ -96,6 +115,21 @@ function validateOkfPath(dir: string, allowedRoots: string[]): string {
 // Frontmatter shape
 // ---------------------------------------------------------------------------
 
+interface OkfActorEvent {
+	by: string // Actor Convention: <producer>/<version> | human:<id> | process:<id>
+	at?: string // ISO 8601 — only `by` is spec-required within this object
+}
+
+interface OkfSource {
+	resource: string // required — absolute URL, bundle-relative path, or scope descriptor
+	id?: string
+	title?: string
+	author?: string // Actor Convention string
+	usage_count?: number
+	last_modified?: string // YYYY-MM-DD
+	usage_window?: { from: string; to: string }
+}
+
 interface OkfFrontmatter {
 	type: string // required
 	title?: string
@@ -103,6 +137,12 @@ interface OkfFrontmatter {
 	resource?: string
 	tags?: string[]
 	timestamp?: string // ISO 8601
+	// v0.2 provenance/trust vocabulary (§5, §7)
+	status?: "draft" | "stable" | "deprecated"
+	generated?: OkfActorEvent
+	verified?: OkfActorEvent | OkfActorEvent[]
+	stale_after?: string // YYYY-MM-DD
+	sources?: OkfSource[]
 	// Extensions (preserved on round-trip)
 	[key: string]: unknown
 }
@@ -112,6 +152,85 @@ interface OkfConcept {
 	filePath: string // relative path within bundle
 	frontmatter: OkfFrontmatter
 	body: string // markdown body (after frontmatter)
+}
+
+const OKF_STATUS_VALUES = ["draft", "stable", "deprecated"] as const
+
+/** Validates + normalizes an OKF actor-event object ({by, at}). `at` is
+ *  spec'd as an ISO 8601 string, but js-yaml's default schema auto-parses
+ *  unquoted ISO-looking values into JS Date objects (YAML 1.1 timestamp
+ *  type) — coerced back to a string here so it matches the `bsonType:
+ *  "string"` the field is validated against, and so export re-emits a plain
+ *  ISO string rather than a YAML-dumped Date representation. */
+function coerceOkfActorEvent(value: unknown): OkfActorEvent | undefined {
+	if (typeof value !== "object" || value === null) return undefined
+	const by = (value as Record<string, unknown>).by
+	if (typeof by !== "string") return undefined
+	const rawAt = (value as Record<string, unknown>).at
+	const at =
+		rawAt instanceof Date
+			? rawAt.toISOString()
+			: typeof rawAt === "string"
+				? rawAt
+				: undefined
+	return at !== undefined ? { by, at } : { by }
+}
+
+/** Coerces an OKF date-only field (e.g. `stale_after`, spec format YYYY-MM-DD)
+ *  back to a plain string. js-yaml's default schema also auto-parses bare
+ *  YYYY-MM-DD scalars as Date objects (YAML 1.1 date type), same issue as
+ *  the actor-event `at` field. */
+function coerceOkfDateOnly(value: unknown): string | undefined {
+	if (value instanceof Date) return value.toISOString().slice(0, 10)
+	if (typeof value === "string") return value
+	return undefined
+}
+
+/** Validates + normalizes an OKF `sources[]` entry, coercing its date-like
+ *  fields (last_modified, usage_window.from/to) the same way as
+ *  coerceOkfDateOnly/coerceOkfActorEvent. Returns undefined for an entry
+ *  missing the spec-required `resource` field. */
+function coerceOkfSource(value: unknown): OkfSource | undefined {
+	if (typeof value !== "object" || value === null) return undefined
+	const v = value as Record<string, unknown>
+	if (typeof v.resource !== "string") return undefined
+	const source: OkfSource = { resource: v.resource }
+	if (typeof v.id === "string") source.id = v.id
+	if (typeof v.title === "string") source.title = v.title
+	if (typeof v.author === "string") source.author = v.author
+	if (typeof v.usage_count === "number") source.usage_count = v.usage_count
+	const lastModified = coerceOkfDateOnly(v.last_modified)
+	if (lastModified) source.last_modified = lastModified
+	if (typeof v.usage_window === "object" && v.usage_window !== null) {
+		const w = v.usage_window as Record<string, unknown>
+		const from = coerceOkfDateOnly(w.from)
+		const to = coerceOkfDateOnly(w.to)
+		if (from && to) source.usage_window = { from, to }
+	}
+	return source
+}
+
+function isOkfStatus(
+	value: unknown,
+): value is (typeof OKF_STATUS_VALUES)[number] {
+	return (
+		typeof value === "string" &&
+		(OKF_STATUS_VALUES as readonly string[]).includes(value)
+	)
+}
+
+/** Normalizes OKF `verified` frontmatter to a list per spec §5.2: consumers
+ *  MUST treat a bare {by, at} mapping as a one-element list, since content
+ *  may accumulate multiple independent verification events over time. */
+function normalizeOkfVerified(value: unknown): OkfActorEvent[] | undefined {
+	if (Array.isArray(value)) {
+		const items = value
+			.map(coerceOkfActorEvent)
+			.filter((v): v is OkfActorEvent => v !== undefined)
+		return items.length > 0 ? items : undefined
+	}
+	const single = coerceOkfActorEvent(value)
+	return single ? [single] : undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +546,11 @@ function conceptToWikiInput(
 		"timestamp",
 		"entityTypes",
 		"privacyTier",
+		"status",
+		"generated",
+		"verified",
+		"stale_after",
+		"sources",
 	])
 	// Preserve OKF extensions: unknown frontmatter keys are passed through.
 	const extensions: Record<string, unknown> = {}
@@ -454,6 +578,19 @@ function conceptToWikiInput(
 				typeof fm.privacyTier === "string"
 					? (fm.privacyTier as WikiPageInput["frontmatter"]["privacyTier"])
 					: undefined,
+			status: isOkfStatus(fm.status) ? fm.status : undefined,
+			generated: coerceOkfActorEvent(fm.generated),
+			// Spec §5.2: consumers MUST treat a bare mapping as a one-element list.
+			verified: normalizeOkfVerified(fm.verified),
+			stale_after: coerceOkfDateOnly(fm.stale_after),
+			sources: Array.isArray(fm.sources)
+				? (() => {
+						const coerced = fm.sources
+							.map(coerceOkfSource)
+							.filter((s): s is OkfSource => s !== undefined)
+						return coerced.length > 0 ? coerced : undefined
+					})()
+				: undefined,
 			...extensions,
 		},
 		claims,
@@ -730,6 +867,31 @@ function wikiPageToOkfMarkdown(page: WikiPageView): string {
 	if (typeof page.frontmatter.privacyTier === "string") {
 		fm.privacyTier = page.frontmatter.privacyTier
 	}
+	// OKF v0.2 provenance/trust vocabulary (spec §5, §7) — round-tripped
+	// exactly like entityTypes/privacyTier above.
+	if (isOkfStatus(page.frontmatter.status)) {
+		fm.status = page.frontmatter.status
+	}
+	const generated = coerceOkfActorEvent(page.frontmatter.generated)
+	if (generated) {
+		fm.generated = generated
+	}
+	const verified = normalizeOkfVerified(page.frontmatter.verified)
+	if (verified) {
+		fm.verified = verified
+	}
+	const staleAfter = coerceOkfDateOnly(page.frontmatter.stale_after)
+	if (staleAfter) {
+		fm.stale_after = staleAfter
+	}
+	if (Array.isArray(page.frontmatter.sources)) {
+		const sources = page.frontmatter.sources
+			.map(coerceOkfSource)
+			.filter((s): s is OkfSource => s !== undefined)
+		if (sources.length > 0) {
+			fm.sources = sources
+		}
+	}
 	// Preserve remaining OKF extensions: any frontmatter key we don't
 	// recognize is kept (OKF contract: consumers SHOULD preserve unknown
 	// keys).
@@ -742,6 +904,11 @@ function wikiPageToOkfMarkdown(page: WikiPageView): string {
 		"timestamp",
 		"entityTypes",
 		"privacyTier",
+		"status",
+		"generated",
+		"verified",
+		"stale_after",
+		"sources",
 	])
 	for (const [k, v] of Object.entries(page.frontmatter)) {
 		if (!known.has(k) && v !== undefined && v !== null) {

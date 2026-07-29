@@ -382,6 +382,93 @@ Second version.
 		expect(doc.title).toBe("Version Two")
 	})
 
+	it("round-trips OKF v0.2 provenance/trust vocabulary (status/generated/verified/stale_after/sources)", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		writeBundle(srcDir, {
+			"metrics/income-statement.md": `---
+type: Metric
+title: Income statement
+status: stable
+generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }
+verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }
+stale_after: 2026-12-31
+sources:
+  - id: fpa-handbook
+    resource: https://wiki.acme/finance/fpa-handbook
+    title: FP&A reporting handbook
+---
+
+Body.
+`,
+		})
+		await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		const doc = store.docs.get(
+			store.key("metrics/income-statement", "workspace", "ws-1"),
+		)!
+		expect(doc.frontmatter.status).toBe("stable")
+		// js-yaml parses unquoted ISO timestamps as Date objects; coerceOkfActorEvent
+		// normalizes them back to strings via toISOString(), which is millisecond-
+		// precision — hence ".000Z" rather than the bundle's bare "Z" input.
+		expect(doc.frontmatter.generated).toEqual({
+			by: "reference_agent/gemini-2.5-pro",
+			at: "2026-06-20T22:53:05.000Z",
+		})
+		// Spec §5.2: bare {by, at} mapping normalizes to a one-element list.
+		expect(doc.frontmatter.verified).toEqual([
+			{ by: "human:ahormati", at: "2026-06-25T09:00:00.000Z" },
+		])
+		expect(doc.frontmatter.stale_after).toBe("2026-12-31")
+		expect(doc.frontmatter.sources).toEqual([
+			{
+				id: "fpa-handbook",
+				resource: "https://wiki.acme/finance/fpa-handbook",
+				title: "FP&A reporting handbook",
+			},
+		])
+
+		const exportDir = path.join(tmpDir, "exported-provenance")
+		await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			outDir: exportDir,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
+		})
+		const out = fs.readFileSync(
+			path.join(exportDir, "metrics/income-statement.md"),
+			"utf-8",
+		)
+		expect(out).toContain("status: stable")
+		expect(out).toContain("by: reference_agent/gemini-2.5-pro")
+		expect(out).toContain("by: human:ahormati")
+		// yaml.dump quotes the date-like string so it round-trips as a string on
+		// re-import rather than being auto-parsed as a YAML Date scalar again.
+		expect(out).toContain("stale_after: '2026-12-31'")
+		expect(out).toContain("resource: https://wiki.acme/finance/fpa-handbook")
+
+		// Re-import the export and confirm the fields survive a second round-trip.
+		const store2 = makeStore()
+		const { db: db2 } = mockDb(store2)
+		const handle2: WikiDbHandle = { db: db2, prefix: "test_" }
+		await importOkfBundle(handle2, exportDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b2",
+		})
+		const doc2 = store2.docs.get(
+			store2.key("metrics/income-statement", "workspace", "ws-1"),
+		)!
+		expect(doc2.frontmatter.status).toBe("stable")
+		expect(doc2.frontmatter.verified).toEqual([
+			{ by: "human:ahormati", at: "2026-06-25T09:00:00.000Z" },
+		])
+	})
+
 	it("preserves unknown OKF frontmatter extensions on import + export", async () => {
 		const srcDir = path.join(tmpDir, "src")
 		writeBundle(srcDir, {
