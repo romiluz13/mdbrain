@@ -2920,13 +2920,40 @@ function isRawSessionSearchIndexProfile(
 	)
 }
 
-function autoEmbedVectorField(path: string): Document {
-	return {
+/** Builds an Atlas Search autoEmbed vector field definition.
+ *
+ *  quantization is immutable once the index is created (Atlas rejects
+ *  changing it without dropping and recreating the index), so this only
+ *  emits the field when the caller actually wants scalar/binary compression
+ *  — omitting it preserves today's behavior (Atlas's autoEmbed default,
+ *  uncompressed float vectors) exactly. Accepted autoEmbed quantization
+ *  values are "float"|"scalar"|"binary"|"binaryNoRescore" — note this
+ *  differs from manual `type: "vector"` fields, which use "none"|"scalar"|
+ *  "binary"; mdbrain's own config type uses the "none" convention, so it's
+ *  mapped here rather than passed through raw.
+ *
+ *  numDimensions is deliberately NOT threaded through here: the engine-wide
+ *  numDimensions config describes whatever embedding provider is active
+ *  (openai/voyage/mistral/gemini/local — often an arbitrary value like 768),
+ *  but this field is always embedded by Atlas's own voyage-4-large model via
+ *  autoEmbed, whose dimensionality is independent of that setting. Passing
+ *  an unrelated provider's dimension count through would risk an invalid
+ *  index definition.
+ *  https://www.mongodb.com/docs/vector-search/index/vector-search-type/ */
+function autoEmbedVectorField(
+	path: string,
+	opts: { quantization?: "none" | "scalar" | "binary" } = {},
+): Document {
+	const field: Document = {
 		type: "autoEmbed",
 		modality: "text",
 		path,
 		model: "voyage-4-large",
 	}
+	if (opts.quantization && opts.quantization !== "none") {
+		field.quantization = opts.quantization
+	}
+	return field
 }
 
 export async function waitForSearchIndexesQueryable(
@@ -3058,7 +3085,8 @@ export async function ensureSearchIndexes(
 	numDimensions: number = 1024,
 ): Promise<{ text: boolean; vector: boolean }> {
 	void embeddingMode
-	void quantization
+	// numDimensions intentionally unused here — see autoEmbedVectorField's
+	// doc comment for why it doesn't apply to autoEmbed fields.
 	void numDimensions
 
 	// 14 search indexes total: chunks, kb_chunks, structured_mem, procedures,
@@ -3095,7 +3123,7 @@ export async function ensureSearchIndexes(
 		try {
 			const sessionVectorDef: Document = {
 				fields: [
-					autoEmbedVectorField("text"),
+					autoEmbedVectorField("text", { quantization }),
 					{ type: "filter", path: "agentId" },
 					{ type: "filter", path: "scope" },
 					{ type: "filter", path: "scopeRef" },
@@ -3179,7 +3207,7 @@ export async function ensureSearchIndexes(
 		]
 
 		const vectorDef: Document = {
-			fields: [autoEmbedVectorField("text"), ...filterFields],
+			fields: [autoEmbedVectorField("text", { quantization }), ...filterFields],
 		}
 
 		vectorCreated = await ensureNamedSearchIndex({
@@ -3245,7 +3273,10 @@ export async function ensureSearchIndexes(
 			]
 
 			const kbVectorDef: Document = {
-				fields: [autoEmbedVectorField("text"), ...kbFilterFields],
+				fields: [
+					autoEmbedVectorField("text", { quantization }),
+					...kbFilterFields,
+				],
 			}
 
 			vectorCreated = await ensureNamedSearchIndex({
@@ -3323,7 +3354,10 @@ export async function ensureSearchIndexes(
 		]
 
 		const structVectorDef: Document = {
-			fields: [autoEmbedVectorField("value"), ...structFilterFields],
+			fields: [
+				autoEmbedVectorField("value", { quantization }),
+				...structFilterFields,
+			],
 		}
 
 		vectorCreated = await ensureNamedSearchIndex({
@@ -3384,7 +3418,7 @@ export async function ensureSearchIndexes(
 	try {
 		const procedureVectorDef: Document = {
 			fields: [
-				autoEmbedVectorField("searchText"),
+				autoEmbedVectorField("searchText", { quantization }),
 				{ type: "filter", path: "intentTags" },
 				{ type: "filter", path: "agentId" },
 				{ type: "filter", path: "scope" },
@@ -3462,7 +3496,10 @@ export async function ensureSearchIndexes(
 			{ type: "filter", path: "timestamp" },
 		]
 		const eventsVectorDef: Document = {
-			fields: [autoEmbedVectorField("body"), ...eventsFilterFields],
+			fields: [
+				autoEmbedVectorField("body", { quantization }),
+				...eventsFilterFields,
+			],
 		}
 		vectorCreated = await ensureNamedSearchIndex({
 			collection: events,
@@ -3490,7 +3527,7 @@ export async function ensureSearchIndexes(
 		try {
 			const cacheVectorDef: Document = {
 				fields: [
-					autoEmbedVectorField("queryNorm"),
+					autoEmbedVectorField("queryNorm", { quantization }),
 					{ type: "filter", path: "agentId" },
 					{ type: "filter", path: "scope" },
 					{ type: "filter", path: "scopeRef" },
@@ -3560,7 +3597,10 @@ export async function ensureSearchIndexes(
 				{ type: "filter", path: "sessionId" },
 			]
 			const sessionVectorDef: Document = {
-				fields: [autoEmbedVectorField("text"), ...sessionFilterFields],
+				fields: [
+					autoEmbedVectorField("text", { quantization }),
+					...sessionFilterFields,
+				],
 			}
 			vectorCreated = await ensureNamedSearchIndex({
 				collection: sessionChunks,
@@ -3630,7 +3670,10 @@ export async function ensureSearchIndexes(
 				{ type: "filter", path: "timestamp" },
 			]
 			const evidenceVectorDef: Document = {
-				fields: [autoEmbedVectorField("text"), ...evidenceFilterFields],
+				fields: [
+					autoEmbedVectorField("text", { quantization }),
+					...evidenceFilterFields,
+				],
 			}
 			vectorCreated = await ensureNamedSearchIndex({
 				collection: memoryEvidence,

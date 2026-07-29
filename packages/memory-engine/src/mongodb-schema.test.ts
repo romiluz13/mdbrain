@@ -945,6 +945,61 @@ describe("ensureSearchIndexes", () => {
 		expect(structuredCol.createSearchIndex).toHaveBeenCalledTimes(2)
 	})
 
+	it('omits quantization from autoEmbed vector fields by default ("none")', async () => {
+		const db = mockDb()
+		await ensureSearchIndexes(db, "test_", "atlas-local-preview", "automated")
+		const chunks = db.collection("test_chunks") as unknown as {
+			createSearchIndex: ReturnType<typeof vi.fn>
+		}
+		const vectorCall = chunks.createSearchIndex.mock.calls.find(
+			(c: unknown[]) => (c[0] as Document).type === "vectorSearch",
+		)
+		const autoEmbedField = (vectorCall![0] as Document).definition.fields.find(
+			(f: Document) => f.type === "autoEmbed",
+		)
+		expect(autoEmbedField.quantization).toBeUndefined()
+	})
+
+	it("wires scalar/binary quantization into every autoEmbed vector field when configured", async () => {
+		const db = mockDb()
+		await ensureSearchIndexes(
+			db,
+			"test_",
+			"atlas-local-preview",
+			"automated",
+			"scalar",
+		)
+		const collectionsWithVectorFields = [
+			"test_chunks",
+			"test_kb_chunks",
+			"test_structured_mem",
+			"test_procedures",
+			"test_events",
+			"test_session_chunks",
+			"test_query_cache",
+		]
+		for (const name of collectionsWithVectorFields) {
+			const coll = db.collection(name) as unknown as {
+				createSearchIndex: ReturnType<typeof vi.fn>
+			}
+			const vectorCall = coll.createSearchIndex.mock.calls.find(
+				(c: unknown[]) => (c[0] as Document).type === "vectorSearch",
+			)
+			expect(vectorCall, `${name} should have a vector index`).toBeDefined()
+			const autoEmbedField = (
+				vectorCall![0] as Document
+			).definition.fields.find((f: Document) => f.type === "autoEmbed")
+			expect(
+				autoEmbedField,
+				`${name} vector index should have an autoEmbed field`,
+			).toBeDefined()
+			expect(
+				autoEmbedField.quantization,
+				`${name} autoEmbed field should be scalar-quantized`,
+			).toBe("scalar")
+		}
+	})
+
 	it("creates autoEmbed vector index for automated mode", async () => {
 		const db = mockDb()
 		const result = await ensureSearchIndexes(
