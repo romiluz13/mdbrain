@@ -37,6 +37,11 @@ export {
 } from "./wiki-revisions.js"
 
 export {
+	extractTransclusionTargets,
+	resolveTransclusions,
+} from "./wiki-transclusion.js"
+
+export {
 	createWikiPage,
 	getWikiPage,
 	listWikiPages,

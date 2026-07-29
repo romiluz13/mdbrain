@@ -26,6 +26,7 @@ const wikiMocks = vi.hoisted(() => ({
 	listUnresolvedContradictions: vi.fn(),
 	listWikiPageRevisions: vi.fn(),
 	getWikiPageRevision: vi.fn(),
+	resolveTransclusions: vi.fn(),
 }))
 
 const bridgeMocks = vi.hoisted(() => ({
@@ -230,6 +231,39 @@ describe("wiki routes", () => {
 			expect(res.status).toBe(200)
 			expect(res.headers.get("content-type")).toMatch(/text\/html/)
 			expect(await res.text()).toContain("<article>")
+		})
+
+		it("does not resolve transclusions by default (raw markers stay in body)", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue({
+				...SAMPLE_PAGE,
+				body: "{{page:other}}",
+			})
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+			)
+			const json = await asJson(res)
+			expect((json as unknown as { body: string }).body).toBe("{{page:other}}")
+			expect(wikiMocks.resolveTransclusions).not.toHaveBeenCalled()
+		})
+
+		it("resolves transclusions when transclude=true", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue({
+				...SAMPLE_PAGE,
+				body: "{{page:other}}",
+			})
+			wikiMocks.resolveTransclusions.mockResolvedValue("Resolved content.")
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1&transclude=true",
+			)
+			const json = await asJson(res)
+			expect((json as unknown as { body: string }).body).toBe(
+				"Resolved content.",
+			)
+			expect(wikiMocks.resolveTransclusions).toHaveBeenCalledWith(
+				{ db: {}, prefix: "test_" },
+				"{{page:other}}",
+				{ scope: "workspace", scopeRef: "ws-1", trustTier: "standard" },
+			)
 		})
 
 		it("returns 404 when not found", async () => {

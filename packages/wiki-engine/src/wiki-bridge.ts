@@ -27,6 +27,7 @@ import {
 	type GovernanceContext,
 } from "./wiki-governance.js"
 import { recordWikiPageRevision } from "./wiki-revisions.js"
+import { extractTransclusionTargets } from "./wiki-transclusion.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -161,6 +162,7 @@ export interface WikiPage extends WikiPageInput {
 		sourceTitle: string
 		context?: string
 	}>
+	transcludes: string[]
 	embedding?: number[]
 	// Auto-embed text field: title + summary + body (for Atlas Voyage AI)
 	text?: string
@@ -197,6 +199,7 @@ export interface WikiPageView {
 	freshness: string
 	lastMaintainedAt?: string
 	backlinks: unknown[]
+	transcludes: string[]
 	createdAt: string
 	updatedAt: string
 }
@@ -318,6 +321,7 @@ function normalizeInput(input: WikiPageInput): OptionalId<WikiPage> {
 		validFrom: now,
 		freshness: "fresh",
 		backlinks: [],
+		transcludes: extractTransclusionTargets(input.body),
 		// Auto-embed text field: MongoDB Atlas generates embeddings via Voyage
 		// AI from this field. Concatenation of title + summary + body (mirrors
 		// memory-engine autoEmbedVectorField("text") pattern).
@@ -505,7 +509,10 @@ export async function updateWikiPage(
 	if (patch.title !== undefined) setFields.title = patch.title
 	if (patch.aliases !== undefined) setFields.aliases = patch.aliases
 	if (patch.summary !== undefined) setFields.summary = patch.summary
-	if (patch.body !== undefined) setFields.body = patch.body
+	if (patch.body !== undefined) {
+		setFields.body = patch.body
+		setFields.transcludes = extractTransclusionTargets(patch.body)
+	}
 	if (patch.frontmatter !== undefined) setFields.frontmatter = patch.frontmatter
 	if (patch.entityId !== undefined) setFields.entityId = patch.entityId
 	if (patch.okfConceptId !== undefined)

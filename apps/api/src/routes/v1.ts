@@ -63,6 +63,7 @@ import {
 	listUnresolvedContradictions,
 	listWikiPageRevisions,
 	getWikiPageRevision,
+	resolveTransclusions,
 	WikiDuplicateSlugError,
 	type WikiPageInput,
 	type GovernanceContext,
@@ -2385,6 +2386,7 @@ export function createV1Router(): Hono {
 		const scope = String(c.req.query("scope") ?? "")
 		const scopeRef = String(c.req.query("scopeRef") ?? "")
 		const format = c.req.query("format")
+		const transclude = c.req.query("transclude") === "true"
 		if (!slug) return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
 		if (!scope || !scopeRef)
 			return jsonError(
@@ -2397,13 +2399,8 @@ export function createV1Router(): Hono {
 			const handle = await readWikiDbHandle(
 				String(c.req.query("agentId") ?? ""),
 			)
-			const page = await getWikiPage(
-				handle,
-				slug,
-				scope,
-				scopeRef,
-				buildWikiGovContext(scope, scopeRef),
-			)
+			const governance = buildWikiGovContext(scope, scopeRef)
+			const page = await getWikiPage(handle, slug, scope, scopeRef, governance)
 			if (!page)
 				return jsonError(
 					c,
@@ -2411,15 +2408,27 @@ export function createV1Router(): Hono {
 					"WIKI_NOT_FOUND",
 					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
 				)
+			// Transclusion resolution is opt-in: the stored body keeps its raw
+			// {{page:slug}} markers by default (what an editor should see/edit),
+			// resolved only when the caller explicitly asks for it. Resolved
+			// through the SAME governance context as the page itself, so a
+			// marker referencing a page the caller can't read never leaks
+			// content — see wiki-transclusion.ts.
+			const resolvedPage = transclude
+				? {
+						...page,
+						body: await resolveTransclusions(handle, page.body, governance),
+					}
+				: page
 			if (format === "html") {
-				return c.html(renderHtml(page))
+				return c.html(renderHtml(resolvedPage))
 			}
 			if (format === "markdown") {
-				return c.text(renderMarkdown(page), 200, {
+				return c.text(renderMarkdown(resolvedPage), 200, {
 					"Content-Type": "text/markdown; charset=utf-8",
 				})
 			}
-			return c.json(page)
+			return c.json(resolvedPage)
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_GET_FAILED", message)
