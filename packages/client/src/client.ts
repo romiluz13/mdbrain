@@ -1129,6 +1129,7 @@ export class MdbrainClient {
 		okfBundleId?: string
 		trustTier?: string
 		agentId?: string
+		returnContent?: boolean
 	}): Promise<unknown> {
 		return apiPost(this._opts, "/v1/wiki/okf-export", {
 			scope: input.scope,
@@ -1137,6 +1138,7 @@ export class MdbrainClient {
 			okfBundleId: input.okfBundleId,
 			trustTier: input.trustTier,
 			agentId: input.agentId,
+			returnContent: input.returnContent,
 		})
 	}
 

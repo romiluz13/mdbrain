@@ -2577,6 +2577,7 @@ export function createV1Router(): Hono {
 		const outDir = String(body.outDir ?? "")
 		const okfBundleId = body.okfBundleId ? String(body.okfBundleId) : undefined
 		const trustTier = body.trustTier ? String(body.trustTier) : undefined
+		const returnContent = body.returnContent === true
 		if (trustTier && !WIKI_VALID_TRUST_TIERS.includes(trustTier))
 			return jsonError(
 				c,
@@ -2603,6 +2604,7 @@ export function createV1Router(): Hono {
 				// Export must never surface a page the requester couldn't otherwise
 				// read via a governed GET — filtered exactly like /wiki (list).
 				governance: buildWikiGovContext(scope, scopeRef, trustTier),
+				returnContent,
 			})
 			return c.json(result)
 		} catch (err) {

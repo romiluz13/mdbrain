@@ -284,6 +284,120 @@ type: index
 		expect(exportedClaimLines).toBe(1)
 	})
 
+	it("returns fileContents matching disk content when returnContent is true", async () => {
+		const srcDir = path.join(tmpDir, "src-rc")
+		writeBundle(srcDir, {
+			"a.md": `---
+type: concept
+title: A
+---
+
+Body A.
+`,
+			"b.md": `---
+type: concept
+title: B
+---
+
+Body B.
+`,
+		})
+		await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "bundle-rc",
+		})
+		const exportDir = path.join(tmpDir, "exported-rc")
+		const result = await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			okfBundleId: "bundle-rc",
+			outDir: exportDir,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
+			returnContent: true,
+		})
+		expect(result.fileContents).toBeDefined()
+		expect(Object.keys(result.fileContents!).sort()).toEqual(
+			result.files.slice().sort(),
+		)
+		for (const file of result.files) {
+			const onDisk = fs.readFileSync(path.join(exportDir, file), "utf-8")
+			expect(result.fileContents![file]).toBe(onDisk)
+		}
+	})
+
+	it("does not populate fileContents when returnContent is omitted or false", async () => {
+		const srcDir = path.join(tmpDir, "src-noRc")
+		writeBundle(srcDir, {
+			"a.md": `---
+type: concept
+title: A
+---
+
+Body A.
+`,
+		})
+		await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "bundle-noRc",
+		})
+		const exportDir1 = path.join(tmpDir, "exported-noRc-1")
+		const resultDefault = await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			okfBundleId: "bundle-noRc",
+			outDir: exportDir1,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
+		})
+		expect(resultDefault.fileContents).toBeUndefined()
+
+		const exportDir2 = path.join(tmpDir, "exported-noRc-2")
+		const resultFalse = await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			okfBundleId: "bundle-noRc",
+			outDir: exportDir2,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
+			returnContent: false,
+		})
+		expect(resultFalse.fileContents).toBeUndefined()
+	})
+
+	it("still writes files to disk when returnContent is true", async () => {
+		const srcDir = path.join(tmpDir, "src-diskcheck")
+		writeBundle(srcDir, {
+			"a.md": `---
+type: concept
+title: A
+---
+
+Body A.
+`,
+		})
+		await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "bundle-diskcheck",
+		})
+		const exportDir = path.join(tmpDir, "exported-diskcheck")
+		const result = await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			okfBundleId: "bundle-diskcheck",
+			outDir: exportDir,
+			governance: { scope: "workspace", scopeRef: "ws-1", trustTier: "admin" },
+			returnContent: true,
+		})
+		for (const file of result.files) {
+			expect(fs.existsSync(path.join(exportDir, file))).toBe(true)
+		}
+		expect(fs.existsSync(path.join(exportDir, "index.md"))).toBe(true)
+	})
+
 	it("skips concept files missing the required frontmatter.type", async () => {
 		const srcDir = path.join(tmpDir, "src")
 		writeBundle(srcDir, {

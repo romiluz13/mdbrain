@@ -66,6 +66,7 @@ type WikiJson = {
 	revision?: number
 	imported?: number
 	exported?: number
+	fileContents?: Record<string, string>
 }
 const asJson = (res: Response): Promise<WikiJson> =>
 	res.json() as Promise<WikiJson>
@@ -471,6 +472,54 @@ describe("wiki routes", () => {
 			})
 			expect(res.status).toBe(400)
 			expect((await asJson(res)).error?.message).toMatch(/outDir/)
+		})
+
+		it("passes returnContent through to exportOkfBundle and surfaces fileContents in the response", async () => {
+			wikiMocks.exportOkfBundle.mockResolvedValue({
+				dir: "/tmp/out",
+				exported: 1,
+				files: ["index.md"],
+				fileContents: { "index.md": "# Index\n" },
+			})
+			const res = await createApp().request("/v1/wiki/okf-export", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					scope: "workspace",
+					scopeRef: "ws-1",
+					outDir: "/tmp/out",
+					returnContent: true,
+				}),
+			})
+			expect(res.status).toBe(200)
+			const json = await asJson(res)
+			expect(json.fileContents).toEqual({ "index.md": "# Index\n" })
+			expect(wikiMocks.exportOkfBundle).toHaveBeenCalledTimes(1)
+			const [, params] = wikiMocks.exportOkfBundle.mock.calls[0]
+			expect(params.returnContent).toBe(true)
+		})
+
+		it("defaults returnContent to false when omitted from the request body", async () => {
+			wikiMocks.exportOkfBundle.mockResolvedValue({
+				dir: "/tmp/out",
+				exported: 1,
+				files: ["index.md"],
+			})
+			const res = await createApp().request("/v1/wiki/okf-export", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					scope: "workspace",
+					scopeRef: "ws-1",
+					outDir: "/tmp/out",
+				}),
+			})
+			expect(res.status).toBe(200)
+			const json = await asJson(res)
+			expect(json.fileContents).toBeUndefined()
+			expect(wikiMocks.exportOkfBundle).toHaveBeenCalledTimes(1)
+			const [, params] = wikiMocks.exportOkfBundle.mock.calls[0]
+			expect(params.returnContent).toBe(false)
 		})
 	})
 

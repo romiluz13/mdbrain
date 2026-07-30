@@ -1154,6 +1154,11 @@ export const toolList = [
 						"Caller's trust tier (restricted|standard|admin) — export is governance-filtered exactly like a governed read, never an unfiltered dump.",
 				},
 				agentId: { type: "string" },
+				returnContent: {
+					type: "boolean",
+					description:
+						"When true, includes each exported file's content in the response, for callers without filesystem access to the API server.",
+				},
 			},
 			required: ["scope", "scopeRef", "outDir"],
 		},
@@ -2201,6 +2206,10 @@ export async function handleToolCall(
 				trustTier:
 					typeof args.trustTier === "string" ? args.trustTier : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+				returnContent:
+					typeof args.returnContent === "boolean"
+						? args.returnContent
+						: undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}

@@ -959,6 +959,10 @@ export interface OkfExportResult {
 	dir: string
 	exported: number
 	files: string[]
+	// Populated only when opts.returnContent is true. Lets a remote HTTP/MCP
+	// caller (not on the same filesystem as the API server) actually read
+	// the exported bundle without shell access to the server.
+	fileContents?: Record<string, string>
 }
 
 /** Exports wiki_pages (matching the filter) to an OKF bundle directory on disk.
@@ -977,6 +981,10 @@ export async function exportOkfBundle(
 		 *  (scope + role/department/privacyTier permissions). There is no
 		 *  supported "export everything, ungoverned" mode. */
 		governance: GovernanceContext
+		/** When true, also returns each exported file's content inline (in
+		 *  addition to still writing to disk) so a caller without filesystem
+		 *  access to the API server can read the bundle. Default false. */
+		returnContent?: boolean
 	},
 ): Promise<OkfExportResult> {
 	const { pages: allPages } = await listAllWikiPages(
@@ -995,18 +1003,28 @@ export async function exportOkfBundle(
 	const safeOutDir = validateOkfPath(opts.outDir, allowedRoots)
 	fs.mkdirSync(safeOutDir, { recursive: true })
 	const files: string[] = []
+	const fileContents: Record<string, string> | undefined = opts.returnContent
+		? {}
+		: undefined
 	for (const page of pages) {
 		const filePath = path.join(safeOutDir, `${page.slug}.md`)
 		fs.mkdirSync(path.dirname(filePath), { recursive: true })
 		const content = wikiPageToOkfMarkdown(page)
 		fs.writeFileSync(filePath, content, "utf-8")
 		files.push(`${page.slug}.md`)
+		if (fileContents) fileContents[`${page.slug}.md`] = content
 	}
 	// Write index.md with links to all concepts.
 	const indexContent = buildIndexMarkdown(pages)
 	fs.writeFileSync(path.join(safeOutDir, "index.md"), indexContent, "utf-8")
 	files.push("index.md")
-	return { dir: safeOutDir, exported: pages.length, files }
+	if (fileContents) fileContents["index.md"] = indexContent
+	return {
+		dir: safeOutDir,
+		exported: pages.length,
+		files,
+		...(fileContents ? { fileContents } : {}),
+	}
 }
 
 /** Lists all wiki pages for a scope (paginated internally to avoid limits). */

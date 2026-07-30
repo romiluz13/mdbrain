@@ -406,6 +406,27 @@ describe("wiki MCP tools", () => {
 		})
 	})
 
+	it("wiki_export_okf forwards returnContent:true to the client", async () => {
+		const wikiExportOkf = vi.fn().mockResolvedValue({
+			exported: 1,
+			files: ["index.md"],
+			fileContents: { "index.md": "# Index\n" },
+		})
+		await handleToolCall(
+			"mdbrain_wiki_export_okf",
+			{
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: "/tmp/out",
+				returnContent: true,
+			},
+			{ wikiExportOkf } as any,
+		)
+		expect(wikiExportOkf).toHaveBeenCalledWith(
+			expect.objectContaining({ returnContent: true }),
+		)
+	})
+
 	it("wiki_import_okf calls the client with bundleDir+scope+trustTier+okfBundleId", async () => {
 		const wikiImportOkf = vi.fn().mockResolvedValue({ imported: 3, files: [] })
 		await handleToolCall(
