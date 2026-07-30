@@ -161,11 +161,14 @@ describe("getWikiPage", () => {
 		const h: WikiDbHandle = { db, prefix: "test_" }
 		const page = await getWikiPage(h, "x", "workspace", "ws-1")
 		expect(page).toBeUndefined()
-		expect(coll.findOne).toHaveBeenCalledWith({
-			slug: "x",
-			scope: "workspace",
-			scopeRef: "ws-1",
-		})
+		expect(coll.findOne).toHaveBeenCalledWith(
+			{
+				slug: "x",
+				scope: "workspace",
+				scopeRef: "ws-1",
+			},
+			undefined,
+		)
 	})
 })
 

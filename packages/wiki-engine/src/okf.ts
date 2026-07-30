@@ -34,9 +34,11 @@
 // Design spec: docs/specs/2026-07-08-mdbrain-llm-wiki-design.md §5
 
 import fs from "node:fs"
+import fsp from "node:fs/promises"
 import path from "node:path"
 import yaml from "js-yaml"
-import type { Document } from "mongodb"
+import { createSubsystemLogger } from "@mdbrain/lib"
+import type { ClientSession, Document } from "mongodb"
 import {
 	createWikiPage,
 	getWikiPage,
@@ -53,6 +55,8 @@ import {
 	filterPagesByGovernance,
 	type GovernanceContext,
 } from "./wiki-governance.js"
+
+const log = createSubsystemLogger("wiki:okf")
 
 // ---------------------------------------------------------------------------
 // Path safety — prevent directory traversal in OKF import/export
@@ -251,24 +255,37 @@ function* iterateMatches(
 	}
 }
 
+// Cap file size to prevent DoS via oversized concept files.
+const MAX_CONCEPT_BYTES = 1024 * 1024 // 1 MiB
+
+// Bundle-level DoS caps, enforced DURING the walk (readBundleConcepts), not
+// per-file: a bundle of millions of individually-small files, or a bundle
+// whose files cumulatively add up to an enormous size, would otherwise block
+// the whole import (and the synchronous-FS-turned-async event loop) for an
+// unbounded amount of time. Exceeding either aborts the WHOLE import with a
+// single clear error — a partial/truncated import would be a worse failure
+// mode than refusing outright.
+const MAX_BUNDLE_FILES = 10_000
+const MAX_BUNDLE_TOTAL_BYTES = 200 * 1024 * 1024 // 200 MiB
+
 /** Parses a single .md file into frontmatter + body. Returns a diagnostic
  *  reason on skip instead of a bare null, so a caller can record WHY a
  *  concept was dropped rather than have it silently vanish from the import
- *  result. */
-function parseConceptFile(
+ *  result. `stat` is passed in by the caller (readBundleConcepts), which
+ *  already needs it for the bundle-level cumulative-byte cap, to avoid
+ *  stat'ing each file twice. */
+async function parseConceptFile(
 	filePath: string,
 	relativePath: string,
-): { concept: OkfConcept | null; skipReason: string | null } {
-	// Cap file size to prevent DoS via oversized concept files.
-	const MAX_CONCEPT_BYTES = 1024 * 1024 // 1 MiB
-	const stat = fs.statSync(filePath)
+	stat: { size: number },
+): Promise<{ concept: OkfConcept | null; skipReason: string | null }> {
 	if (stat.size > MAX_CONCEPT_BYTES) {
 		return {
 			concept: null,
 			skipReason: `file exceeds ${MAX_CONCEPT_BYTES} byte limit (${stat.size} bytes)`,
 		}
 	}
-	const raw = fs.readFileSync(filePath, "utf-8")
+	const raw = await fsp.readFile(filePath, "utf-8")
 	const { frontmatter, body, error } = splitFrontmatter(raw)
 	if (error) {
 		return { concept: null, skipReason: error }
@@ -344,22 +361,57 @@ function splitFrontmatter(raw: string): {
 
 /** Walks a bundle directory and returns all concept .md files (excluding
  *  index.md and log.md, which are handled separately), plus a diagnostic
- *  entry for every file that was skipped and why. */
-function readBundleConcepts(bundleDir: string): {
+ *  entry for every file that was skipped and why.
+ *
+ *  Uses the async fs/promises API rather than fs.*Sync so the walk yields
+ *  control back to the Node event loop between files instead of blocking it
+ *  (and every other concurrent request) for the whole import. Enforces
+ *  bundle-level file-count and cumulative-byte caps during the walk — see
+ *  MAX_BUNDLE_FILES/MAX_BUNDLE_TOTAL_BYTES above.
+ *
+ *  `limits` is an internal override for testability (exercising the caps
+ *  without actually writing 10k+ files or 200 MiB to disk in a test) — not
+ *  exposed via importOkfBundle's public options. */
+export async function readBundleConcepts(
+	bundleDir: string,
+	limits: { maxFiles?: number; maxTotalBytes?: number } = {},
+): Promise<{
 	concepts: OkfConcept[]
 	skipped: Array<{ path: string; reason: string }>
-} {
+}> {
+	const maxFiles = limits.maxFiles ?? MAX_BUNDLE_FILES
+	const maxTotalBytes = limits.maxTotalBytes ?? MAX_BUNDLE_TOTAL_BYTES
 	const concepts: OkfConcept[] = []
 	const skipped: Array<{ path: string; reason: string }> = []
-	function walk(dir: string) {
-		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+	let fileCount = 0
+	let totalBytes = 0
+	async function walk(dir: string): Promise<void> {
+		const entries = await fsp.readdir(dir, { withFileTypes: true })
+		for (const entry of entries) {
 			const full = path.join(dir, entry.name)
 			if (entry.isDirectory()) {
-				walk(full)
+				await walk(full)
 			} else if (entry.isFile() && entry.name.endsWith(".md")) {
 				if (entry.name === "index.md" || entry.name === "log.md") continue
+				fileCount++
+				if (fileCount > maxFiles) {
+					throw new Error(
+						`bundle exceeds maximum file count (${maxFiles}) — refusing to import`,
+					)
+				}
 				const relative = path.relative(bundleDir, full)
-				const { concept, skipReason } = parseConceptFile(full, relative)
+				const stat = await fsp.stat(full)
+				totalBytes += stat.size
+				if (totalBytes > maxTotalBytes) {
+					throw new Error(
+						`bundle exceeds maximum total size (${maxTotalBytes} bytes) — refusing to import`,
+					)
+				}
+				const { concept, skipReason } = await parseConceptFile(
+					full,
+					relative,
+					stat,
+				)
 				if (concept) {
 					concepts.push(concept)
 				} else if (skipReason) {
@@ -368,7 +420,7 @@ function readBundleConcepts(bundleDir: string): {
 			}
 		}
 	}
-	walk(bundleDir)
+	await walk(bundleDir)
 	return { concepts, skipped }
 }
 
@@ -400,7 +452,7 @@ export async function importOkfBundle(
 		? process.env.MDBRAIN_OKF_ALLOWED_ROOTS.split(",").map((r) => r.trim())
 		: []
 	const safeBundleDir = validateOkfPath(bundleDir, allowedRoots)
-	const { concepts, skipped } = readBundleConcepts(safeBundleDir)
+	const { concepts, skipped } = await readBundleConcepts(safeBundleDir)
 	const indexRelationships = parseIndexRelationships(safeBundleDir)
 	const result: OkfImportResult = {
 		imported: 0,
@@ -409,50 +461,121 @@ export async function importOkfBundle(
 		errors: skipped.map((s) => ({ conceptId: s.path, error: s.reason })),
 	}
 
-	for (const concept of concepts) {
-		try {
-			const input = conceptToWikiInput(concept, opts, indexRelationships)
-			// Upsert by slug+scope: if the page exists, update; else create.
-			const existing = await getWikiPage(
-				handle,
-				input.slug,
-				input.scope,
-				input.scopeRef,
-			)
-			if (existing) {
-				// Only allow overwrite of pages that were themselves produced by a
-				// prior OKF import. A page authored manually through the wiki UI (no
-				// okfConceptId) never had its content sourced from a bundle, so a
-				// slug collision there is far more likely a naming accident than an
-				// intentional re-import — refuse rather than silently clobbering it.
-				if (!existing.okfConceptId) {
-					throw new Error(
-						`slug "${input.slug}" already exists as a manually-authored page ` +
-							"(not previously OKF-imported) — refusing to overwrite",
+	// A crash mid-bundle (process crash, dropped DB connection, unhandled
+	// error partway through a large bundle) must not leave the wiki in a
+	// half-imported state on deployments that support it. `runImportLoop`
+	// is shared between the transactional and non-transactional paths so
+	// per-concept behavior is identical either way — only the atomicity
+	// guarantee differs.
+	const runImportLoop = async (session: ClientSession | undefined) => {
+		for (const concept of concepts) {
+			try {
+				const input = conceptToWikiInput(concept, opts, indexRelationships)
+				// Upsert by slug+scope: if the page exists, update; else create.
+				const existing = await getWikiPage(
+					handle,
+					input.slug,
+					input.scope,
+					input.scopeRef,
+					undefined,
+					session,
+				)
+				if (existing) {
+					// Only allow overwrite of pages that were themselves produced by a
+					// prior OKF import. A page authored manually through the wiki UI (no
+					// okfConceptId) never had its content sourced from a bundle, so a
+					// slug collision there is far more likely a naming accident than an
+					// intentional re-import — refuse rather than silently clobbering it.
+					if (!existing.okfConceptId) {
+						throw new Error(
+							`slug "${input.slug}" already exists as a manually-authored page ` +
+								"(not previously OKF-imported) — refusing to overwrite",
+						)
+					}
+					await updateWikiPage(
+						handle,
+						input.slug,
+						input.scope,
+						input.scopeRef,
+						{
+							title: input.title,
+							aliases: input.aliases,
+							summary: input.summary,
+							body: input.body,
+							frontmatter: input.frontmatter,
+							okfConceptId: input.okfConceptId,
+							okfBundleId: input.okfBundleId,
+							relationships: input.relationships,
+						},
+						{ session },
 					)
+				} else {
+					await createWikiPage(handle, input, { embed: opts.embed, session })
 				}
-				await updateWikiPage(handle, input.slug, input.scope, input.scopeRef, {
-					title: input.title,
-					aliases: input.aliases,
-					summary: input.summary,
-					body: input.body,
-					frontmatter: input.frontmatter,
-					okfConceptId: input.okfConceptId,
-					okfBundleId: input.okfBundleId,
-					relationships: input.relationships,
-				})
-			} else {
-				await createWikiPage(handle, input, { embed: opts.embed })
+				result.imported++
+				result.conceptIds.push(concept.conceptId)
+			} catch (err) {
+				// A transaction-not-supported error must abort the whole attempt (so
+				// the outer session.withTransaction catch below can detect it and
+				// fall back) rather than being swallowed as a normal per-concept
+				// failure.
+				if (session && isTransactionNotSupported(err)) throw err
+				const msg = err instanceof Error ? err.message : String(err)
+				result.errors.push({ conceptId: concept.conceptId, error: msg })
+				result.skipped++
 			}
-			result.imported++
-			result.conceptIds.push(concept.conceptId)
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err)
-			result.errors.push({ conceptId: concept.conceptId, error: msg })
-			result.skipped++
 		}
 	}
+
+	if (handle.client) {
+		const baselineErrorCount = result.errors.length
+		const session = handle.client.startSession()
+		try {
+			await session.withTransaction(async () => {
+				await runImportLoop(session)
+			})
+		} catch (err) {
+			if (!isTransactionNotSupported(err)) throw err
+			// Standalone MongoDB (no replica set) — transactions aren't
+			// available. Self-hosted local-first deployments frequently run
+			// standalone, so fall back to the previous non-transactional
+			// per-concept behavior rather than refusing to import; just make the
+			// partial-import risk visible instead of silent.
+			log.warn(
+				"OKF import: MongoDB transactions are not supported on this " +
+					"deployment (standalone, not a replica set) — falling back to " +
+					"non-transactional per-concept import. A crash mid-bundle can " +
+					"leave the wiki partially imported.",
+			)
+			// The transaction rolled back any writes from the aborted attempt —
+			// reset result state to match (it may have partial mutations from
+			// concepts processed before the unsupported-transaction error fired).
+			result.imported = 0
+			result.conceptIds = []
+			result.errors.length = baselineErrorCount
+			await runImportLoop(undefined)
+		} finally {
+			await session.endSession()
+		}
+	} else {
+		await runImportLoop(undefined)
+	}
 	return result
+}
+
+/** Detects the MongoDB driver's "transactions not supported" error, thrown
+ *  when session.withTransaction() is used against a standalone server (no
+ *  replica set). Mirrors the same detection in memory-engine's
+ *  mongodb-kb.ts/mongodb-sync.ts — 20 = IllegalOperation (standalone), 263 =
+ *  NoSuchTransaction; the message check covers driver versions/paths that
+ *  don't set `code`. */
+export function isTransactionNotSupported(err: unknown): boolean {
+	if (err instanceof Error && "code" in err) {
+		const code = (err as { code: number }).code
+		if (code === 20 || code === 263) return true
+	}
+	const msg = err instanceof Error ? err.message : String(err)
+	return msg.includes("Transaction numbers are only allowed on a replica set")
 }
 
 /** Parses index.md for relationships. OKF index.md is a directory listing
@@ -528,14 +651,18 @@ function conceptToWikiInput(
 	indexRelationships: Map<string, WikiRelationshipInput[]>,
 ): WikiPageInput {
 	const fm = concept.frontmatter
-	// Extract claims/questions from conventional body sections.
+	// Extract relationships from markdown links in the body — BEFORE stripping
+	// reference-link definition lines, since those lines are exactly what
+	// resolves [text][ref] targets.
+	const bodyRelationships = extractRelationshipsFromLinks(concept.body)
+	// Extract claims/questions from conventional body sections. Reference-link
+	// definitions are metadata, not content, so they must not survive into the
+	// stored body (mirrors ## Relationships etc. being stripped below).
 	const {
 		body: cleanBody,
 		claims,
 		questions,
-	} = extractBodySections(concept.body)
-	// Extract relationships from markdown links in the body.
-	const bodyRelationships = extractRelationshipsFromLinks(concept.body)
+	} = extractBodySections(stripLinkDefinitionLines(concept.body))
 	const indexRels = indexRelationships.get(concept.conceptId) ?? []
 	const known = new Set([
 		"type",
@@ -553,9 +680,28 @@ function conceptToWikiInput(
 		"sources",
 	])
 	// Preserve OKF extensions: unknown frontmatter keys are passed through.
+	// Reject keys that would be unpredictable or unsafe as a MongoDB field
+	// name: a leading "$" is interpreted as a query/update operator in some
+	// contexts, and "." is nested-path notation — neither is a valid literal
+	// field name, and a bundle (a potentially untrusted import source) with a
+	// key like `$where` or `a.b` must not inject one straight into the stored
+	// document. Fail the whole concept loudly rather than silently drop the
+	// key: malformed input should be visible in the import result.
 	const extensions: Record<string, unknown> = {}
+	const rejectedExtensionKeys: string[] = []
 	for (const [k, v] of Object.entries(fm)) {
-		if (!known.has(k) && v !== undefined && v !== null) extensions[k] = v
+		if (known.has(k) || v === undefined || v === null) continue
+		if (k.startsWith("$") || k.includes(".")) {
+			rejectedExtensionKeys.push(k)
+			continue
+		}
+		extensions[k] = v
+	}
+	if (rejectedExtensionKeys.length > 0) {
+		throw new Error(
+			`frontmatter contains invalid MongoDB field name(s): ${rejectedExtensionKeys.join(", ")} ` +
+				`(keys may not start with "$" or contain ".")`,
+		)
 	}
 	return {
 		kind: okfTypeToKind(fm.type),
@@ -569,7 +715,13 @@ function conceptToWikiInput(
 			title: fm.title,
 			description: fm.description,
 			resource: fm.resource,
-			tags: fm.tags,
+			// A malformed bundle can send a bare string instead of a YAML list —
+			// validate array-ness the same way entityTypes is validated below, so
+			// it degrades to "no tags" instead of corrupting the stored shape or
+			// failing confusingly against wiki-schema.ts's tags validator.
+			tags: Array.isArray(fm.tags)
+				? fm.tags.filter((t): t is string => typeof t === "string")
+				: undefined,
 			timestamp: fm.timestamp ? new Date(fm.timestamp) : undefined,
 			entityTypes: Array.isArray(fm.entityTypes)
 				? (fm.entityTypes as string[])
@@ -710,7 +862,38 @@ function normalizeLinkTarget(target: string): string {
 	return target.replace(/\.md$/, "").replace(/^\//, "")
 }
 
-/** Extracts relationships from markdown links in the body. */
+/** Matches a CommonMark reference-link definition line: `[ref]: target
+ *  "optional title"`. The quoted title (if present) is part of the syntax,
+ *  not the target, and must be stripped rather than folded into it. */
+const REFERENCE_DEFINITION_RE = /^\[([^\]]+)\]:\s*(\S+)(?:\s+"[^"]*")?\s*$/
+
+/** Builds a label → normalized-target map from `[ref]: target` definitions,
+ *  which per CommonMark can appear anywhere in the body (not confined to a
+ *  specific section), matched case-insensitively. */
+function extractLinkDefinitions(body: string): Map<string, string> {
+	const defs = new Map<string, string>()
+	for (const line of body.split("\n")) {
+		const m = REFERENCE_DEFINITION_RE.exec(line.trim())
+		if (m) defs.set(m[1].toLowerCase(), normalizeLinkTarget(m[2]))
+	}
+	return defs
+}
+
+/** Strips reference-link definition lines from a body. These are link
+ *  metadata (resolved into relationships by extractRelationshipsFromLinks),
+ *  not content — same reasoning as extractBodySections stripping
+ *  ## Relationships etc. — so they must not leak into the stored page body. */
+function stripLinkDefinitionLines(body: string): string {
+	return body
+		.split("\n")
+		.filter((line) => !REFERENCE_DEFINITION_RE.test(line.trim()))
+		.join("\n")
+}
+
+/** Extracts relationships from markdown links in the body. Recognizes inline
+ *  links, [[wikilinks]], and CommonMark reference-style links (`[text][ref]`
+ *  and the shorthand `[ref][]`) resolved against `[ref]: target` definitions
+ *  found anywhere in the body. */
 function extractRelationshipsFromLinks(body: string): WikiRelationshipInput[] {
 	const rels: WikiRelationshipInput[] = []
 	const seen = new Set<string>()
@@ -740,6 +923,26 @@ function extractRelationshipsFromLinks(body: string): WikiRelationshipInput[] {
 		rels.push({
 			targetPageSlug: target,
 			targetTitle: target,
+			kind: "relates_to",
+			weight: 0.5,
+			confidence: 0.6,
+		})
+	}
+	// Reference-style links: [text][ref] and the shorthand [ref][] (label ==
+	// link text). Unlike inline links/wikilinks, these need a second pass to
+	// resolve against definitions collected from the whole (fence-stripped)
+	// body — a definition may appear anywhere, not just near its usage.
+	const definitions = extractLinkDefinitions(scanned)
+	const refLinkRegex = /\[([^\]]+)\]\[([^\]]*)\]/g
+	for (const m of iterateMatches(refLinkRegex, scanned)) {
+		const label = (m[2] || m[1]).toLowerCase()
+		const target = definitions.get(label)
+		if (!target) continue // no matching definition — nothing to resolve
+		if (seen.has(target)) continue
+		seen.add(target)
+		rels.push({
+			targetPageSlug: target,
+			targetTitle: m[1],
 			kind: "relates_to",
 			weight: 0.5,
 			confidence: 0.6,

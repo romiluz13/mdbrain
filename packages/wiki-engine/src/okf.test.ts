@@ -710,6 +710,255 @@ Body.
 		expect(out).not.toContain("allowedRoles")
 	})
 
+	it("resolves reference-style markdown links ([text][ref] + [ref]: target) into relationships", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		writeBundle(srcDir, {
+			"concept.md": `---
+type: concept
+title: With Ref Links
+---
+
+See [the users table][users-ref] for details.
+
+Also [tables/accounts][].
+
+[users-ref]: tables/users.md "Users Table"
+[tables/accounts]: /tables/accounts.md
+`,
+			"tables/users.md": `---
+type: table
+title: Users Table
+---
+
+Body.
+`,
+			"tables/accounts.md": `---
+type: table
+title: Accounts Table
+---
+
+Body.
+`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		expect(result.errors).toEqual([])
+		const doc = store.docs.get(store.key("concept", "workspace", "ws-1"))!
+		const rels = doc.relationships as Array<{
+			targetPageSlug: string
+			targetTitle: string
+		}>
+		expect(rels).toContainEqual(
+			expect.objectContaining({
+				targetPageSlug: "tables/users",
+				targetTitle: "the users table",
+			}),
+		)
+		expect(rels).toContainEqual(
+			expect.objectContaining({
+				targetPageSlug: "tables/accounts",
+				targetTitle: "tables/accounts",
+			}),
+		)
+		// Reference-link definition lines must not leak into the stored body.
+		expect(doc.body).not.toContain("[users-ref]:")
+		expect(doc.body).not.toContain("[tables/accounts]:")
+	})
+
+	it("ignores a reference-style link inside a fenced code block", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		writeBundle(srcDir, {
+			"concept.md": `---
+type: concept
+title: With Fenced Ref Link
+---
+
+\`\`\`
+See [example][ex-ref] for syntax.
+[ex-ref]: should/not/be-a-relationship.md
+\`\`\`
+
+No real links here.
+`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		expect(result.errors).toEqual([])
+		const doc = store.docs.get(store.key("concept", "workspace", "ws-1"))!
+		const rels = doc.relationships as Array<{ targetPageSlug: string }>
+		expect(
+			rels.some((r) => r.targetPageSlug === "should/not/be-a-relationship"),
+		).toBe(false)
+	})
+
+	it("rejects a bundle exceeding the maximum bundle file count", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		const { readBundleConcepts } = await import("./okf.js")
+		fs.mkdirSync(srcDir, { recursive: true })
+		// Use a lowered internal override so the test doesn't need to create
+		// 10,000+ real files on disk.
+		for (let i = 0; i < 5; i++) {
+			fs.writeFileSync(
+				path.join(srcDir, `c${i}.md`),
+				`---\ntype: concept\ntitle: C${i}\n---\n\nBody.\n`,
+			)
+		}
+		await expect(readBundleConcepts(srcDir, { maxFiles: 3 })).rejects.toThrow(
+			/maximum file count/,
+		)
+	})
+
+	it("rejects a bundle exceeding the maximum cumulative byte cap", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		const { readBundleConcepts } = await import("./okf.js")
+		fs.mkdirSync(srcDir, { recursive: true })
+		const body = "x".repeat(200)
+		for (let i = 0; i < 5; i++) {
+			fs.writeFileSync(
+				path.join(srcDir, `c${i}.md`),
+				`---\ntype: concept\ntitle: C${i}\n---\n\n${body}\n`,
+			)
+		}
+		await expect(
+			readBundleConcepts(srcDir, { maxTotalBytes: 300 }),
+		).rejects.toThrow(/maximum total size/)
+	})
+
+	it("still imports a normal bundle correctly with the async walk (regression check)", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		writeBundle(srcDir, {
+			"a.md": `---\ntype: concept\ntitle: A\n---\n\nBody A.\n`,
+			"nested/b.md": `---\ntype: concept\ntitle: B\n---\n\nBody B.\n`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		expect(result.imported).toBe(2)
+		expect(result.errors).toEqual([])
+		expect(result.conceptIds.sort()).toEqual(["a", "nested/b"])
+	})
+
+	it("rejects a concept with a $-prefixed or dotted frontmatter extension key (MongoDB field-name injection)", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		writeBundle(srcDir, {
+			"good.md": `---
+type: concept
+title: Good
+---
+
+Body.
+`,
+			"bad.md": `---
+type: concept
+title: Bad
+$where: "malicious"
+"a.b": "x"
+---
+
+Body.
+`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		expect(result.imported).toBe(1)
+		expect(result.conceptIds).toEqual(["good"])
+		// The rejection must be visible in the import result, not silent.
+		const badError = result.errors.find((e) => e.conceptId === "bad")
+		expect(badError).toBeDefined()
+		expect(badError!.error).toMatch(/\$where/)
+		expect(badError!.error).toMatch(/a\.b/)
+		// The bad concept must never have been written to the store at all.
+		expect(store.docs.has(store.key("bad", "workspace", "ws-1"))).toBe(false)
+	})
+
+	it("degrades a malformed non-array tags value to undefined instead of corrupting the stored shape", async () => {
+		const srcDir = path.join(tmpDir, "src")
+		writeBundle(srcDir, {
+			"concept.md": `---
+type: concept
+title: Bad Tags
+tags: "oops"
+---
+
+Body.
+`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		expect(result.errors).toEqual([])
+		const doc = store.docs.get(store.key("concept", "workspace", "ws-1"))!
+		expect(doc.frontmatter.tags).toBeUndefined()
+	})
+
+	describe("transactional import (fix 5)", () => {
+		it("detects the MongoDB standalone-server transaction-unsupported error", async () => {
+			const { isTransactionNotSupported } = await import("./okf.js")
+			const codeErr = Object.assign(new Error("some msg"), { code: 20 })
+			expect(isTransactionNotSupported(codeErr)).toBe(true)
+			const msgErr = new Error(
+				"Transaction numbers are only allowed on a replica set member or mongos",
+			)
+			expect(isTransactionNotSupported(msgErr)).toBe(true)
+			expect(isTransactionNotSupported(new Error("unrelated"))).toBe(false)
+		})
+
+		it("falls back to non-transactional per-concept import when the client reports transactions unsupported (regression: import still completes)", async () => {
+			const withTransaction = vi.fn(async (fn: () => Promise<void>) => {
+				const err = Object.assign(
+					new Error(
+						"Transaction numbers are only allowed on a replica set member or mongos",
+					),
+					{ code: 20 },
+				)
+				throw err
+			})
+			const endSession = vi.fn(async () => {})
+			const session = { withTransaction, endSession }
+			const client = {
+				startSession: vi.fn(() => session),
+			} as unknown as WikiDbHandle["client"]
+			const handleWithClient: WikiDbHandle = { ...handle, client }
+
+			const srcDir = path.join(tmpDir, "src")
+			writeBundle(srcDir, {
+				"a.md": `---\ntype: concept\ntitle: A\n---\n\nBody.\n`,
+				"b.md": `---\ntype: concept\ntitle: B\n---\n\nBody.\n`,
+			})
+			const result = await importOkfBundle(handleWithClient, srcDir, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				okfBundleId: "b",
+			})
+			expect(client.startSession).toHaveBeenCalledTimes(1)
+			expect(withTransaction).toHaveBeenCalledTimes(1)
+			expect(endSession).toHaveBeenCalledTimes(1)
+			// Fallback must still complete the import per-concept, same as today.
+			expect(result.imported).toBe(2)
+			expect(result.errors).toEqual([])
+			expect(store.docs.size).toBe(2)
+		})
+	})
+
 	describe("path safety defaults", () => {
 		const previousAllowedRoots = process.env.MDBRAIN_OKF_ALLOWED_ROOTS
 		const previousUnrestricted = process.env.MDBRAIN_OKF_ALLOW_UNRESTRICTED

@@ -8,7 +8,7 @@
 // T3 (this commit): CRUD + rendering. Later tickets add OKF interchange,
 // maintenance, contradictions, governance, connectors.
 
-import type { Db, OptionalId } from "mongodb"
+import type { ClientSession, Db, MongoClient, OptionalId } from "mongodb"
 import {
 	wikiPagesCollection,
 	type WIKI_PAGE_KIND_VALUES,
@@ -213,24 +213,35 @@ export interface WikiPageView {
 export interface WikiDbHandle {
 	db: Db
 	prefix: string
+	// Optional: only present when the manager exposes its underlying
+	// MongoClient. Lets callers (e.g. OKF import) start a session and use
+	// session.withTransaction() for atomicity — see mongodb-kb.ts/
+	// mongodb-sync.ts in memory-engine for the established pattern this
+	// mirrors. Absent for callers/tests that only have a bare Db.
+	client?: MongoClient
 }
 
-/** Extracts a Db + prefix handle from a memory-engine manager. The manager is
- *  expected to expose `db` and `prefix` (MongoDBMemoryManager does). We keep
- *  this loosely typed to avoid importing the concrete manager type. */
+/** Extracts a Db + prefix (+ optional client) handle from a memory-engine
+ *  manager. The manager is expected to expose `db` and `prefix`
+ *  (MongoDBMemoryManager does); `client` is picked up opportunistically when
+ *  present. We keep this loosely typed to avoid importing the concrete
+ *  manager type. */
 export function getWikiDbHandle(manager: unknown): WikiDbHandle {
 	const m = manager as {
 		db?: Db
 		prefix?: string
 		getDb?: () => Db
 		getPrefix?: () => string
+		client?: MongoClient
+		getClient?: () => MongoClient
 	}
 	const db = m.db ?? (m.getDb?.() as Db | undefined)
 	const prefix = m.prefix ?? (m.getPrefix?.() as string | undefined)
+	const client = m.client ?? (m.getClient?.() as MongoClient | undefined)
 	if (!db || prefix === undefined) {
 		throw new Error("wiki bridge: manager does not expose db + prefix")
 	}
-	return { db, prefix }
+	return { db, prefix, ...(client ? { client } : {}) }
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +360,7 @@ export type WikiEmbedFn = (text: string) => Promise<number[]>
 export async function createWikiPage(
 	handle: WikiDbHandle,
 	input: WikiPageInput,
-	opts: { embed?: WikiEmbedFn } = {},
+	opts: { embed?: WikiEmbedFn; session?: ClientSession } = {},
 ): Promise<WikiPageView> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const doc = normalizeInput(input)
@@ -358,7 +369,10 @@ export async function createWikiPage(
 		doc.embedding = await opts.embed(text)
 	}
 	try {
-		const result = await coll.insertOne(doc as Record<string, unknown>)
+		const result = await coll.insertOne(
+			doc as Record<string, unknown>,
+			opts.session ? { session: opts.session } : undefined,
+		)
 		const inserted = {
 			...doc,
 			_id: result.insertedId.toString(),
@@ -420,6 +434,7 @@ export async function getWikiPage(
 	scope: string,
 	scopeRef: string,
 	governance?: GovernanceContext,
+	session?: ClientSession,
 ): Promise<WikiPageView | undefined> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const baseFilter: Record<string, unknown> = { slug, scope, scopeRef }
@@ -431,17 +446,17 @@ export async function getWikiPage(
 		if (Array.isArray((govFilter as Record<string, unknown>).$and)) {
 			merged.$and = (govFilter as Record<string, unknown>).$and
 		}
-		const doc = (await coll.findOne(merged)) as unknown as Record<
-			string,
-			unknown
-		> | null
+		const doc = (await coll.findOne(
+			merged,
+			session ? { session } : undefined,
+		)) as unknown as Record<string, unknown> | null
 		if (!doc) return undefined
 		return toView(doc)
 	}
-	const doc = (await coll.findOne(baseFilter)) as unknown as Record<
-		string,
-		unknown
-	> | null
+	const doc = (await coll.findOne(
+		baseFilter,
+		session ? { session } : undefined,
+	)) as unknown as Record<string, unknown> | null
 	if (!doc) return undefined
 	return toView(doc)
 }
@@ -502,6 +517,7 @@ export async function updateWikiPage(
 	scope: string,
 	scopeRef: string,
 	patch: Partial<Omit<WikiPageInput, "slug" | "scope" | "scopeRef">>,
+	opts: { session?: ClientSession } = {},
 ): Promise<WikiPageView | undefined> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const now = new Date()
@@ -545,7 +561,10 @@ export async function updateWikiPage(
 		patch.summary !== undefined ||
 		patch.body !== undefined
 	) {
-		const oldPageForText = (await coll.findOne({ slug, scope, scopeRef })) as {
+		const oldPageForText = (await coll.findOne(
+			{ slug, scope, scopeRef },
+			opts.session ? { session: opts.session } : undefined,
+		)) as {
 			title?: string
 			summary?: string
 			body?: string
@@ -558,7 +577,10 @@ export async function updateWikiPage(
 
 	// Fetch the old page to compute which relationship targets are being removed
 	// (so their backlinks can be cleaned).
-	const oldPage = (await coll.findOne({ slug, scope, scopeRef })) as {
+	const oldPage = (await coll.findOne(
+		{ slug, scope, scopeRef },
+		opts.session ? { session: opts.session } : undefined,
+	)) as {
 		relationships?: Array<{ targetPageSlug: string }>
 		claims?: Array<{
 			id: string
@@ -645,7 +667,7 @@ export async function updateWikiPage(
 	const result = await coll.findOneAndUpdate(
 		{ slug, scope, scopeRef },
 		{ $set: setFields, $inc: { revision: 1 } },
-		{ returnDocument: "after" },
+		{ returnDocument: "after", session: opts.session },
 	)
 	const value = result?.value ?? null
 	if (!value) return undefined
