@@ -1159,6 +1159,46 @@ export const toolList = [
 		},
 	},
 	{
+		name: "mdbrain_wiki_import_okf",
+		description:
+			"Import an OKF (Open Knowledge Format) bundle directory into the wiki. Portable, vendor-neutral interchange with Google Knowledge Catalog + OKF consumers.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				bundleDir: {
+					type: "string",
+					description: "Directory containing the OKF bundle to import.",
+				},
+				scope: {
+					type: "string",
+					enum: ["session", "user", "agent", "workspace", "tenant", "global"],
+				},
+				scopeRef: { type: "string" },
+				trustTier: {
+					type: "string",
+					enum: ["restricted", "standard", "admin"],
+				},
+				okfBundleId: { type: "string" },
+				agentId: { type: "string" },
+			},
+			required: ["bundleDir", "scope", "scopeRef", "trustTier", "okfBundleId"],
+		},
+	},
+	{
+		name: "mdbrain_wiki_maintain",
+		description:
+			"Trigger wiki self-maintenance (git-diff + Dreamer analysis) for a scope. The API route is a thin trigger — full execution runs via the CLI or webhook.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				scope: { type: "string" },
+				scopeRef: { type: "string" },
+				agentId: { type: "string" },
+			},
+			required: ["scope", "scopeRef"],
+		},
+	},
+	{
 		name: "mdbrain_wiki_lint",
 		description:
 			"List wiki pages (optionally by kind) for lint review — spot stale/superseded entries needing attention. Contradiction surfacing lands with the T12 contradiction detector.",
@@ -2160,6 +2200,34 @@ export async function handleToolCall(
 					typeof args.okfBundleId === "string" ? args.okfBundleId : undefined,
 				trustTier:
 					typeof args.trustTier === "string" ? args.trustTier : undefined,
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrain_wiki_import_okf") {
+			const trustTier = args.trustTier
+			if (
+				trustTier !== "restricted" &&
+				trustTier !== "standard" &&
+				trustTier !== "admin"
+			) {
+				throw new Error("trustTier must be restricted|standard|admin")
+			}
+			const out = await mdbrain.wikiImportOkf({
+				bundleDir: typeof args.bundleDir === "string" ? args.bundleDir : "",
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
+				trustTier,
+				okfBundleId:
+					typeof args.okfBundleId === "string" ? args.okfBundleId : "",
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrain_wiki_maintain") {
+			const out = await mdbrain.wikiMaintain({
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }

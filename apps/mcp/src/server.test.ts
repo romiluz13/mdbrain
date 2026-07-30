@@ -265,12 +265,14 @@ describe("handleToolCall", () => {
 })
 
 describe("wiki MCP tools", () => {
-	it("toolList includes all 5 wiki tools", () => {
+	it("toolList includes all 7 wiki tools", () => {
 		const names = new Set(toolList.map((tool) => tool.name))
 		expect(names.has("mdbrain_wiki_search")).toBe(true)
 		expect(names.has("mdbrain_wiki_get")).toBe(true)
 		expect(names.has("mdbrain_wiki_apply")).toBe(true)
 		expect(names.has("mdbrain_wiki_export_okf")).toBe(true)
+		expect(names.has("mdbrain_wiki_import_okf")).toBe(true)
+		expect(names.has("mdbrain_wiki_maintain")).toBe(true)
 		expect(names.has("mdbrain_wiki_lint")).toBe(true)
 	})
 
@@ -400,6 +402,43 @@ describe("wiki MCP tools", () => {
 			scopeRef: "ws-1",
 			outDir: "/tmp/out",
 			okfBundleId: undefined,
+			agentId: undefined,
+		})
+	})
+
+	it("wiki_import_okf calls the client with bundleDir+scope+trustTier+okfBundleId", async () => {
+		const wikiImportOkf = vi.fn().mockResolvedValue({ imported: 3, files: [] })
+		await handleToolCall(
+			"mdbrain_wiki_import_okf",
+			{
+				bundleDir: "/tmp/bundle",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				okfBundleId: "bundle-1",
+			},
+			{ wikiImportOkf } as any,
+		)
+		expect(wikiImportOkf).toHaveBeenCalledWith({
+			bundleDir: "/tmp/bundle",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "bundle-1",
+			agentId: undefined,
+		})
+	})
+
+	it("wiki_maintain calls the client with scope+scopeRef", async () => {
+		const wikiMaintain = vi.fn().mockResolvedValue({ status: "accepted" })
+		await handleToolCall(
+			"mdbrain_wiki_maintain",
+			{ scope: "workspace", scopeRef: "ws-1" },
+			{ wikiMaintain } as any,
+		)
+		expect(wikiMaintain).toHaveBeenCalledWith({
+			scope: "workspace",
+			scopeRef: "ws-1",
 			agentId: undefined,
 		})
 	})
