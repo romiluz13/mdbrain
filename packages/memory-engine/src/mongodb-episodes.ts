@@ -286,7 +286,6 @@ export async function materializeEpisode(params: {
 			agentId,
 			scope: resolvedScope,
 			scopeRef,
-			timeRange: { start: timeRange.start, end: timeRange.end },
 			sourceEventCount: events.length,
 			sourceEventIds,
 			sourceEventsHash,
@@ -319,7 +318,10 @@ export async function materializeEpisode(params: {
 		//    live cluster as three episode documents with byte-identical summaries
 		//    and the same 18 sourceEventIds, all surfacing together in one search.
 		//
-		//    timeRange remains on the document as derived data ($set above).
+		//    timeRange is only ever set on the FIRST materialization of a given
+		//    sourceEventsHash ($setOnInsert below). A redundant re-materialization
+		//    of the same event set must not let its (possibly jittered) timeRange
+		//    silently overwrite the stable value recorded at creation.
 		//    episodeId stays in $setOnInsert so it is stable across re-materializations.
 		const col = episodesCollection(db, prefix)
 		const identityFilter = {
@@ -337,21 +339,32 @@ export async function materializeEpisode(params: {
 					episodeId,
 					createdAt: now,
 					status: "active" as EpisodeStatus,
+					timeRange: { start: timeRange.start, end: timeRange.end },
 				},
 			},
 			{ upsert: true },
 		)
 
 		let persistedEpisodeId: string = episodeId
+		let persistedTimeRange: { start: Date; end: Date } = {
+			start: timeRange.start,
+			end: timeRange.end,
+		}
 		if (updateResult.upsertedCount === 0) {
 			const existing = await col.findOne(identityFilter, {
-				projection: { episodeId: 1 },
+				projection: { episodeId: 1, timeRange: 1 },
 			})
 			if (
 				typeof existing?.episodeId === "string" &&
 				existing.episodeId.trim()
 			) {
 				persistedEpisodeId = existing.episodeId
+			}
+			if (existing?.timeRange?.start && existing?.timeRange?.end) {
+				persistedTimeRange = {
+					start: existing.timeRange.start,
+					end: existing.timeRange.end,
+				}
 			}
 		}
 
@@ -363,7 +376,7 @@ export async function materializeEpisode(params: {
 			agentId,
 			scope: resolvedScope,
 			scopeRef,
-			timeRange: { start: timeRange.start, end: timeRange.end },
+			timeRange: persistedTimeRange,
 			sourceEventCount: events.length,
 			sourceEventIds,
 			updatedAt: now,

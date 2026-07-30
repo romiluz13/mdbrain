@@ -354,9 +354,88 @@ describe("mongodb-episodes", () => {
 			expect(typeof filterA.sourceEventsHash).toBe("string")
 			expect(filterA.sourceEventsHash).toHaveLength(64)
 
-			// timeRange is still recorded, just as derived data rather than identity.
+			// timeRange is still recorded on creation, just via $setOnInsert rather
+			// than $set — so a redundant re-materialization of the SAME event set
+			// (this second call) cannot silently overwrite it with a jittered window.
 			const [, updateA] = calls[0]
-			expect(updateA.$set.timeRange).toEqual({ start, end })
+			expect(updateA.$setOnInsert.timeRange).toEqual({ start, end })
+			expect(updateA.$set.timeRange).toBeUndefined()
+		})
+
+		it("does not let a redundant re-materialization of the same event set drift the stored timeRange", async () => {
+			// This is the scenario the sourceEventsHash identity fix exists to
+			// tolerate: two materialization calls over the identical event set,
+			// with slightly different (jittered) timeRange windows. The SECOND
+			// call's timeRange must not overwrite the FIRST call's stored value.
+			const start = new Date("2026-03-15T09:00:00Z")
+			const end = new Date("2026-03-15T10:00:00Z")
+			const eventDocs = makeEventDocs(5, start)
+			vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never)
+
+			const episodesCol = createMockCollection({
+				updateOne: vi.fn().mockResolvedValue({
+					upsertedCount: 0,
+					matchedCount: 1,
+					modifiedCount: 1,
+				}),
+			})
+			;(
+				episodesCol as unknown as { findOne: ReturnType<typeof vi.fn> }
+			).findOne = vi.fn().mockResolvedValue({
+				episodeId: "ep-existing",
+				timeRange: { start, end },
+			})
+			const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol })
+
+			// Call 2: same events, a different (jittered) timeRange window.
+			const driftedEnd = new Date(end.getTime() + 5000)
+			const result = await materializeEpisode({
+				db,
+				prefix: PREFIX,
+				agentId: AGENT_ID,
+				type: "daily",
+				timeRange: { start, end: driftedEnd },
+				summarizer: mockSummarizer,
+			})
+
+			expect(result).not.toBeNull()
+			// The document's stored timeRange (call 1's) must win, not call 2's.
+			expect(result!.timeRange).toEqual({ start, end })
+			expect(result!.timeRange.end).not.toEqual(driftedEnd)
+
+			// The $set document must not carry timeRange at all — the drifted
+			// window is never written to the existing document.
+			const [, update] = (episodesCol.updateOne as ReturnType<typeof vi.fn>)
+				.mock.calls[0]
+			expect(update.$set.timeRange).toBeUndefined()
+		})
+
+		it("sets a fresh timeRange on creation for a genuinely new episode", async () => {
+			// Regression check: the normal creation path must still record
+			// timeRange for a brand-new sourceEventsHash.
+			const start = new Date("2026-03-15T09:00:00Z")
+			const end = new Date("2026-03-15T10:00:00Z")
+			const eventDocs = makeEventDocs(5, start)
+			vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never)
+
+			const episodesCol = createMockCollection()
+			const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol })
+
+			const result = await materializeEpisode({
+				db,
+				prefix: PREFIX,
+				agentId: AGENT_ID,
+				type: "daily",
+				timeRange: { start, end },
+				summarizer: mockSummarizer,
+			})
+
+			expect(result).not.toBeNull()
+			expect(result!.timeRange).toEqual({ start, end })
+
+			const [, update] = (episodesCol.updateOne as ReturnType<typeof vi.fn>)
+				.mock.calls[0]
+			expect(update.$setOnInsert.timeRange).toEqual({ start, end })
 		})
 
 		it("gives a different identity to a genuinely different event set", async () => {
