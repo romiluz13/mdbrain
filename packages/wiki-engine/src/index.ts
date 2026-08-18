@@ -8,7 +8,39 @@
 // T2: wiki_pages collection schema + indexes.
 // T3: wiki CRUD bridge + page rendering.
 
-export const WIKI_ENGINE_VERSION = "0.1.0"
+export const WIKI_ENGINE_VERSION = "2.0.0"
+
+export {
+	beginMemoryDelivery,
+	confirmMemoryDelivery,
+	failMemoryDelivery,
+	failMemoryPromotion,
+	fingerprintMemoryDeliveryPayload,
+	listMemoryDeliveryIntents,
+	MemoryDeliveryConflictError,
+	MemoryDeliveryStateError,
+	MEMORY_DELIVERY_STATES,
+	promoteMemoryDelivery,
+	recordMemoryDeliveryIntent,
+	type MemoryDeliveryIntent,
+	type MemoryDeliveryIntentInput,
+	type MemoryDeliveryReplayConflictField,
+	type MemoryDeliveryState,
+	type MemoryPromotionPolicy,
+} from "./memory-delivery.js"
+export {
+	WikiStore,
+	resolveWikiStoreConfig,
+	type WikiStoreConfig,
+	type WikiTransactionSession,
+} from "./wiki-store.js"
+
+export {
+	recordWikiMutationIntent,
+	fingerprintWikiMutationPayload,
+	type WikiMutationIntent,
+	type WikiMutationKind,
+} from "./wiki-mutation-intents.js"
 
 export {
 	wikiPagesCollection,
@@ -49,7 +81,6 @@ export {
 	deleteWikiPage,
 	renderMarkdown,
 	renderHtml,
-	getWikiDbHandle,
 	WikiDuplicateSlugError,
 	WikiNotFoundError,
 	type WikiPageInput,
@@ -77,7 +108,6 @@ export {
 
 export {
 	searchWikiPages,
-	searchWikiPagesViaManager,
 	type WikiSearchRecipe,
 	type WikiSearchParams,
 	type WikiSearchResult,
@@ -100,14 +130,6 @@ export {
 	recomputeAllBacklinks,
 	type WikiBacklink,
 } from "./wiki-backlinks.js"
-
-export {
-	migrateStructuredMem,
-	migrateProcedures,
-	migrateLegacyToWiki,
-	checkMigrationCoverage,
-	type MigrationResult,
-} from "./wiki-migrate.js"
 
 export {
 	buildScopeFilter,

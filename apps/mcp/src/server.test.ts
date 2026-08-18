@@ -13,13 +13,67 @@ describe("toolList", () => {
 		expect(names.has("mdbrain_memory_update")).toBe(true)
 		expect(names.has("mdbrain_memory_delete")).toBe(true)
 		expect(names.has("mdbrain_memory_history")).toBe(true)
-		expect(names.has("mdbrain_import_conversation_history")).toBe(true)
 		expect(names.has("mdbrain_procedure_outcome")).toBe(true)
 		expect(names.has("mdbrain_memory_feedback")).toBe(true)
+	})
+
+	it("does not advertise Memongo control operations", () => {
+		const names = new Set<string>(toolList.map((tool) => tool.name))
+
+		expect(names.has("mdbrain_status")).toBe(false)
+		expect(names.has("mdbrain_probe_embedding")).toBe(false)
+		expect(names.has("mdbrain_probe_vector")).toBe(false)
 	})
 })
 
 describe("handleToolCall", () => {
+	it("rejects removed Memongo control tool names without dispatching", async () => {
+		const status = vi.fn()
+		const probeEmbedding = vi.fn()
+		const probeVector = vi.fn()
+		const client = { status, probeEmbedding, probeVector } as never
+
+		for (const name of [
+			"mdbrain_status",
+			"mdbrain_probe_embedding",
+			"mdbrain_probe_vector",
+		]) {
+			const result = await handleToolCall(name, {}, client)
+			expect("isError" in result ? result.isError : undefined).toBe(true)
+			expect(parseTextPayload(result)).toEqual({
+				error: `unknown tool: ${name}`,
+			})
+		}
+
+		expect(status).not.toHaveBeenCalled()
+		expect(probeEmbedding).not.toHaveBeenCalled()
+		expect(probeVector).not.toHaveBeenCalled()
+	})
+
+	it("forwards scoped search authority through the client", async () => {
+		const search = vi.fn().mockResolvedValue({ results: [] })
+
+		await handleToolCall(
+			"mdbrain_search",
+			{
+				query: "checkpoint",
+				agentId: "codex",
+				scope: "workspace",
+				scopeRef: "/workspace/mdbrain",
+			},
+			{ search } as any,
+		)
+
+		expect(search).toHaveBeenCalledWith({
+			query: "checkpoint",
+			agentId: "codex",
+			limit: undefined,
+			minScore: undefined,
+			scope: "workspace",
+			scopeRef: "/workspace/mdbrain",
+		})
+	})
+
 	it("routes the semantic recall alias to the canonical recall runtime", async () => {
 		const recallConversation = vi.fn().mockResolvedValue({
 			results: [{ citation: { eventId: "evt-1" } }],
@@ -49,7 +103,7 @@ describe("handleToolCall", () => {
 			includeToolMessages: true,
 			limit: 200,
 		})
-		expect(out.isError).toBeUndefined()
+		expect("isError" in out ? out.isError : undefined).toBeUndefined()
 		expect(parseTextPayload(out)).toEqual({
 			results: [{ citation: { eventId: "evt-1" } }],
 		})
@@ -69,7 +123,7 @@ describe("handleToolCall", () => {
 		)
 
 		expect(recallConversation).not.toHaveBeenCalled()
-		expect(out.isError).toBe(true)
+		expect("isError" in out ? out.isError : undefined).toBe(true)
 		expect(parseTextPayload(out)).toEqual({
 			error: "roles must contain only user|assistant|system|tool",
 		})
@@ -153,32 +207,6 @@ describe("handleToolCall", () => {
 		expect(
 			"structuredContent" in out ? out.structuredContent : undefined,
 		).toEqual({ items: [{ revision: 1 }] })
-	})
-
-	it("routes the semantic import alias to the canonical import runtime", async () => {
-		const importConversations = vi.fn().mockResolvedValue({ importedTurns: 12 })
-
-		const out = await handleToolCall(
-			"mdbrain_import_conversation_history",
-			{
-				datasetPath: "imports/history.json",
-				scope: "workspace",
-				limitConversations: 3,
-			},
-			{
-				importConversations,
-			} as any,
-		)
-
-		expect(importConversations).toHaveBeenCalledWith({
-			datasetPath: "imports/history.json",
-			agentId: undefined,
-			scope: "workspace",
-			limitConversations: 3,
-			limitTurnsPerConversation: undefined,
-		})
-		expect(out.isError).toBeUndefined()
-		expect(parseTextPayload(out)).toEqual({ importedTurns: 12 })
 	})
 
 	it("routes procedure outcome calls to the canonical runtime", async () => {
@@ -265,14 +293,13 @@ describe("handleToolCall", () => {
 })
 
 describe("wiki MCP tools", () => {
-	it("toolList includes all 7 wiki tools", () => {
+	it("toolList includes all 6 wiki tools", () => {
 		const names = new Set(toolList.map((tool) => tool.name))
 		expect(names.has("mdbrain_wiki_search")).toBe(true)
 		expect(names.has("mdbrain_wiki_get")).toBe(true)
 		expect(names.has("mdbrain_wiki_apply")).toBe(true)
 		expect(names.has("mdbrain_wiki_export_okf")).toBe(true)
 		expect(names.has("mdbrain_wiki_import_okf")).toBe(true)
-		expect(names.has("mdbrain_wiki_maintain")).toBe(true)
 		expect(names.has("mdbrain_wiki_lint")).toBe(true)
 	})
 
@@ -450,20 +477,6 @@ describe("wiki MCP tools", () => {
 		})
 	})
 
-	it("wiki_maintain calls the client with scope+scopeRef", async () => {
-		const wikiMaintain = vi.fn().mockResolvedValue({ status: "accepted" })
-		await handleToolCall(
-			"mdbrain_wiki_maintain",
-			{ scope: "workspace", scopeRef: "ws-1" },
-			{ wikiMaintain } as any,
-		)
-		expect(wikiMaintain).toHaveBeenCalledWith({
-			scope: "workspace",
-			scopeRef: "ws-1",
-			agentId: undefined,
-		})
-	})
-
 	it("wiki_lint calls the client with scope+scopeRef", async () => {
 		const wikiLint = vi.fn().mockResolvedValue({ pages: [], total: 0 })
 		await handleToolCall(
@@ -482,6 +495,6 @@ describe("wiki MCP tools", () => {
 
 	it("returns an error on unknown wiki tool", async () => {
 		const out = await handleToolCall("mdbrain_wiki_unknown", {}, {} as any)
-		expect(out.isError).toBe(true)
+		expect("isError" in out ? out.isError : undefined).toBe(true)
 	})
 })

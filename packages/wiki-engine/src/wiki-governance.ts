@@ -37,6 +37,12 @@ export interface GovernanceContext {
 	roles?: string[]
 	/** The requester's departments (for permissions.allowedDepartments). */
 	departments?: string[]
+	/** Stable server-derived subject ID. */
+	subjectId?: string
+	/** Namespaced server-derived external groups. */
+	groups?: string[]
+	/** Server-derived operation capabilities. */
+	capabilities?: string[]
 	/** The requester's agent ID (for audit logging). */
 	agentId?: string
 }
@@ -47,11 +53,8 @@ export interface GovernanceContext {
 
 export function buildScopeFilter(
 	ctx: GovernanceContext,
-	opts: { crossScope?: boolean } = {},
+	_opts: { crossScope?: boolean } = {},
 ): Filter<Document> {
-	if (ctx.trustTier === "admin" && opts.crossScope) {
-		return {}
-	}
 	return { scope: ctx.scope, scopeRef: ctx.scopeRef }
 }
 
@@ -71,10 +74,24 @@ export function buildPermissionsFilter(
 
 	const visible: Filter<Document>[] = [
 		{ permissions: { $exists: false } },
-		{ "permissions.privacyTier": { $exists: false } },
+		{
+			$and: [
+				{ "permissions.privacyTier": { $exists: false } },
+				{ "permissions.allowedSubjects": { $exists: false } },
+				{ "permissions.allowedGroups": { $exists: false } },
+				{ "permissions.allowedRoles": { $exists: false } },
+				{ "permissions.allowedDepartments": { $exists: false } },
+			],
+		},
 		{ "permissions.privacyTier": "public" },
 		{ "permissions.privacyTier": "internal" },
 	]
+	if (ctx.subjectId) {
+		visible.push({ "permissions.allowedSubjects": { $in: [ctx.subjectId] } })
+	}
+	if (ctx.groups && ctx.groups.length > 0) {
+		visible.push({ "permissions.allowedGroups": { $in: ctx.groups } })
+	}
 	if (ctx.roles && ctx.roles.length > 0) {
 		visible.push({ "permissions.allowedRoles": { $in: ctx.roles } })
 	}
@@ -180,14 +197,13 @@ export async function graphTraversalGoverned(
 export function filterPagesByGovernance(
 	pages: Document[],
 	ctx: GovernanceContext,
-	opts: { crossScope?: boolean } = {},
+	_opts: { crossScope?: boolean } = {},
 ): Document[] {
-	// Admin with crossScope override sees everything.
-	if (ctx.trustTier === "admin" && opts.crossScope) return pages
 	return pages.filter((page) => {
 		const scope = page.scope as string
 		const scopeRef = page.scopeRef as string
 		if (scope !== ctx.scope || scopeRef !== ctx.scopeRef) return false
+		if (ctx.trustTier === "admin") return true
 		const perms = page.permissions as
 			| {
 					allowedRoles?: string[]
@@ -196,8 +212,27 @@ export function filterPagesByGovernance(
 			  }
 			| undefined
 		if (!perms || Object.keys(perms).length === 0) return true
-		if (!perms.privacyTier) return true
 		if (perms.privacyTier === "public" || perms.privacyTier === "internal") {
+			return true
+		}
+		if (
+			Array.isArray(
+				(perms as { allowedSubjects?: string[] }).allowedSubjects,
+			) &&
+			ctx.subjectId &&
+			(perms as { allowedSubjects: string[] }).allowedSubjects.includes(
+				ctx.subjectId,
+			)
+		) {
+			return true
+		}
+		if (
+			Array.isArray((perms as { allowedGroups?: string[] }).allowedGroups) &&
+			ctx.groups &&
+			(perms as { allowedGroups: string[] }).allowedGroups.some((group) =>
+				ctx.groups!.includes(group),
+			)
+		) {
 			return true
 		}
 		if (

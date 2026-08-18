@@ -1,7 +1,7 @@
 # Mdbrain Repository Guidelines
 
 - Repo: https://github.com/romiluz13/mdbrain
-- In chat replies, file references must be repo-root relative only (example: `packages/memory-engine/src/mongodb-manager.ts:80`); never absolute paths or `~/...`.
+- In chat replies, file references must be repo-root relative only (example: `packages/memory-bridge/src/memongo-http-client.ts:80`); never absolute paths or `~/...`.
 
 ## Project Structure
 
@@ -14,8 +14,8 @@ mdbrain/
     mcp/          MCP server (stdio, calls HTTP API)
     web/          Next.js web console
   packages/
-    memory-engine/   Core MongoDB memory: embeddings, graph, episodes, search, KB, analytics
-    memory-bridge/   Stable facade for the engine used by apps
+    memory-bridge/   Versioned Memongo HTTP gateway used by apps
+    wiki-engine/     Governed LLM wiki and MongoDB store
     mdbrain-memory/  Published re-export package
     client/          TypeScript HTTP client SDK
     tools/           AI SDK tool helpers
@@ -46,8 +46,8 @@ mdbrain/
 
 ## Package Naming
 
-- `@mdbrain/memory-engine` -- core engine
-- `@mdbrain/memory-bridge` -- facade
+- `@mdbrain/memory-bridge` -- versioned Memongo HTTP gateway
+- `@mdbrain/wiki-engine` -- governed LLM wiki engine
 - `@mdbrain/client` -- HTTP client SDK
 - `@mdbrain/tools` -- AI SDK tools
 - `@mdbrain/lib` -- shared utilities (private)
@@ -58,7 +58,21 @@ mdbrain/
 - Follow concise, action-oriented commit messages (e.g., `engine: add graph expansion`).
 - Group related changes; avoid bundling unrelated refactors.
 
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default triage roles and labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a multi-context layout rooted at `CONTEXT-MAP.md`. See `docs/agents/domain.md`.
+
 ## Security
 
-- Never commit secrets. Use environment variables (`MDBRAIN_MONGODB_URI`, `MDBRAIN_API_KEY`, etc.).
+- Never commit secrets. Use environment variables (`MDBRAIN_WIKI_MONGODB_URI`, `MEMONGO_API_KEY`, `MDBRAIN_API_KEY`, etc.).
 - Never publish real connection strings, API keys, or personal data in code or docs.

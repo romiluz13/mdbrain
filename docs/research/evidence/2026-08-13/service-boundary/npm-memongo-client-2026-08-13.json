@@ -1,0 +1,88 @@
+{
+  "_id": "@memongo/client@2.0.0",
+  "_rev": "2-e22d004e3deb652d87b97d609df96d37",
+  "name": "@memongo/client",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": [
+    "1.1.0",
+    "2.0.0"
+  ],
+  "time": {
+    "created": "2026-06-25T06:39:14.767Z",
+    "modified": "2026-07-31T14:53:30.204Z",
+    "1.1.0": "2026-06-25T06:39:15.124Z",
+    "2.0.0": "2026-07-31T14:53:29.870Z"
+  },
+  "bugs": {
+    "url": "https://github.com/romiluz13/memongo/issues"
+  },
+  "author": "Rom Iluz",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/romiluz13/memongo#readme",
+  "keywords": [
+    "memongo",
+    "client",
+    "sdk",
+    "mongodb",
+    "memory"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/romiluz13/memongo.git",
+    "directory": "packages/client"
+  },
+  "description": "TypeScript client SDK for the Memongo HTTP API",
+  "maintainers": [
+    "romiluz13 <rom@iluz.net>"
+  ],
+  "readmeFilename": "README.md",
+  "_contentLength": 5735,
+  "version": "2.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "check-types": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  },
+  "gitHead": "bdad0fbf28c7f3360f8c206a415dd26e727e25dc",
+  "_nodeVersion": "22.23.1",
+  "_npmVersion": "10.9.8",
+  "dist": {
+    "integrity": "sha512-Ub8GWv5TI22SpKnox+a59vSCdIclA9yWGHh6D81iMTH4Y+PzjGUPJqp/jaw8RyNoc27KzmXfcg6z/uqrrQewdg==",
+    "shasum": "e3cf89e4e19618d914e595d492b9ee1be3653321",
+    "tarball": "https://registry.npmjs.org/@memongo/client/-/client-2.0.0.tgz",
+    "fileCount": 8,
+    "unpackedSize": 66665,
+    "attestations": {
+      "url": "https://registry.npmjs.org/-/npm/v1/attestations/@memongo%2fclient@2.0.0",
+      "provenance": {
+        "predicateType": "https://slsa.dev/provenance/v1"
+      }
+    },
+    "signatures": [
+      {
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "sig": "MEUCIBzxFymdD/VL8zTZbjymcmx/ELHGq2ww3mKzOCkHUrU5AiEAhTOUvUHt3NTYGTARPdwNSVJJS/DozbvYVk3V//0biJo="
+      }
+    ]
+  },
+  "_npmUser": "romiluz13 <rom@iluz.net>",
+  "directories": {},
+  "_npmOperationalInternal": {
+    "host": "s3://npm-registry-packages-npm-production",
+    "tmp": "tmp/client_2.0.0_1785509609722_0.03223471352245744"
+  },
+  "_hasShrinkwrap": false
+}

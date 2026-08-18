@@ -165,14 +165,14 @@ describe("buildScopeFilter", () => {
 		expect(filter).toEqual({ scope: SCOPE_A, scopeRef: SCOPE_A_REF })
 	})
 
-	it("bypasses scope for admin with crossScope override", () => {
+	it("does not let admin trust bypass explicit scope", () => {
 		const ctx: GovernanceContext = {
 			scope: SCOPE_A,
 			scopeRef: SCOPE_A_REF,
 			trustTier: "admin",
 		}
 		const filter = buildScopeFilter(ctx, { crossScope: true })
-		expect(filter).toEqual({})
+		expect(filter).toEqual({ scope: SCOPE_A, scopeRef: SCOPE_A_REF })
 	})
 
 	it("does NOT bypass for standard even with crossScope flag", () => {
@@ -259,7 +259,7 @@ describe("cross-scope leak prevention (arXiv GET-by-id bug)", () => {
 		expect(result?.slug).toBe("page-a")
 	})
 
-	it("admin with crossScope can read across scopes by _id", async () => {
+	it("admin with crossScope cannot read across scopes by _id", async () => {
 		const h = handle([PAGE_A, PAGE_B])
 		const ctxAdmin: GovernanceContext = {
 			scope: SCOPE_A,
@@ -269,9 +269,7 @@ describe("cross-scope leak prevention (arXiv GET-by-id bug)", () => {
 		const result = await getWikiPageByIdGoverned(h, "id-b", ctxAdmin, {
 			crossScope: true,
 		})
-		// Admin with crossScope override bypasses scope filter.
-		expect(result).not.toBeNull()
-		expect(result?.slug).toBe("page-b")
+		expect(result).toBeNull()
 	})
 
 	it("filterPagesByGovernance: cross-scope pages are filtered out", () => {
@@ -297,6 +295,32 @@ describe("permissions filtering", () => {
 		}
 		const result = await getWikiPageGoverned(h, "page-restricted", ctx)
 		expect(result).not.toBeNull()
+	})
+
+	it("restricted page is visible by matching subject or namespaced group", async () => {
+		const page = {
+			...RESTRICTED_PAGE,
+			permissions: {
+				privacyTier: "restricted",
+				allowedSubjects: ["user:alice"],
+				allowedGroups: ["idp:engineering"],
+			},
+		}
+		const bySubject = await getWikiPageGoverned(handle([page]), page.slug, {
+			scope: SCOPE_A,
+			scopeRef: SCOPE_A_REF,
+			trustTier: "standard",
+			subjectId: "user:alice",
+		})
+		const byGroup = await getWikiPageGoverned(handle([page]), page.slug, {
+			scope: SCOPE_A,
+			scopeRef: SCOPE_A_REF,
+			trustTier: "standard",
+			subjectId: "user:bob",
+			groups: ["idp:engineering"],
+		})
+		expect(bySubject).not.toBeNull()
+		expect(byGroup).not.toBeNull()
 	})
 
 	it("restricted page is NOT visible to a user without matching role", async () => {
@@ -382,7 +406,7 @@ describe("filterPagesByGovernance crossScope option", () => {
 		expect(filtered[0].slug).toBe("page-a")
 	})
 
-	it("admin with crossScope sees all pages", () => {
+	it("admin with crossScope remains constrained to the requested scope", () => {
 		const ctxAdmin: GovernanceContext = {
 			scope: SCOPE_A,
 			scopeRef: SCOPE_A_REF,
@@ -391,7 +415,8 @@ describe("filterPagesByGovernance crossScope option", () => {
 		const filtered = filterPagesByGovernance([PAGE_A, PAGE_B], ctxAdmin, {
 			crossScope: true,
 		})
-		expect(filtered).toHaveLength(2)
+		expect(filtered).toHaveLength(1)
+		expect(filtered[0].slug).toBe("page-a")
 	})
 })
 

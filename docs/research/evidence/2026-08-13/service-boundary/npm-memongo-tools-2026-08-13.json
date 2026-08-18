@@ -1,0 +1,106 @@
+{
+  "_id": "@memongo/tools@2.0.0",
+  "_rev": "2-208373aafbecb087b70006898b5959eb",
+  "name": "@memongo/tools",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": [
+    "1.1.0",
+    "2.0.0"
+  ],
+  "time": {
+    "created": "2026-06-25T06:39:21.097Z",
+    "modified": "2026-07-31T14:53:33.178Z",
+    "1.1.0": "2026-06-25T06:39:21.501Z",
+    "2.0.0": "2026-07-31T14:53:32.821Z"
+  },
+  "bugs": {
+    "url": "https://github.com/romiluz13/memongo/issues"
+  },
+  "author": "Rom Iluz",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/romiluz13/memongo#readme",
+  "keywords": [
+    "memongo",
+    "tools",
+    "ai-sdk",
+    "memory",
+    "mongodb"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/romiluz13/memongo.git",
+    "directory": "packages/tools"
+  },
+  "description": "AI SDK tool helpers for Memongo (function-calling tools for search, add, profile, etc.)",
+  "maintainers": [
+    "romiluz13 <rom@iluz.net>"
+  ],
+  "readmeFilename": "README.md",
+  "_contentLength": 6330,
+  "version": "2.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./vercel": {
+      "types": "./dist/vercel/index.d.ts",
+      "default": "./dist/vercel/index.js"
+    },
+    "./openai": {
+      "types": "./dist/openai/index.d.ts",
+      "default": "./dist/openai/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "check-types": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@memongo/client": "2.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "ai": "^5.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.0"
+  },
+  "peerDependencies": {
+    "ai": ">=5.0.0"
+  },
+  "gitHead": "bdad0fbf28c7f3360f8c206a415dd26e727e25dc",
+  "_nodeVersion": "22.23.1",
+  "_npmVersion": "10.9.8",
+  "dist": {
+    "integrity": "sha512-QIns2Ub4ExCbfcCggYku6E8/yZPFAh2iS6wUQmBBrUJZgn7of/52ImQUj2Q7b6LU7ZG5MRZyvKwoFk22s6NqyA==",
+    "shasum": "8b54199292886775962f66f7812277d2cbc3066d",
+    "tarball": "https://registry.npmjs.org/@memongo/tools/-/tools-2.0.0.tgz",
+    "fileCount": 10,
+    "unpackedSize": 37061,
+    "attestations": {
+      "url": "https://registry.npmjs.org/-/npm/v1/attestations/@memongo%2ftools@2.0.0",
+      "provenance": {
+        "predicateType": "https://slsa.dev/provenance/v1"
+      }
+    },
+    "signatures": [
+      {
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "sig": "MEUCIQCBGCAzkGiVYF+cwoKaXTNSzqQrnLYlPe1RQFLAD+KtZwIgBAuFvcan91uGaS+hk8ZYV58rlrM44HE5Zf73aZROmhg="
+      }
+    ]
+  },
+  "_npmUser": "romiluz13 <rom@iluz.net>",
+  "directories": {},
+  "_npmOperationalInternal": {
+    "host": "s3://npm-registry-packages-npm-production",
+    "tmp": "tmp/tools_2.0.0_1785509612656_0.2326790687440914"
+  },
+  "_hasShrinkwrap": false
+}

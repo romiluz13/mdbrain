@@ -119,18 +119,6 @@ const tools = [
 	{
 		type: "function",
 		function: {
-			name: "mdbrain_status",
-			description: "Read Mdbrain backend status for the current agent.",
-			parameters: {
-				type: "object",
-				properties: {},
-				additionalProperties: false,
-			},
-		},
-	},
-	{
-		type: "function",
-		function: {
 			name: "mdbrain_hydrate_active_slate",
 			description:
 				"Read a tiny active-state slate for current blockers, decisions, and live procedures.",
@@ -268,6 +256,7 @@ async function executeToolCall(toolCall: ToolCall): Promise<unknown> {
 	switch (toolCall.function.name) {
 		case "mdbrain_write_event":
 			return mdbrain.writeEvent({
+				idempotencyKey: toolCall.id,
 				role: String(args.role ?? "user") as
 					| "user"
 					| "assistant"
@@ -302,8 +291,6 @@ async function executeToolCall(toolCall: ToolCall): Promise<unknown> {
 				})),
 			}
 		}
-		case "mdbrain_status":
-			return mdbrain.status(agentId)
 		case "mdbrain_hydrate_active_slate":
 			return mdbrain.hydrateActiveSlate({
 				agentId,
@@ -437,8 +424,16 @@ async function main() {
 		sessionId,
 	})
 
-	const status = await mdbrain.status(agentId)
-	emitRunStep({ step: "mdbrain-status", status })
+	const readinessResponse = await fetch(
+		`${mdbrainApiUrl.replace(/\/$/, "")}/ready`,
+	)
+	const readiness = await readinessResponse.json()
+	if (!readinessResponse.ok) {
+		throw new Error(
+			`Mdbrain readiness check failed (${readinessResponse.status}): ${JSON.stringify(readiness)}`,
+		)
+	}
+	emitRunStep({ step: "mdbrain-readiness", readiness })
 
 	await mdbrain.writeStructured({
 		agentId,

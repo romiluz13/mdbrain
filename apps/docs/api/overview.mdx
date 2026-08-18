@@ -15,6 +15,7 @@ and MCP server.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Service health |
+| GET | `/ready` | Dependency and Memongo contract readiness |
 | GET | `/openapi.json` | OpenAPI document |
 
 ### Memory operations
@@ -32,6 +33,9 @@ and MCP server.
 | POST | `/v1/context-bundle` | Build a prompt-ready context bundle |
 | POST | `/v1/memory/feedback` | Confirm, correct, or reject memory relevance |
 
+`POST /v1/add` and `POST /v1/write-event` require an `Idempotency-Key`
+header. Reuse the same key only for an exact replay of the same scoped write.
+
 ### Lifecycle operations
 
 | Method | Path | Description |
@@ -41,20 +45,17 @@ and MCP server.
 | POST | `/v1/lifecycle/delete` | Delete or invalidate a structured or procedure memory by stable handle |
 | POST | `/v1/lifecycle/history` | Inspect lifecycle history by stable handle |
 
-### System operations
+### Administrative product operations
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/status` | Memory provider status and health |
-| GET | `/v1/stats` | Memory statistics (counts, sizes) |
-| POST | `/v1/sync` | Force a memory sync cycle |
-| GET | `/v1/probes/embedding` | Probe embedding availability |
-| GET | `/v1/probes/vector` | Probe vector availability |
-| GET | `/v1/status/detailed` | Detailed status view |
-| POST | `/v1/admin/relevance/explain` | Explain relevance for a query |
-| POST | `/v1/admin/relevance/benchmark` | Run a relevance benchmark |
-| GET | `/v1/admin/relevance/report` | Relevance report |
-| GET | `/v1/admin/relevance/sample-rate` | Relevance sampling rate |
+| GET | `/v1/admin/deliveries` | Inspect redacted durable delivery state |
+
+Provider status and embedding/vector probes are control operations, not tenant
+product operations. They are intentionally absent from the REST API, OpenAPI
+document, TypeScript client, MCP server, AI tools, and web console. Operators
+should use the server-local `/health` and `/ready` endpoints; readiness composes
+Memongo bridge compatibility with wiki-store readiness.
 
 ## Authentication
 

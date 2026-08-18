@@ -2,37 +2,31 @@
 
 All notable changes to Mdbrain will be documented in this file.
 
-## Unreleased
+## 2.0.0 - 2026-08-17
 
 ### Added
 
-- LLM wiki engine (`@mdbrain/wiki-engine`): wiki_pages schema, CRUD API, OKF
-  import/export, hybrid search ($vectorSearch + $search + $rankFusion), MCP
-  tools, Map & Pointer generator, backlinks, migration (structured_mem → wiki),
-  governance (scope enforcement, trust tiers, permissions, contradiction
-  detection), self-maintenance (git-diff + Dreamer), and 6 source connectors
-  (Obsidian, GitHub, Confluence, Notion, Slack, CRM).
-- Web console wiki browsing tab.
-- Stress test script (`bun run stress-test`).
+- Version-pinned Memongo 2.0.1 HTTP gateway with compatibility readiness.
+- Independent `WikiStore` with transaction-required schema initialization.
+- Durable intent-before-dispatch delivery, bounded reconciliation, redacted
+  admin visibility, and receipt-gated transactional wiki promotion.
+- Governed wiki CRUD, revisions, OKF import/export, search, maintenance, and
+  six read-only connector discovery adapters.
 
 ### Changed
 
-- Wiki search migrated from pre-computed `queryVector` to MongoDB Atlas
-  auto-embeddings via Voyage AI (`voyage-4-large`). The `queryVector` parameter
-  is removed from `WikiSearchParams`, `@mdbrain/client` `wikiSearch()`, and the
-  `/v1/wiki/search` route. Wiki pages now auto-embed from a derived `text` field
-  (title + summary + body) — no app-side embedding required.
+- All memory operations now cross the supported Memongo HTTP contract.
+- Event-producing writes require caller-owned idempotency keys.
+- REST, client, MCP, AI tools, web, OpenAPI, and proof surfaces now expose only
+  supported contract operations.
+- All publishable packages are versioned `2.0.0`.
 
-### Fixed
+### Removed
 
-- Wiki schema initialization: `mdbrainBridgeGetManager` now calls
-  `ensureWikiSchema` so wiki_pages search indexes are created on startup.
-- Atlas Search index filter fields changed from `string` to `token` type —
-  the `equals()` operator requires `token` type.
-- MongoDB $jsonSchema validation: `normalizeInput` no longer sets
-  undefined-valued optional fields (MongoDB rejects undefined for typed
-  fields in $jsonSchema validators).
-- Repo name corrected from `mdbrian` to `mdbrain` everywhere.
+- The copied `@mdbrain/memory-engine` package and every direct-engine path.
+- Raw filesystem, sync, stats, relevance diagnostics, benchmark/import,
+  trace/job, novelty, consolidation, and self-edit public operations.
+- Direct MongoDB migration and engine parity scripts.
 
 ## 1.1.0 - 2026-06-24
 

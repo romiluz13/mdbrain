@@ -1,7 +1,7 @@
 {
 	"name": "@mdbrain/memory",
-	"version": "1.1.0",
-	"description": "Mdbrain memory: published re-export surface for the memory engine and bridge",
+	"version": "2.0.0",
+	"description": "Mdbrain memory: remote HTTP client and server-side Memongo gateway",
 	"type": "module",
 	"license": "Apache-2.0",
 	"repository": {
@@ -33,8 +33,8 @@
 		"check-types": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
 	},
 	"dependencies": {
-		"@mdbrain/memory-engine": "1.1.0",
-		"@mdbrain/memory-bridge": "1.1.0"
+		"@mdbrain/client": "2.0.0",
+		"@mdbrain/memory-bridge": "2.0.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.8.0",

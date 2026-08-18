@@ -39,20 +39,17 @@ jobs:
 
       - name: Publish packages
         run: |
-          for pkg in \
-            packages/lib \
-            packages/memory-engine \
-            packages/memory-bridge \
-            packages/mdbrian-memory \
-            packages/client \
-            packages/tools
+          package_output=$(bun scripts/publish-package-cohort.ts paths)
+          mapfile -t packages <<< "$package_output"
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "No publishable packages resolved."
+            exit 1
+          fi
+
+          for pkg in "${packages[@]}"
           do
             name=$(node -p "require('./$pkg/package.json').name")
             version=$(node -p "require('./$pkg/package.json').version")
-            is_private=$(node -e "console.log(require('./$pkg/package.json').private === true)")
-            if [ "$is_private" = "true" ]; then
-              continue
-            fi
 
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "Skipping $name@$version; already published."

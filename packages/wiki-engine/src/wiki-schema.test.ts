@@ -122,7 +122,12 @@ describe("ensureWikiCollections", () => {
 	})
 
 	it("is idempotent — does not recreate if already present", async () => {
-		const db = mockDb(["test_wiki_pages", "test_wiki_revisions"])
+		const db = mockDb([
+			"test_wiki_pages",
+			"test_wiki_revisions",
+			"test_wiki_mutation_intents",
+			"test_memory_delivery_intents",
+		])
 		await ensureWikiCollections(db, "test_")
 		expect(db.createCollection).not.toHaveBeenCalled()
 	})

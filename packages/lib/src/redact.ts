@@ -51,6 +51,7 @@ export function redactSensitiveText(text: string): string {
 			}
 			const token =
 				groups
+					.slice(0, -2)
 					.filter((g): g is string => typeof g === "string" && g.length > 0)
 					.at(-1) ?? match
 			const masked = maskToken(token)

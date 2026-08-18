@@ -18,10 +18,12 @@
 			"!**/.turbo",
 			"!**/dist",
 			"!**/build",
+			"!**/.pi",
 			"!archive",
 			"!**/archive",
 			"!coverage",
 			"!**/coverage",
+			"!docs/research/evidence/**/*.json",
 			"!docker",
 			"!**/docker"
 		]

@@ -8,7 +8,8 @@ icon: "play"
 
 - Node.js 20+
 - Bun 1.2+
-- Docker, for local MongoDB
+- Docker, for the local wiki MongoDB
+- A compatible Memongo 2.0.1 HTTP deployment
 
 ## 1. Clone and install
 
@@ -18,27 +19,18 @@ cd mdbrain
 bun install
 ```
 
-## 2. Start MongoDB
+## 2. Start the wiki database and configure Memongo
 
 For the default local path:
 
 ```bash
-docker compose -f docker/docker-compose.yml up -d
-export MDBRAIN_MONGODB_URI="mongodb://127.0.0.1:27017/?directConnection=true"
-export MDBRAIN_API_KEY="local-dev-secret"
+docker compose -f docker/docker-compose.minimal.yml up -d
+export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?replicaSet=rs0"
+export MEMONGO_API_URL="http://127.0.0.1:3900"
+export MEMONGO_API_KEY="YOUR_MEMONGO_API_KEY_HERE"
+export MEMONGO_ALLOW_INSECURE_LOCAL="1"
+export MDBRAIN_API_KEY="YOUR_API_KEY_HERE"
 ```
-
-For Atlas Local Preview with MongoDB automated embeddings:
-
-```bash
-export VOYAGE_API_KEY="al-your-atlas-model-api-key"
-./docker/mongodb/start-preview.sh
-export MDBRAIN_MONGODB_URI="mongodb://127.0.0.1:27017/?directConnection=true"
-```
-
-`VOYAGE_API_KEY` must be a MongoDB Atlas Model API key with the `al-...` prefix
-when you use MongoDB auto-embed. Direct Voyage keys with the `pa-...` prefix do
-not enable MongoDB auto-embed.
 
 ## 3. Start the API
 
@@ -53,11 +45,11 @@ The API runs at `http://127.0.0.1:3847`.
 
 ```bash
 curl -s http://127.0.0.1:3847/health
-curl -s http://127.0.0.1:3847/v1/status \
-  -H "authorization: Bearer local-dev-secret"
+curl -s http://127.0.0.1:3847/ready
 ```
 
-Look for a healthy API response and a memory status payload.
+Look for a healthy API response and ready dependencies. These are server-local
+liveness and readiness checks, not tenant diagnostics APIs.
 
 ## 5. Add and search memory
 
@@ -68,12 +60,13 @@ import { MdbrainClient } from "@mdbrain/client";
 
 const client = new MdbrainClient({
   baseUrl: "http://127.0.0.1:3847",
-  apiKey: "local-dev-secret",
+  apiKey: "YOUR_API_KEY_HERE",
 });
 
 await client.add({
   content: "The user prefers dark mode and TypeScript.",
   sessionId: "user-123",
+  idempotencyKey: crypto.randomUUID(),
 });
 
 const results = await client.search({
@@ -89,12 +82,13 @@ console.log(results);
 ```bash
 curl -s http://127.0.0.1:3847/v1/add \
   -H "content-type: application/json" \
-  -H "authorization: Bearer local-dev-secret" \
+  -H "authorization: Bearer YOUR_API_KEY_HERE" \
+  -H "idempotency-key: YOUR_IDEMPOTENCY_KEY_HERE" \
   -d '{"content":"The user prefers dark mode and TypeScript.","sessionId":"user-123"}'
 
 curl -s http://127.0.0.1:3847/v1/search \
   -H "content-type: application/json" \
-  -H "authorization: Bearer local-dev-secret" \
+  -H "authorization: Bearer YOUR_API_KEY_HERE" \
   -d '{"query":"What are the user preferences?","sessionKey":"user-123","maxResults":5}'
 ```
 </Tab>
@@ -118,7 +112,7 @@ MCP server:
 ```bash
 cd apps/mcp
 MDBRAIN_API_URL=http://127.0.0.1:3847 \
-MDBRAIN_API_KEY=local-dev-secret \
+MDBRAIN_API_KEY=YOUR_API_KEY_HERE \
 bun run start
 ```
 
@@ -127,8 +121,8 @@ bun run start
 | Method | Path | Description |
 |---|---|---|
 | GET | `/health` | Service health |
+| GET | `/ready` | Memongo compatibility readiness |
 | GET | `/openapi.json` | OpenAPI document |
-| GET | `/v1/status` | Memory provider status |
 | POST | `/v1/add` | Add content to memory |
 | POST | `/v1/write-event` | Write conversation event |
 | POST | `/v1/write-structured` | Write structured memory |

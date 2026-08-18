@@ -69,6 +69,29 @@ describe("recordWikiPageRevision", () => {
 			}),
 		).resolves.toBeUndefined()
 	})
+
+	it("surfaces insert failures for atomic mutation transactions", async () => {
+		const { db, coll } = mockDb()
+		;(
+			coll.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mockRejectedValueOnce(new Error("revision failed"))
+		const h: WikiDbHandle = { db, prefix: "test_" }
+
+		await expect(
+			recordWikiPageRevision(
+				h,
+				{
+					pageSlug: "x",
+					scope: "workspace",
+					scopeRef: "ws-1",
+					revision: 1,
+					editKind: "create",
+					snapshot: { slug: "x" },
+				},
+				{ strict: true },
+			),
+		).rejects.toThrow("revision failed")
+	})
 })
 
 describe("listWikiPageRevisions", () => {

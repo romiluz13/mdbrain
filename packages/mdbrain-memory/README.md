@@ -1,6 +1,6 @@
 # @mdbrain/memory
 
-Convenience barrel over the supported Mdbrain memory core. It re-exports the bridge and engine for consumers who want one import path.
+Convenience barrel over the supported MDBrain memory surfaces. It re-exports the public HTTP client and the server-side Memongo gateway.
 
 ## Install
 
@@ -10,16 +10,16 @@ npm install @mdbrain/memory
 
 ## When to use this package
 
-- You want a single import for the supported memory core.
-- You are shipping internal tooling and do not need to split bridge and engine imports.
+- You want one import for the typed HTTP client and server-side gateway.
+- You do not need direct database or Memongo implementation access.
 
 ## Example
 
 ```ts
-import { mdbrainBridgeStatus, getMemorySearchManager } from "@mdbrain/memory"
+import { MdbrainClient, mdbrainBridgeStatus } from "@mdbrain/memory"
 ```
 
 Prefer the direct packages when you want a narrower dependency surface:
 
 - [`@mdbrain/memory-bridge`](../memory-bridge/README.md)
-- [`@mdbrain/memory-engine`](../memory-engine/README.md)
+- [`@mdbrain/client`](../client/README.md)

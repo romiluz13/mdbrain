@@ -55,6 +55,10 @@ import {
 	filterPagesByGovernance,
 	type GovernanceContext,
 } from "./wiki-governance.js"
+import {
+	type ContainedFile,
+	writeContainedFiles,
+} from "./filesystem-containment.js"
 
 const log = createSubsystemLogger("wiki:okf")
 
@@ -446,6 +450,7 @@ export async function importOkfBundle(
 		trustTier: WikiPageInput["trustTier"]
 		okfBundleId: string
 		embed?: (text: string) => Promise<number[]>
+		session?: ClientSession
 	},
 ): Promise<OkfImportResult> {
 	const allowedRoots = process.env.MDBRAIN_OKF_ALLOWED_ROOTS
@@ -463,12 +468,11 @@ export async function importOkfBundle(
 
 	// A crash mid-bundle (process crash, dropped DB connection, unhandled
 	// error partway through a large bundle) must not leave the wiki in a
-	// half-imported state on deployments that support it. `runImportLoop`
-	// is shared between the transactional and non-transactional paths so
-	// per-concept behavior is identical either way — only the atomicity
-	// guarantee differs.
+	// half-imported state. `runImportLoop` always receives the caller's
+	// transaction or one created here for direct library callers.
 	const runImportLoop = async (session: ClientSession | undefined) => {
 		for (const concept of concepts) {
+			let mutationStarted = false
 			try {
 				const input = conceptToWikiInput(concept, opts, indexRelationships)
 				// Upsert by slug+scope: if the page exists, update; else create.
@@ -492,6 +496,7 @@ export async function importOkfBundle(
 								"(not previously OKF-imported) — refusing to overwrite",
 						)
 					}
+					mutationStarted = true
 					await updateWikiPage(
 						handle,
 						input.slug,
@@ -510,16 +515,19 @@ export async function importOkfBundle(
 						{ session },
 					)
 				} else {
+					mutationStarted = true
 					await createWikiPage(handle, input, { embed: opts.embed, session })
 				}
 				result.imported++
 				result.conceptIds.push(concept.conceptId)
 			} catch (err) {
-				// A transaction-not-supported error must abort the whole attempt (so
-				// the outer session.withTransaction catch below can detect it and
-				// fall back) rather than being swallowed as a normal per-concept
-				// failure.
-				if (session && isTransactionNotSupported(err)) throw err
+				// Parse and concept-validation failures before mutation remain
+				// reportable per concept. Once a transactional page mutation begins,
+				// every failure is strict: swallowing a revision or other post-write
+				// failure would commit a page without its required evidence.
+				if (session && (mutationStarted || isTransactionNotSupported(err))) {
+					throw err
+				}
 				const msg = err instanceof Error ? err.message : String(err)
 				result.errors.push({ conceptId: concept.conceptId, error: msg })
 				result.skipped++
@@ -527,33 +535,14 @@ export async function importOkfBundle(
 		}
 	}
 
-	if (handle.client) {
-		const baselineErrorCount = result.errors.length
+	if (opts.session) {
+		await runImportLoop(opts.session)
+	} else if (handle.client) {
 		const session = handle.client.startSession()
 		try {
 			await session.withTransaction(async () => {
 				await runImportLoop(session)
 			})
-		} catch (err) {
-			if (!isTransactionNotSupported(err)) throw err
-			// Standalone MongoDB (no replica set) — transactions aren't
-			// available. Self-hosted local-first deployments frequently run
-			// standalone, so fall back to the previous non-transactional
-			// per-concept behavior rather than refusing to import; just make the
-			// partial-import risk visible instead of silent.
-			log.warn(
-				"OKF import: MongoDB transactions are not supported on this " +
-					"deployment (standalone, not a replica set) — falling back to " +
-					"non-transactional per-concept import. A crash mid-bundle can " +
-					"leave the wiki partially imported.",
-			)
-			// The transaction rolled back any writes from the aborted attempt —
-			// reset result state to match (it may have partial mutations from
-			// concepts processed before the unsupported-transaction error fired).
-			result.imported = 0
-			result.conceptIds = []
-			result.errors.length = baselineErrorCount
-			await runImportLoop(undefined)
 		} finally {
 			await session.endSession()
 		}
@@ -1001,24 +990,28 @@ export async function exportOkfBundle(
 		? process.env.MDBRAIN_OKF_ALLOWED_ROOTS.split(",").map((r) => r.trim())
 		: []
 	const safeOutDir = validateOkfPath(opts.outDir, allowedRoots)
-	fs.mkdirSync(safeOutDir, { recursive: true })
 	const files: string[] = []
 	const fileContents: Record<string, string> | undefined = opts.returnContent
 		? {}
 		: undefined
+	const outputFiles: ContainedFile[] = []
 	for (const page of pages) {
-		const filePath = path.join(safeOutDir, `${page.slug}.md`)
-		fs.mkdirSync(path.dirname(filePath), { recursive: true })
 		const content = wikiPageToOkfMarkdown(page)
-		fs.writeFileSync(filePath, content, "utf-8")
-		files.push(`${page.slug}.md`)
-		if (fileContents) fileContents[`${page.slug}.md`] = content
+		const relativeFile = `${page.slug}.md`
+		outputFiles.push({ path: relativeFile, content })
+		files.push(relativeFile)
+		if (fileContents) fileContents[relativeFile] = content
 	}
 	// Write index.md with links to all concepts.
 	const indexContent = buildIndexMarkdown(pages)
-	fs.writeFileSync(path.join(safeOutDir, "index.md"), indexContent, "utf-8")
+	outputFiles.push({ path: "index.md", content: indexContent })
 	files.push("index.md")
 	if (fileContents) fileContents["index.md"] = indexContent
+	writeContainedFiles(
+		safeOutDir,
+		outputFiles,
+		allowedRoots.length > 0 ? allowedRoots : undefined,
+	)
 	return {
 		dir: safeOutDir,
 		exported: pages.length,

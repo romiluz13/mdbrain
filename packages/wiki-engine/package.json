@@ -1,9 +1,26 @@
 {
 	"name": "@mdbrain/wiki-engine",
-	"version": "0.1.0",
+	"version": "2.0.0",
 	"private": false,
 	"description": "MDBrain wiki engine \u2014 wiki_pages, OKF interchange, page rendering, maintenance, contradictions, governance, connectors",
 	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/romiluz13/mdbrain.git",
+		"directory": "packages/wiki-engine"
+	},
+	"homepage": "https://github.com/romiluz13/mdbrain#readme",
+	"bugs": {
+		"url": "https://github.com/romiluz13/mdbrain/issues"
+	},
+	"author": "Rom Iluz",
+	"keywords": [
+		"mdbrain",
+		"wiki",
+		"mongodb",
+		"knowledge",
+		"ai"
+	],
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -23,8 +40,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@mdbrain/memory-engine": "workspace:*",
-		"@mdbrain/lib": "workspace:*",
+		"@mdbrain/lib": "2.0.0",
 		"js-yaml": "^4.1.0",
 		"mongodb": "^7.0.0"
 	},

@@ -7,6 +7,7 @@
 //
 // T11.
 
+import type { ClientSession } from "mongodb"
 import { wikiPagesCollection } from "./wiki-schema.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 
@@ -36,31 +37,35 @@ export async function recomputeBacklinksFor(
 	targetSlug: string,
 	scope: string,
 	scopeRef: string,
+	opts: { session?: ClientSession } = {},
 ): Promise<WikiBacklink[] | null> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 
 	// Find all pages in this scope that reference targetSlug in their
 	// relationships[]. Uses $match on relationships.targetPageSlug.
 	const referringPages = (await coll
-		.aggregate([
-			{
-				$match: {
-					scope,
-					scopeRef,
-					"relationships.targetPageSlug": targetSlug,
-					// Exclude superseded (soft-deleted) pages — they should not
-					// contribute backlinks.
-					state: { $ne: "superseded" },
+		.aggregate(
+			[
+				{
+					$match: {
+						scope,
+						scopeRef,
+						"relationships.targetPageSlug": targetSlug,
+						// Exclude superseded (soft-deleted) pages — they should not
+						// contribute backlinks.
+						state: { $ne: "superseded" },
+					},
 				},
-			},
-			{
-				$project: {
-					slug: 1,
-					title: 1,
-					relationships: 1,
+				{
+					$project: {
+						slug: 1,
+						title: 1,
+						relationships: 1,
+					},
 				},
-			},
-		])
+			],
+			opts.session ? { session: opts.session } : undefined,
+		)
 		.toArray()) as Array<{
 		slug: string
 		title: string
@@ -79,6 +84,7 @@ export async function recomputeBacklinksFor(
 	const result = await coll.updateOne(
 		{ slug: targetSlug, scope, scopeRef },
 		{ $set: { backlinks } },
+		opts.session ? { session: opts.session } : undefined,
 	)
 	if (result.matchedCount === 0) return null
 	return backlinks
@@ -108,6 +114,7 @@ export async function recomputeBacklinksAfterChange(
 		oldRelationshipTargets?: string[] // slugs the page used to reference
 		newRelationshipTargets?: string[] // slugs the page now references
 		deleted?: boolean
+		session?: ClientSession
 	} = {},
 ): Promise<void> {
 	// When deleted, the changed page is gone — recompute backlinks for all
@@ -118,6 +125,7 @@ export async function recomputeBacklinksAfterChange(
 			changedSlug,
 			scope,
 			scopeRef,
+			opts.session,
 		)
 		return
 	}
@@ -130,7 +138,9 @@ export async function recomputeBacklinksAfterChange(
 	for (const s of opts.newRelationshipTargets ?? []) affectedSlugs.add(s)
 
 	for (const slug of affectedSlugs) {
-		await recomputeBacklinksFor(handle, slug, scope, scopeRef)
+		await recomputeBacklinksFor(handle, slug, scope, scopeRef, {
+			session: opts.session,
+		})
 	}
 }
 
@@ -141,22 +151,26 @@ async function recomputeBacklinksForReferencingPages(
 	sourceSlug: string,
 	scope: string,
 	scopeRef: string,
+	session?: ClientSession,
 ): Promise<void> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const pagesWithStaleBacklink = (await coll
-		.aggregate([
-			{
-				$match: {
-					scope,
-					scopeRef,
-					"backlinks.sourcePageSlug": sourceSlug,
+		.aggregate(
+			[
+				{
+					$match: {
+						scope,
+						scopeRef,
+						"backlinks.sourcePageSlug": sourceSlug,
+					},
 				},
-			},
-			{ $project: { slug: 1 } },
-		])
+				{ $project: { slug: 1 } },
+			],
+			session ? { session } : undefined,
+		)
 		.toArray()) as Array<{ slug: string }>
 	for (const p of pagesWithStaleBacklink) {
-		await recomputeBacklinksFor(handle, p.slug, scope, scopeRef)
+		await recomputeBacklinksFor(handle, p.slug, scope, scopeRef, { session })
 	}
 }
 

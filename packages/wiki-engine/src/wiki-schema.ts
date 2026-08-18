@@ -1,13 +1,12 @@
 // @mdbrain/wiki-engine — wiki_pages collection schema, validators, indexes.
 //
-// Mirrors the @mdbrain/memory-engine schema pattern (mongodb-schema.ts):
 //   - WIKI_PAGES_SCHEMA: $jsonSchema validator (validationAction: "error")
 //   - wikiPagesCollection(db, prefix): collection helper
 //   - VALIDATED_WIKI_COLLECTIONS: map consumed by ensureWikiCollections + ensureWikiSchemaValidation
 //   - ensureWikiCollections / ensureWikiSchemaValidation / ensureWikiStandardIndexes / ensureWikiSearchIndexes
 //
 // wiki_pages is the Layer 2 synthesis artifact (Karpathy 3-layer model):
-//   Layer 1 = entity graph + raw sources (memory-engine)
+//   Layer 1 = remote memory and raw sources (Memongo)
 //   Layer 2 = wiki_pages (this module) — LLM-synthesized, browsable by humans + agents
 //   Layer 3 = page-kind schemas + maintenance rules + governance policies
 //
@@ -377,6 +376,14 @@ const WIKI_PAGES_SCHEMA: Document = {
 			permissions: {
 				bsonType: "object",
 				properties: {
+					allowedSubjects: {
+						bsonType: "array",
+						items: { bsonType: "string" },
+					},
+					allowedGroups: {
+						bsonType: "array",
+						items: { bsonType: "string" },
+					},
 					allowedRoles: { bsonType: "array", items: { bsonType: "string" } },
 					allowedDepartments: {
 						bsonType: "array",
@@ -469,6 +476,20 @@ export function wikiRevisionsCollection(db: Db, prefix: string): Collection {
 	return db.collection(`${prefix}wiki_revisions`)
 }
 
+export function wikiMutationIntentsCollection(
+	db: Db,
+	prefix: string,
+): Collection {
+	return db.collection(`${prefix}wiki_mutation_intents`)
+}
+
+export function memoryDeliveryIntentsCollection(
+	db: Db,
+	prefix: string,
+): Collection {
+	return db.collection(`${prefix}memory_delivery_intents`)
+}
+
 const WIKI_REVISIONS_SCHEMA: Document = {
 	$jsonSchema: {
 		bsonType: "object",
@@ -505,9 +526,128 @@ const WIKI_REVISIONS_SCHEMA: Document = {
 	},
 }
 
+const WIKI_MUTATION_INTENTS_SCHEMA: Document = {
+	$jsonSchema: {
+		bsonType: "object",
+		required: [
+			"operationId",
+			"kind",
+			"pageSlug",
+			"scope",
+			"scopeRef",
+			"principalSubjectId",
+			"payloadFingerprint",
+			"state",
+			"createdAt",
+			"updatedAt",
+		],
+		properties: {
+			operationId: { bsonType: "string" },
+			kind: {
+				enum: ["create", "update", "soft-delete", "hard-delete", "okf-import"],
+			},
+			pageSlug: { bsonType: "string" },
+			scope: { enum: SCOPE_VALUES },
+			scopeRef: { bsonType: "string" },
+			principalSubjectId: { bsonType: "string" },
+			payloadFingerprint: {
+				bsonType: "string",
+				pattern: "^[a-f0-9]{64}$",
+			},
+			state: { enum: ["recorded"] },
+			createdAt: { bsonType: "date" },
+			updatedAt: { bsonType: "date" },
+		},
+	},
+}
+
+const MEMORY_DELIVERY_INTENTS_SCHEMA: Document = {
+	$jsonSchema: {
+		bsonType: "object",
+		required: [
+			"operationId",
+			"operation",
+			"idempotencyKey",
+			"payloadFingerprint",
+			"payload",
+			"principalSubjectId",
+			"agentId",
+			"scope",
+			"scopeRef",
+			"promotionPolicy",
+			"state",
+			"attempts",
+			"reconciliationAttempts",
+			"promotionAttempts",
+			"createdAt",
+			"updatedAt",
+		],
+		properties: {
+			operationId: { bsonType: "string" },
+			operation: { enum: ["add", "write-event"] },
+			idempotencyKey: { bsonType: "string" },
+			payloadFingerprint: {
+				bsonType: "string",
+				pattern: "^[a-f0-9]{64}$",
+			},
+			payload: { bsonType: "object" },
+			principalSubjectId: { bsonType: "string" },
+			agentId: { bsonType: "string" },
+			scope: { enum: SCOPE_VALUES },
+			scopeRef: { bsonType: "string" },
+			promotionPolicy: { enum: ["none", "wiki"] },
+			state: {
+				enum: [
+					"recorded",
+					"delivering",
+					"retryable",
+					"outcome-unknown",
+					"confirmed",
+					"promotion-pending",
+					"promoted",
+					"dead-letter",
+					"conflict",
+				],
+			},
+			attempts: { bsonType: "number", minimum: 0 },
+			reconciliationAttempts: { bsonType: "number", minimum: 0 },
+			promotionAttempts: { bsonType: "number", minimum: 0 },
+			receipt: { bsonType: "object" },
+			promotionKey: { bsonType: "string" },
+			lastErrorCode: { bsonType: "string" },
+			dispatchStartedAt: { bsonType: "date" },
+			confirmedAt: { bsonType: "date" },
+			promotedAt: { bsonType: "date" },
+			replayConflictCount: { bsonType: "number", minimum: 1 },
+			replayConflictFields: {
+				bsonType: "array",
+				minItems: 1,
+				uniqueItems: true,
+				items: {
+					enum: [
+						"payloadFingerprint",
+						"idempotencyKey",
+						"promotionPolicy",
+						"operation",
+						"principalSubjectId",
+						"agentId",
+						"scope",
+						"scopeRef",
+					],
+				},
+			},
+			lastReplayConflictAt: { bsonType: "date" },
+			createdAt: { bsonType: "date" },
+			updatedAt: { bsonType: "date" },
+		},
+	},
+}
+
 const VALIDATED_WIKI_COLLECTIONS: Record<string, Document> = {
 	wiki_pages: WIKI_PAGES_SCHEMA,
 	wiki_revisions: WIKI_REVISIONS_SCHEMA,
+	wiki_mutation_intents: WIKI_MUTATION_INTENTS_SCHEMA,
+	memory_delivery_intents: MEMORY_DELIVERY_INTENTS_SCHEMA,
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +664,12 @@ export async function ensureWikiCollections(
 			.map((c) => c.name)
 			.toArray(),
 	)
-	const needed = ["wiki_pages", "wiki_revisions"].map((n) => `${prefix}${n}`)
+	const needed = [
+		"wiki_pages",
+		"wiki_revisions",
+		"wiki_mutation_intents",
+		"memory_delivery_intents",
+	].map((n) => `${prefix}${n}`)
 	for (const name of needed) {
 		if (!existing.has(name)) {
 			const baseName = name.slice(prefix.length)
@@ -625,6 +770,38 @@ export async function ensureWikiStandardIndexes(
 	]
 	await revisionsColl.createIndexes(revisionIndexes)
 	log.info(`ensured standard indexes on ${revisionsColl.collectionName}`)
+
+	const intentsColl = wikiMutationIntentsCollection(db, prefix)
+	await intentsColl.createIndexes([
+		{
+			key: { operationId: 1 },
+			unique: true,
+			name: "operation_id_unique",
+		},
+		{
+			key: { state: 1, updatedAt: 1 },
+			name: "state_updatedAt",
+		},
+	])
+	log.info(`ensured standard indexes on ${intentsColl.collectionName}`)
+
+	const deliveriesColl = memoryDeliveryIntentsCollection(db, prefix)
+	await deliveriesColl.createIndexes([
+		{
+			key: { operationId: 1 },
+			unique: true,
+			name: "operation_id_unique",
+		},
+		{
+			key: { state: 1, updatedAt: 1 },
+			name: "state_updatedAt",
+		},
+		{
+			key: { scope: 1, scopeRef: 1, createdAt: 1 },
+			name: "scope_createdAt",
+		},
+	])
+	log.info(`ensured standard indexes on ${deliveriesColl.collectionName}`)
 }
 
 // ---------------------------------------------------------------------------

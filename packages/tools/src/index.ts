@@ -10,7 +10,11 @@ import { z } from "zod"
 /*  SDK middleware re-exports                                          */
 /* ------------------------------------------------------------------ */
 
-export { withMdbrain, type MdbrainCoreOptions } from "./vercel/index.js"
+export {
+	withMdbrain,
+	type MdbrainCoreOptions,
+	type MdbrainWriteFailure,
+} from "./vercel/index.js"
 export { createOpenAIMiddleware } from "./openai/index.js"
 
 const searchSchema = z.object({
@@ -39,6 +43,8 @@ const readFileSchema = z.object({
 
 const addSchema = z.object({
 	content: z.string(),
+	idempotencyKey: z.string().min(1),
+	requestId: z.string().min(1).optional(),
 	agentId: z.string().optional(),
 	sessionId: z.string().optional(),
 	scope: z
@@ -50,6 +56,8 @@ const addSchema = z.object({
 const writeEventSchema = z.object({
 	role: z.enum(["user", "assistant", "system", "tool"]),
 	body: z.string(),
+	idempotencyKey: z.string().min(1),
+	requestId: z.string().min(1).optional(),
 	agentId: z.string().optional(),
 	sessionId: z.string().optional(),
 	scope: z
@@ -258,10 +266,6 @@ const memoryFeedbackSchema = z.union([
 	}),
 ])
 
-const statusSchema = z.object({
-	agentId: z.string().optional(),
-})
-
 const benchmarkIngestSchema = z.object({
 	datasetPath: z.string().min(1),
 	agentId: z.string().optional(),
@@ -329,12 +333,6 @@ export function createMdbrainTools(client: MdbrainClient): MdbrainToolSet {
 				return { results }
 			},
 		}),
-		mdbrain_read_file: tool({
-			description:
-				"Read a memory file path or structured: URI (memory_get parity).",
-			inputSchema: readFileSchema,
-			execute: async (input) => client.readFile(input),
-		}),
 		mdbrain_add: tool({
 			description: "Append a user message to conversational memory.",
 			inputSchema: addSchema,
@@ -398,54 +396,6 @@ export function createMdbrainTools(client: MdbrainClient): MdbrainToolSet {
 			inputSchema: memoryFeedbackSchema,
 			execute: async (input) => client.applyMemoryFeedback(input),
 		}),
-		mdbrain_status: tool({
-			description: "Memory provider status (model, backend, health).",
-			inputSchema: statusSchema,
-			execute: async (input) => client.status(input.agentId),
-		}),
-		mdbrain_chain_trace: tool({
-			description:
-				"Trace the provenance chain of a derived fact back to source events.",
-			inputSchema: z.object({
-				factId: z.string(),
-				collection: z.string(),
-				agentId: z.string().optional(),
-				maxDepth: z.number().optional(),
-			}),
-			execute: async (input) => client.traceChain(input),
-		}),
-		mdbrain_novelty_scan: tool({
-			description:
-				"Scan for the most novel/surprising events using vector distance scoring.",
-			inputSchema: z.object({
-				agentId: z.string().optional(),
-				limit: z.number().optional(),
-				scope: z.string().optional(),
-			}),
-			execute: async (input) => client.scanNovelty(input),
-		}),
-		mdbrain_consolidate: tool({
-			description:
-				"Run consolidation pipeline to promote high-value events to structured facts.",
-			inputSchema: z.object({
-				agentId: z.string().optional(),
-				maxEvents: z.number().optional(),
-				minCombinedScore: z.number().optional(),
-				scope: z.string().optional(),
-			}),
-			execute: async (input) => client.consolidate(input),
-		}),
-		mdbrain_self_edit: tool({
-			description:
-				"Edit your own core memory blocks directly. Use 'user' for user preferences/profile, 'persona' for your identity/behavior, 'instructions' for task instructions. Changes persist across sessions.",
-			inputSchema: z.object({
-				block: z.enum(["user", "persona", "instructions"]),
-				action: z.enum(["append", "replace", "prepend"]),
-				content: z.string(),
-				agentId: z.string().optional(),
-			}),
-			execute: async (input) => client.selfEdit(input),
-		}),
 		mdbrain_state_unified: tool({
 			description:
 				"Get all three state surfaces (profile, blocks, bundle) in one call.",
@@ -457,74 +407,6 @@ export function createMdbrainTools(client: MdbrainClient): MdbrainToolSet {
 				scopeRef: z.string().optional(),
 			}),
 			execute: async (input) => client.state(input),
-		}),
-		mdbrain_benchmark_ingest: tool({
-			description:
-				"Replay a benchmark conversation dataset through the canonical writeConversationEvent() pipeline.",
-			inputSchema: benchmarkIngestSchema,
-			execute: async (input) => client.benchmarkIngest(input),
-		}),
-		mdbrain_import_conversations: tool({
-			description:
-				"Import conversation history through the canonical writeConversationEvent() pipeline.",
-			inputSchema: conversationImportSchema,
-			execute: async (input) => client.importConversations(input),
-		}),
-		mdbrain_admin_access_trends: tool({
-			description:
-				"Inspect rolling 7-day access trends from the access_events time series collection.",
-			inputSchema: accessTrendsSchema,
-			execute: async (input) => client.accessTrends(input),
-		}),
-		mdbrain_admin_access_summaries: tool({
-			description:
-				"Inspect aggregate access counts and last-access timestamps from the access_events time series collection.",
-			inputSchema: accessSummariesSchema,
-			execute: async (input) => client.accessSummaries(input),
-		}),
-		mdbrain_admin_list_traces: tool({
-			description: "List recent recall traces for operator debugging.",
-			inputSchema: z.object({
-				agentId: z.string().optional(),
-				limit: z.number().int().min(1).max(100).optional(),
-			}),
-			execute: async (input) => client.listRecallTraces(input),
-		}),
-		mdbrain_admin_get_trace: tool({
-			description: "Fetch one recall trace by traceId.",
-			inputSchema: z.object({
-				traceId: z.string().min(1),
-				agentId: z.string().optional(),
-			}),
-			execute: async (input) => client.getRecallTrace(input),
-		}),
-		mdbrain_list_jobs: tool({
-			description: "List memory background jobs for an agent.",
-			inputSchema: z.object({
-				agentId: z.string().optional(),
-				status: z
-					.enum(["pending", "running", "completed", "failed", "cancelled"])
-					.optional(),
-				limit: z.number().int().min(1).max(100).optional(),
-				jobType: z
-					.enum([
-						"consolidation",
-						"extraction",
-						"import",
-						"materialization",
-						"enrichment",
-					])
-					.optional(),
-			}),
-			execute: async (input) => client.listJobs(input),
-		}),
-		mdbrain_get_job: tool({
-			description: "Fetch one memory job by jobId.",
-			inputSchema: z.object({
-				jobId: z.string().min(1),
-				agentId: z.string().optional(),
-			}),
-			execute: async (input) => client.getJob(input),
 		}),
 	}
 }

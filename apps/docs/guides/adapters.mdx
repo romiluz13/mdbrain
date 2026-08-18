@@ -46,11 +46,14 @@ For client config files, use an absolute `cwd` pointing at `apps/mcp`, pass
 |---|---|
 | Recall memory | `mdbrain_search`, `mdbrain_search_detailed`, `mdbrain_search_kb` |
 | Build prompt context | `mdbrain_build_context_bundle` |
-| Read evidence | `mdbrain_read_file`, trace and admin trace tools |
+| Read evidence | Search, context bundle, lifecycle get/history, and governed wiki tools |
 | Remember events | `mdbrain_write_event`, `mdbrain_add` |
 | Remember facts and playbooks | `mdbrain_write_structured`, `mdbrain_write_procedure` |
 | Correct memory | Lifecycle update/delete/history tools, `mdbrain_memory_feedback` |
-| Check health | `mdbrain_status`, `mdbrain_status_detailed`, probes, stats |
+
+Health and dependency readiness are server-local concerns. Deployment
+operators can check `/health` and `/ready` directly; MCP and AI tools do not
+expose provider status or embedding/vector probes.
 
 ## Codex template
 

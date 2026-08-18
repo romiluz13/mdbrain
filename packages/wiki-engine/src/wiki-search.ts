@@ -13,11 +13,7 @@ import {
 	wikiPagesCollection,
 	WIKI_PAGES_SEARCH_INDEX_TARGETS,
 } from "./wiki-schema.js"
-import {
-	getWikiDbHandle,
-	type WikiDbHandle,
-	type WikiPageView,
-} from "./wiki-bridge.js"
+import { type WikiDbHandle, type WikiPageView } from "./wiki-bridge.js"
 import { createSubsystemLogger } from "@mdbrain/lib"
 import {
 	filterPagesByGovernance,
@@ -123,8 +119,10 @@ export interface WikiSearchResponse {
 
 function buildPrefilter(params: WikiSearchParams): Document {
 	const filter: Document = {}
-	if (params.scope) filter.scope = params.scope
-	if (params.scopeRef) filter.scopeRef = params.scopeRef
+	const scope = params.governance?.scope ?? params.scope
+	const scopeRef = params.governance?.scopeRef ?? params.scopeRef
+	if (scope) filter.scope = scope
+	if (scopeRef) filter.scopeRef = scopeRef
 	if (params.kind) filter.kind = params.kind
 	if (params.trustTier) filter.trustTier = params.trustTier
 	// Default: exclude superseded pages unless the caller explicitly requests them.
@@ -453,9 +451,15 @@ export async function searchWikiPages(
 	if (params.graphExpansion && results.length > 0) {
 		try {
 			const expanded = await expandGraph(handle, results, params, prefilter)
+			const governedExpanded = params.governance
+				? filterPagesByGovernance(
+						expanded as unknown as Document[],
+						params.governance,
+					).map((page) => page as unknown as WikiPageView)
+				: expanded
 			// Merge expanded pages, avoiding duplicates from search results.
 			const existingSlugs = new Set(results.map((r) => r.page.slug))
-			for (const page of expanded) {
+			for (const page of governedExpanded) {
 				if (!existingSlugs.has(page.slug)) {
 					results.push({
 						page,
@@ -476,12 +480,4 @@ export async function searchWikiPages(
 		recipe,
 		mode: cfg.mode,
 	}
-}
-
-/** Convenience: search using a manager (obtains the db handle). */
-export async function searchWikiPagesViaManager(
-	manager: unknown,
-	params: WikiSearchParams,
-): Promise<WikiSearchResponse> {
-	return searchWikiPages(getWikiDbHandle(manager), params)
 }

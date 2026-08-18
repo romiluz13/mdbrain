@@ -14,9 +14,10 @@
 	"scripts": {
 		"build": "turbo run build",
 		"dev": "turbo run dev",
-		"test": "turbo run test",
+		"test": "turbo run test && bunx vitest run scripts/*.test.ts",
 		"check-types": "turbo run check-types",
 		"check-publishability": "bun scripts/check-publishability.ts",
+		"contract:capture": "bun scripts/capture-memongo-contract.ts",
 		"lint": "biome check . --diagnostic-level=error",
 		"lint:fix": "biome check . --diagnostic-level=error --write",
 		"format": "biome format .",
@@ -24,15 +25,11 @@
 		"web:preview": "bun run --cwd apps/web preview",
 		"web:deploy": "bun run --cwd apps/web deploy",
 		"proof-pack": "bun scripts/proof-pack.ts",
-		"mongodb:parity": "bun scripts/check-mongodb-runtime-parity.ts",
-		"mongodb:prepare": "bun scripts/prepare-mongodb-runtime.ts",
 		"mongodb:cluster-preflight": "bun scripts/mongodb-cluster-preflight.ts",
 		"memory-eval": "bun scripts/real-memory-eval.ts",
 		"compare-memory-eval": "bun scripts/compare-memory-eval.ts",
 		"agent-smoke": "bun scripts/real-agent-smoke.ts",
-		"capability-stress": "bun scripts/real-capability-stress.ts",
 		"wiki:init": "bun run scripts/mdbrain-init.ts",
-		"wiki:migrate": "bun run scripts/mdbrain-migrate.ts",
 		"stress-test": "bun run scripts/stress-test.ts"
 	},
 	"devDependencies": {

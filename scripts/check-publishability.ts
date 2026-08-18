@@ -2,6 +2,12 @@ import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import {
+	type PublishablePackage,
+	publishablePackages,
+	validatePublishablePackages,
+	validatePublishWorkflow,
+} from "./publish-package-cohort.js"
 
 type NpmPackFile = {
 	path: string
@@ -21,51 +27,13 @@ type NpmPackResult = {
 	filename: string
 }
 
-type PublishablePackage = {
-	dir: string
-	name: string
-	supportedSurface: boolean
-}
-
 const rootDir = process.cwd()
-const publishablePackages: PublishablePackage[] = [
-	{
-		dir: "packages/lib",
-		name: "@mdbrain/lib",
-		supportedSurface: false,
-	},
-	{
-		dir: "packages/memory-engine",
-		name: "@mdbrain/memory-engine",
-		supportedSurface: true,
-	},
-	{
-		dir: "packages/memory-bridge",
-		name: "@mdbrain/memory-bridge",
-		supportedSurface: true,
-	},
-	{
-		dir: "packages/mdbrain-memory",
-		name: "@mdbrain/memory",
-		supportedSurface: true,
-	},
-	{
-		dir: "packages/client",
-		name: "@mdbrain/client",
-		supportedSurface: true,
-	},
-	{
-		dir: "packages/tools",
-		name: "@mdbrain/tools",
-		supportedSurface: true,
-	},
-] as const
-
 const removedPaths = [
 	"apps/browser-extension/package.json",
 	"apps/memory-graph-playground/package.json",
 	"packages/ai-sdk/package.json",
 	"packages/hooks/package.json",
+	"packages/memory-engine/package.json",
 	"packages/memory-graph/package.json",
 	"packages/ui/package.json",
 	"packages/validation/package.json",
@@ -219,6 +187,7 @@ function assertTarballContents(
 function assertPackedManifest(
 	packageSpec: PublishablePackage,
 	packedManifest: Record<string, unknown>,
+	cohortVersions: ReadonlyMap<string, string>,
 ) {
 	const deps = {
 		...(packedManifest.dependencies as Record<string, string> | undefined),
@@ -240,12 +209,19 @@ function assertPackedManifest(
 				`packed manifest depends on private workspace package "${depName}" in ${packageSpec.dir}`,
 			)
 		}
+		const cohortVersion = cohortVersions.get(depName)
+		if (cohortVersion && depVersion !== cohortVersion) {
+			fail(
+				`packed manifest must pin cohort dependency "${depName}" to ${cohortVersion} in ${packageSpec.dir}, found ${depVersion}`,
+			)
+		}
 	}
 }
 
 function checkPackage(
 	packageSpec: PublishablePackage,
 	packDir: string,
+	cohortVersions: ReadonlyMap<string, string>,
 ): { name: string; tarballPath: string; supportedSurface: boolean } {
 	const packageDir = path.join(rootDir, packageSpec.dir)
 	const packageJsonPath = path.join(packageDir, "package.json")
@@ -259,10 +235,33 @@ function checkPackage(
 	}
 
 	const packageJson = readJson(packageJsonPath)
+	if (packageJson.private === true) {
+		fail(`publishable package must not be private: ${packageSpec.dir}`)
+	}
+	const packageName = assertStringField(
+		packageJson,
+		"name",
+		`${packageSpec.dir}/package.json`,
+	)
+	if (packageName !== packageSpec.name) {
+		fail(
+			`publishable package name mismatch for ${packageSpec.dir}: expected ${packageSpec.name}, found ${packageName}`,
+		)
+	}
+	const packageVersion = assertStringField(
+		packageJson,
+		"version",
+		`${packageSpec.dir}/package.json`,
+	)
 	assertMetadata(packageJson, packageSpec.dir)
 	assertBuiltEntrypoints(packageDir, packageJson, packageSpec.dir)
 
 	const dryRun = runNpmPackDryRun(packageDir)
+	if (dryRun.name !== packageSpec.name || dryRun.version !== packageVersion) {
+		fail(
+			`npm pack identity mismatch for ${packageSpec.dir}: expected ${packageSpec.name}@${packageVersion}, found ${dryRun.name}@${dryRun.version}`,
+		)
+	}
 	assertTarballContents(packageSpec.dir, packageJson, dryRun)
 
 	const tarballPath = createTarball(packageDir, packDir)
@@ -271,7 +270,7 @@ function checkPackage(
 	const packedManifest = readJson(
 		path.join(unpackDir, "package", "package.json"),
 	)
-	assertPackedManifest(packageSpec, packedManifest)
+	assertPackedManifest(packageSpec, packedManifest, cohortVersions)
 
 	return {
 		name: packageSpec.name,
@@ -294,6 +293,7 @@ function checkPublishWorkflow() {
 		".github/workflows/publish.yml",
 	)
 	const publishWorkflow = fs.readFileSync(publishWorkflowPath, "utf-8")
+	validatePublishWorkflow(publishWorkflow)
 	if (publishWorkflow.includes("|| true")) {
 		fail("publish workflow still swallows publish failures with || true")
 	}
@@ -358,12 +358,28 @@ function installSmoke(
 }
 
 function main() {
+	validatePublishablePackages(publishablePackages)
 	checkRemovedPaths()
 	checkPublishWorkflow()
 
 	const packDir = fs.mkdtempSync(path.join(os.tmpdir(), "mdbrain-packs-"))
+	const cohortVersions = new Map(
+		publishablePackages.map((packageSpec) => {
+			const manifest = readJson(
+				path.join(rootDir, packageSpec.dir, "package.json"),
+			)
+			return [
+				packageSpec.name,
+				assertStringField(
+					manifest,
+					"version",
+					`${packageSpec.dir}/package.json`,
+				),
+			] as const
+		}),
+	)
 	const tarballs = publishablePackages.map((packageSpec) =>
-		checkPackage(packageSpec, packDir),
+		checkPackage(packageSpec, packDir, cohortVersions),
 	)
 	const tarballsByName = new Map(
 		tarballs.map((entry) => [entry.name, entry.tarballPath]),

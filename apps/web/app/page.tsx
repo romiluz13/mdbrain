@@ -58,7 +58,8 @@ const codeSample = `const mdbrain = new MdbrainClient({
 
 await mdbrain.add({
   sessionId: "agent-42",
-  content: "Romi prefers concise release notes."
+  content: "Romi prefers concise release notes.",
+  idempotencyKey: crypto.randomUUID()
 })
 
 const context = await mdbrain.search({

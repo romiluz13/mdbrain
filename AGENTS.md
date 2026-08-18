@@ -1,7 +1,7 @@
 # Mdbrain Repository Guidelines
 
 - Repo: <https://github.com/romiluz13/mdbrain>
-- In chat replies, file references must be repo-root relative only (example: `packages/memory-engine/src/mongodb-manager.ts:80`); never absolute paths or `~/...`.
+- In chat replies, file references must be repo-root relative only (example: `packages/memory-bridge/src/memongo-http-client.ts:80`); never absolute paths or `~/...`.
 
 ## Project Structure
 
@@ -14,8 +14,7 @@ mdbrain/
     mcp/          MCP server (stdio, calls HTTP API)
     web/          Next.js web console
   packages/
-    memory-engine/   Core MongoDB memory: embeddings, graph, episodes, search, KB, analytics
-    memory-bridge/   Stable facade for the engine used by apps
+    memory-bridge/   Versioned Memongo HTTP gateway used by apps
     wiki-engine/      LLM wiki: wiki_pages, OKF, search, governance, maintenance, connectors
     mdbrain-memory/  Published re-export package
     client/          TypeScript HTTP client SDK
@@ -47,8 +46,7 @@ mdbrain/
 
 ## Package Naming
 
-- `@mdbrain/memory-engine` -- core engine
-- `@mdbrain/memory-bridge` -- facade
+- `@mdbrain/memory-bridge` -- versioned Memongo HTTP gateway
 - `@mdbrain/wiki-engine` -- LLM wiki engine (wiki_pages, OKF, search, governance)
 - `@mdbrain/client` -- HTTP client SDK
 - `@mdbrain/tools` -- AI SDK tools
@@ -64,5 +62,5 @@ mdbrain/
 
 <!-- scar: 2026-07-12 — MongoDB $jsonSchema validators reject undefined-valued fields. normalizeInput in wiki-bridge.ts must NOT set optional fields to undefined — use conditional spread (only when the value is truthy). Setting embedding: undefined when the schema says bsonType: 'array' causes 'Document failed validation' on every insert. -->
 
-- Never commit secrets. Use environment variables (`MDBRAIN_MONGODB_URI`, `MDBRAIN_API_KEY`, etc.).
+- Never commit secrets. Use environment variables (`MDBRAIN_WIKI_MONGODB_URI`, `MEMONGO_API_KEY`, `MDBRAIN_API_KEY`, etc.).
 - Never publish real connection strings, API keys, or personal data in code or docs.
