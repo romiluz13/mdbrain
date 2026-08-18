@@ -7,10 +7,10 @@ const proofPackBaseline = {
 		"/v1/context-bundle",
 		"/v1/add",
 		"/v1/profile",
-		"/v1/status",
 	],
 	requiredChecks: [
 		"health",
+		"readiness",
 		"openapi",
 		"writeEvent",
 		"add",
@@ -22,9 +22,6 @@ const proofPackBaseline = {
 		"discoveryProjection",
 		"contextBundle",
 		"profile",
-		"status",
-		"stats",
-		"relevanceReport",
 	],
 } as const
 

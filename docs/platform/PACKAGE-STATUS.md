@@ -1,46 +1,13 @@
-# Package Status
+# Package status
 
-Use this table to decide whether something belongs in the public product story.
-
-## Supported public
-
-| Surface | Status | Notes |
+| Package | Status | Role |
 |---|---|---|
-| `apps/api` | supported | Canonical HTTP API |
-| `apps/mcp` | supported | stdio adapter over the API |
-| `apps/web` | supported | Operator console |
-| `apps/docs` | supported | Product docs sources |
-| `packages/memory-engine` | supported | Core MongoDB memory runtime |
-| `packages/memory-bridge` | supported | Stable facade |
-| `packages/mdbrain-memory` | supported | Convenience barrel |
-| `packages/client` | supported | TypeScript SDK |
-| `packages/tools` | supported | AI SDK helpers |
+| `packages/wiki-engine` | supported | MDBrain-owned governed wiki and MongoDB store |
+| `packages/memory-bridge` | supported | pinned Memongo HTTP gateway |
+| `packages/client` | supported | public MDBrain HTTP client |
+| `packages/tools` | supported | AI SDK tools for supported client operations |
+| `packages/mdbrain-memory` | supported | aggregate client and gateway exports |
+| `packages/lib` | runtime support | shared published types |
 
-## Runtime support
-
-| Surface | Status | Notes |
-|---|---|---|
-| `packages/lib` | supported | Runtime utilities used by publishable packages |
-| `docker/mongodb` | supported | Local MongoDB and Atlas Local Preview validation stacks |
-| `scripts/proof-pack.ts` | supported | API contract and operator proof lane |
-| `scripts/check-publishability.ts` | supported | npm/tarball/install validation |
-| `scripts/check-mongodb-runtime-parity.ts` | supported | MongoDB runtime compatibility check |
-
-## Not shipped
-
-Historical research, raw artifacts, diagnostic runs, and planning notes are preserved
-outside the public launch tree. They are not part of the supported product docs.
-
-## Not part of the supported product core
-
-These surfaces should stay out of the main product story unless they are explicitly reintroduced with ownership and tests.
-
-| Surface | Status | Notes |
-|---|---|---|
-| `apps/browser-extension` | removed/deprecated | No longer part of the supported release |
-| `apps/memory-graph-playground` | removed/deprecated | Experimental playground removed from core scope |
-| `packages/ai-sdk` | removed/deprecated | Duplicate packaging surface |
-| `packages/hooks` | removed/deprecated | Old convenience layer |
-| `packages/memory-graph` | removed/deprecated | Experimental graph UI package |
-| `packages/ui` | removed/deprecated | Shared UI scaffolding not in supported product |
-| `packages/validation` | removed/deprecated | Old validation package story replaced by repo-owned scripts |
+MDBrain does not ship or import a memory engine. Memongo owns memory storage and
+is consumed only through the captured HTTP contract in `docs/contracts/memongo`.

@@ -38,7 +38,7 @@ function mockHandle(): WikiDbHandle {
 			})),
 		})),
 		countDocuments: vi.fn(async () => 0),
-		findOneAndUpdate: vi.fn(async () => ({ value: null })),
+		findOneAndUpdate: vi.fn(async () => null),
 		updateOne: vi.fn(async () => ({ matchedCount: 1, modifiedCount: 1 })),
 		deleteOne: vi.fn(async () => ({ deletedCount: 0 })),
 		aggregate: vi.fn(() => ({ toArray: async () => [] })),
@@ -46,9 +46,6 @@ function mockHandle(): WikiDbHandle {
 	const db = { collection: vi.fn(() => coll) } as unknown as Db
 	return { db, prefix: "test_" }
 }
-
-// Constants SCOPE and SCOPE_REF are used in integration tests that mock
-// the OKF import — the mock handle doesn't actually call importOkfBundle.
 
 describe("Connector ABC — ObsidianConnector", () => {
 	let tmpVault: string
@@ -130,11 +127,11 @@ describe("Connector ABC — ObsidianConnector", () => {
 		expect(result.privacyTier).toBe("internal")
 	})
 
-	it("exportToVault writes .md files for wiki pages", async () => {
+	it("exportToVault writes safe nested namespace slugs beneath the vault", async () => {
 		const conn = new ObsidianConnector(mockHandle(), { vaultPath: tmpVault })
 		const count = await conn.exportToVault([
 			{
-				slug: "test-page",
+				slug: "tables/users",
 				title: "Test Page",
 				summary: "A test page.",
 				body: "Body content.",
@@ -142,12 +139,90 @@ describe("Connector ABC — ObsidianConnector", () => {
 		])
 		expect(count).toBe(1)
 		const content = fs.readFileSync(
-			path.join(tmpVault, "test-page.md"),
+			path.join(tmpVault, "tables/users.md"),
 			"utf-8",
 		)
 		expect(content).toContain("Test Page")
 		expect(content).toContain("A test page.")
 		expect(content).toContain("Body content.")
+	})
+
+	it("exportToVault rejects slugs that escape the configured vault", async () => {
+		const conn = new ObsidianConnector(mockHandle(), { vaultPath: tmpVault })
+		await expect(
+			conn.exportToVault([
+				{
+					slug: "../escaped",
+					title: "Escaped",
+					summary: "No",
+					body: "No",
+				},
+			]),
+		).rejects.toThrow(/outside the configured vault/)
+	})
+
+	it("exportToVault rejects a symlinked namespace that escapes the vault", async () => {
+		const outsideDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "obsidian-outside-"),
+		)
+		fs.symlinkSync(
+			outsideDir,
+			path.join(tmpVault, "tables"),
+			process.platform === "win32" ? "junction" : "dir",
+		)
+		const conn = new ObsidianConnector(mockHandle(), { vaultPath: tmpVault })
+
+		try {
+			await expect(
+				conn.exportToVault([
+					{
+						slug: "tables/users",
+						title: "Users",
+						summary: "User records.",
+						body: "Body",
+					},
+				]),
+			).rejects.toThrow(/outside|symlink|vault|path/i)
+			expect(fs.existsSync(path.join(outsideDir, "users.md"))).toBe(false)
+		} finally {
+			fs.rmSync(outsideDir, { recursive: true, force: true })
+		}
+	})
+
+	it("exportToVault rejects a dangling final symlink before writing", async () => {
+		const outsideDir = fs.mkdtempSync(
+			path.join(os.tmpdir(), "obsidian-outside-file-"),
+		)
+		const outsideFile = path.join(outsideDir, "escaped.md")
+		fs.symlinkSync(
+			outsideFile,
+			path.join(tmpVault, "z-note.md"),
+			process.platform === "win32" ? "file" : undefined,
+		)
+		const conn = new ObsidianConnector(mockHandle(), { vaultPath: tmpVault })
+
+		try {
+			await expect(
+				conn.exportToVault([
+					{
+						slug: "a-safe-note",
+						title: "Safe Note",
+						summary: "Must not be partially written.",
+						body: "Body",
+					},
+					{
+						slug: "z-note",
+						title: "Note",
+						summary: "Must not escape.",
+						body: "Body",
+					},
+				]),
+			).rejects.toThrow(/outside|symlink|vault|path/i)
+			expect(fs.existsSync(outsideFile)).toBe(false)
+			expect(fs.existsSync(path.join(tmpVault, "a-safe-note.md"))).toBe(false)
+		} finally {
+			fs.rmSync(outsideDir, { recursive: true, force: true })
+		}
 	})
 })
 
@@ -166,7 +241,24 @@ describe("Connector ABC — GitHubConnector", () => {
 		})
 		const result = await conn.authenticate()
 		expect(result.authenticated).toBe(true)
-		expect(result.context?.token).toBe("ghp_testtoken")
+		expect(result.context).toEqual({ repo: "owner/repo", branch: "main" })
+	})
+
+	it("ingest is read-only and does not write discovered sources directly", async () => {
+		const conn = new GitHubConnector(mockHandle(), {
+			repo: "owner/repo",
+			token: "ghp_testtoken",
+		})
+		const result = await conn.ingest(
+			[{ id: "1", path: "README.md", content: "untrusted" }],
+			{ scope: "workspace", scopeRef: "ws-1" },
+		)
+		expect(result).toEqual({
+			pagesProcessed: 1,
+			pagesCreated: 0,
+			pagesUpdated: 0,
+			errors: [],
+		})
 	})
 
 	it("mapPermissions: public repo → public", () => {
@@ -261,7 +353,10 @@ describe("ConfluenceConnector", () => {
 		})
 		const result = await conn.authenticate()
 		expect(result.authenticated).toBe(true)
-		expect(result.context?.email).toBe("user@test.com")
+		expect(result.context).toEqual({
+			host: "https://test.atlassian.net",
+			spaceKey: undefined,
+		})
 	})
 
 	it("mapPermissions: restricted when space has restrictions", () => {
@@ -305,6 +400,7 @@ describe("NotionConnector", () => {
 		})
 		const result = await conn.authenticate()
 		expect(result.authenticated).toBe(true)
+		expect(result.context).toEqual({ databaseId: undefined })
 	})
 
 	it("mapPermissions: public when shared with public", () => {
@@ -344,6 +440,7 @@ describe("SlackConnector", () => {
 		const conn = new SlackConnector(mockHandle(), { botToken: "xoxb-test" })
 		const result = await conn.authenticate()
 		expect(result.authenticated).toBe(true)
+		expect(result.context).toEqual({ channelIds: undefined })
 	})
 
 	it("mapPermissions: restricted for private channels", () => {
@@ -384,7 +481,10 @@ describe("CrmConnector", () => {
 		})
 		const result = await conn.authenticate()
 		expect(result.authenticated).toBe(true)
-		expect(result.context?.provider).toBe("hubspot")
+		expect(result.context).toEqual({
+			provider: "hubspot",
+			instanceUrl: undefined,
+		})
 	})
 
 	it("mapPermissions: restricted when owned and not shared", () => {

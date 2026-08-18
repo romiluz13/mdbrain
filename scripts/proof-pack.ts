@@ -73,6 +73,19 @@ async function main() {
 				: fail("health", `unexpected payload: ${JSON.stringify(health)}`),
 		)
 
+		const readiness = (await fetchJson("/ready")) as {
+			ok?: boolean
+			memongo?: { contractVersion?: string }
+		}
+		checks.push(
+			readiness.ok === true
+				? pass(
+						"readiness",
+						`memongo=${readiness.memongo?.contractVersion ?? "unknown"}`,
+					)
+				: fail("readiness", "Memongo compatibility readiness failed"),
+		)
+
 		const openApi = (await fetchJson("/openapi.json")) as {
 			paths?: Record<string, unknown>
 		}
@@ -89,6 +102,7 @@ async function main() {
 		)
 
 		const writeEvent = await client.writeEvent({
+			idempotencyKey: `${marker}:write-event`,
 			agentId,
 			sessionId: sessionScope,
 			role: "user",
@@ -101,6 +115,7 @@ async function main() {
 		)
 
 		const add = await client.add({
+			idempotencyKey: `${marker}:add`,
 			agentId,
 			sessionId: sessionScope,
 			content: `${marker} knowledge-base sync runs nightly at 02:00 UTC`,
@@ -255,51 +270,6 @@ async function main() {
 			Object.keys(profile).length > 0
 				? pass("profile", `keys=${Object.keys(profile).join(", ")}`)
 				: fail("profile", "profile response was empty"),
-		)
-
-		const status = (await client.status(agentId)) as {
-			backend?: string
-			sources?: string[]
-		}
-		checks.push(
-			status.backend === "mongodb"
-				? pass(
-						"status",
-						`backend=${status.backend}, sources=${(status.sources ?? []).join(", ")}`,
-					)
-				: fail("status", `unexpected payload: ${JSON.stringify(status)}`),
-		)
-
-		const stats = (await client.stats(agentId)) as {
-			totalFiles?: number
-			totalChunks?: number
-		}
-		checks.push(
-			typeof stats.totalChunks === "number"
-				? pass(
-						"stats",
-						`files=${stats.totalFiles ?? 0}, chunks=${stats.totalChunks ?? 0}`,
-					)
-				: fail("stats", `unexpected payload: ${JSON.stringify(stats)}`),
-		)
-
-		const relevanceReport = (await client.relevanceReport(
-			agentId,
-			86_400_000,
-		)) as {
-			runs?: number
-			health?: string
-		}
-		checks.push(
-			typeof relevanceReport.runs === "number"
-				? pass(
-						"relevanceReport",
-						`runs=${relevanceReport.runs}, health=${relevanceReport.health ?? "unknown"}`,
-					)
-				: fail(
-						"relevanceReport",
-						`unexpected payload: ${JSON.stringify(relevanceReport)}`,
-					),
 		)
 	} catch (error) {
 		checks.push(

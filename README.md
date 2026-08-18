@@ -1,7 +1,7 @@
 <h1 align="center">MDBrain</h1>
 
 <p align="center">
-  <strong>The MongoDB-native LLM wiki. A self-maintaining company brain for AI agents.</strong>
+  <strong>A governed MongoDB LLM wiki with Memongo-backed long-term memory.</strong>
 </p>
 
 <p align="center">
@@ -109,8 +109,8 @@ Note: `$vectorSearch`, `$search`, `$rankFusion`, and `$rerank` require Atlas Sea
 | **Governance** | None | None | None | **Scope, trust tiers, permissions** |
 | **Contradiction detection** | None | ADD-only bias (stores contradictions) | None | **Cross-page, runs before dedup** |
 | **Self-maintenance** | Scheduled runs | Reactive | Reactive | **Git-diff + Dreamer 5-phase (wiki Dreamer simplified)** |
-| **MCP tools** | Planned | None | None | **53 tools (5 wiki)** |
-| **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **6 (2 full: Obsidian, GitHub; 4 stubs: Confluence, Notion, Slack, CRM)** |
+| **MCP tools** | Planned | None | None | **34 supported tools (6 wiki)** |
+| **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **6 read-only discovery adapters** |
 | **Web console** | None (CLI only) | None | None | **Next.js wiki browser** |
 | **Backlinks** | None | None | Graph edges | **Auto-computed from relationships** |
 | **Supersession audit** | None | None | None | **Retained, not deleted** |
@@ -122,13 +122,22 @@ git clone https://github.com/romiluz13/mdbrain.git
 cd mdbrain
 bun install
 
-# Start MongoDB (Atlas Local Preview — full Atlas Search + Vector Search locally)
-docker compose -f docker/mongodb/docker-compose.preview.yml up -d
+# Start the transaction-capable wiki MongoDB
+docker compose -f docker/docker-compose.minimal.yml up -d
+
+# Start a compatible Memongo 2.0.1 HTTP service separately.
 
 # Start the API
-export MDBRAIN_MONGODB_URI="mongodb://127.0.0.1:27017/?directConnection=true"
+export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?replicaSet=rs0"
+export MEMONGO_API_URL="http://127.0.0.1:3900"
+export MEMONGO_API_KEY="local-memongo-secret"
+export MEMONGO_ALLOW_INSECURE_LOCAL="1"
 export MDBRAIN_API_KEY="local-dev-secret"
 cd apps/api && bun run dev
+
+# Readiness verifies the pinned contract, tenant retrieval, configured
+# Memongo control lanes, and wiki transactions before traffic.
+curl -fsS http://127.0.0.1:3847/ready
 ```
 
 Create and search wiki pages:
@@ -196,6 +205,14 @@ CRM        ──┘                       │               │
                               └────────────────────────────┘
 ```
 
+Memory and wiki storage are separate ownership domains:
+
+```text
+Clients -> MDBrain API -> Memongo HTTP gateway -> Memongo-owned memory
+                    \-> WikiStore -> MDBrain-owned wiki MongoDB
+                    \-> delivery intents -> receipt-gated wiki promotion
+```
+
 ## Features
 
 **Wiki pages** — Each page is a structured document with a title, summary, body, claims (with confidence + evidence), open questions, relationships to other pages, and a person card for entity pages. Pages are versioned with revision numbers and validity dates.
@@ -214,13 +231,13 @@ CRM        ──┘                       │               │
 
 **Self-maintenance** — Two strategies, unified through the same governance gates: git-diff maintenance (detects changed source files via `maintenanceHash`, regenerates only affected pages) and Dreamer 5-phase promotion (novelty scan, similarity, injection classification, extraction, promotion for event/conversation sources). Wiki Dreamer promotion is currently simplified — full vector similarity matching is on the roadmap.
 
-**MCP tools** — 53 tools for agent access (5 wiki-specific): `wiki_search`, `wiki_get`, `wiki_apply` (upsert), `wiki_export_okf`, `wiki_lint`. Connect from Claude Desktop, Cursor, or any MCP-compatible agent.
+**MCP tools** — 34 tools for supported memory and wiki operations, including 6 wiki-specific tools. Connect from Claude Desktop, Cursor, or any MCP-compatible agent.
 
-**Connectors** — Six source connectors: Obsidian (bidirectional, full), GitHub (read-first, git-diff maintenance), and Confluence, Notion, Slack, CRM (Salesforce/HubSpot) as stubs with connector ABC implemented — full ingestion is on the roadmap.
+**Connectors** — Six read-only discovery adapters: Obsidian, GitHub, Confluence, Notion, Slack, and CRM. They return source metadata without mutating wiki collections. Obsidian export is an explicit, path-contained operation.
 
 **Backlinks** — Auto-computed from relationship targets. Incremental recomputation on page create/update/delete. Excluded for soft-deleted (superseded) pages.
 
-**Migration** — Idempotent migration from `structured_mem` records to wiki claims and `procedures` records to `kind=procedure` pages, keyed by `sourceMemId` + `frontmatter.migratedFrom`.
+**Durable delivery** — Gateway writes persist a local intent before dispatch to Memongo. A bounded background reconciler resumes retryable, ambiguous, and promotion-pending work with the original idempotency key. Receipt-gated wiki promotion is explicit, idempotent, and transactionally records wiki lineage.
 
 ## MCP Server
 
@@ -238,11 +255,6 @@ Connect from any MCP-compatible agent by pointing it at the MCP server's stdio t
 # Generate a wiki-map pointer block in AGENTS.md + CLAUDE.md
 bun run wiki:init -- --scope workspace --scopeRef default
 
-# Migrate existing structured_mem + procedures to wiki_pages
-bun run wiki:migrate -- --scope workspace --scopeRef default
-
-# Dry-run migration (no writes)
-bun run wiki:migrate -- --dry-run
 ```
 
 ## Web Console
@@ -259,10 +271,10 @@ Browse pages (filterable by kind), view full page details (claims, contradiction
 | Package | Description |
 | --- | --- |
 | `@mdbrain/wiki-engine` | Wiki pages schema, CRUD, OKF, search, graph traversal, governance, maintenance, connectors |
-| `@mdbrain/memory-engine` | MongoDB memory manager (events, episodes, structured_mem, entities, graph) |
-| `@mdbrain/memory-bridge` | Bridge layer (config resolution, manager lifecycle) |
+| `@mdbrain/memory-bridge` | Version-pinned Memongo HTTP gateway |
+| `@mdbrain/memory` | Aggregate client and gateway exports |
 | `@mdbrain/client` | TypeScript HTTP client (wiki + memory methods) |
-| `@mdbrain/tools` | AI SDK tools (core subset — 28 of 53 MCP tools; wiki + admin tools are MCP-only) |
+| `@mdbrain/tools` | AI SDK helpers for the supported HTTP surface |
 | `@mdbrain/lib` | Shared utilities |
 | `@mdbrain/api` | Hono HTTP API server (private) |
 | `@mdbrain/mcp` | MCP server (private) |
@@ -272,10 +284,13 @@ Browse pages (filterable by kind), view full page details (claims, contradiction
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `MDBRAIN_MONGODB_URI` | Yes | MongoDB connection string (local or Atlas) |
+| `MDBRAIN_WIKI_MONGODB_URI` | Yes | Transaction-capable MongoDB connection for MDBrain-owned wiki collections |
+| `MEMONGO_API_URL` | Yes | Base URL of the compatible Memongo HTTP service |
+| `MEMONGO_API_KEY` | Yes | Tenant key used only by the Memongo gateway |
+| `MEMONGO_CONTROL_API_KEY` | For control readiness lanes | Separate server-local key for Memongo status and probes |
+| `MEMONGO_READINESS_CONTROL_LANES` | Optional | Comma-separated required `control`, `embedding`, and/or `vector` lanes |
 | `MDBRAIN_API_KEY` | Yes | API authentication key (any string for local dev) |
 | `MDBRAIN_API_URL` | MCP only | URL of the MDBrain API server (default: `http://127.0.0.1:3847`) |
-| `MDBRAIN_AGENT_ID` | Optional | Default agent ID (default: `"default"`) |
 | `VOYAGE_API_KEY` | Optional | Atlas Model API key for auto-embeddings (`al-...` prefix) |
 
 ## Acknowledgments

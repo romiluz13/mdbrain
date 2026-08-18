@@ -3,6 +3,7 @@
 import { MdbrainClient } from "@mdbrain/client"
 import type { ReactNode } from "react"
 import { useMemo, useState } from "react"
+import { loadOverview, type OverviewState } from "./overview.js"
 
 const defaultApi =
 	process.env.NEXT_PUBLIC_MDBRAIN_API_URL ?? "http://127.0.0.1:3847"
@@ -13,14 +14,6 @@ type OutputState = {
 	title: string
 	body: string
 	state: "idle" | "success" | "error"
-}
-
-type OverviewState = {
-	health?: { ok?: boolean; service?: string }
-	status?: Record<string, unknown>
-	stats?: Record<string, unknown>
-	openApiPathCount?: number
-	lastRefreshAt?: string
 }
 
 type Style = Record<string, string | number>
@@ -226,22 +219,7 @@ export default function Home() {
 
 	async function refreshOverview() {
 		await withOutput("Overview refresh", async () => {
-			const [health, status, stats, openApi] = await Promise.all([
-				fetchJson("/health"),
-				client.status(agentId),
-				client.stats(agentId),
-				fetchJson("/openapi.json"),
-			])
-			const nextOverview: OverviewState = {
-				health: health as OverviewState["health"],
-				status: status as Record<string, unknown>,
-				stats: stats as Record<string, unknown>,
-				openApiPathCount: Object.keys(
-					((openApi as { paths?: Record<string, unknown> }).paths ??
-						{}) as Record<string, unknown>,
-				).length,
-				lastRefreshAt: new Date().toISOString(),
-			}
+			const nextOverview = await loadOverview(root, authHeaders())
 			setOverview(nextOverview)
 			return nextOverview
 		})
@@ -311,16 +289,11 @@ export default function Home() {
 				agentId,
 				content: writeContent,
 				sessionId: scopeValue,
+				idempotencyKey: crypto.randomUUID(),
 			})
 		})
 	}
 
-	const backend = String(
-		(overview.status?.backend as string | undefined) ?? "unknown",
-	)
-	const sources = (
-		(overview.status?.sources as string[] | undefined) ?? []
-	).join(", ")
 	const outputBorder =
 		output.state === "error"
 			? palette.error
@@ -423,16 +396,14 @@ export default function Home() {
 						help="Standalone HTTP contract"
 					/>
 					<MetricCard
-						label="Memory backend"
-						value={backend}
-						help={`Sources: ${sources || "unknown"}`}
+						label="API service"
+						value={overview.health?.service ?? "Not checked"}
+						help="Public liveness identity"
 					/>
 					<MetricCard
-						label="Chunk count"
-						value={String(
-							(overview.stats?.totalChunks as number | undefined) ?? 0,
-						)}
-						help={`Files: ${String((overview.stats?.totalFiles as number | undefined) ?? 0)}`}
+						label="API operations"
+						value={String(overview.openApiOperationCount ?? 0)}
+						help="Documented tenant product operations"
 					/>
 				</section>
 

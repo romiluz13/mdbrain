@@ -1,4 +1,5 @@
 import type { MdbrainCoreOptions } from "../vercel/index.js"
+import { fireWriteEvent } from "../write-event.js"
 
 /* ------------------------------------------------------------------ */
 /*  OpenAI-compatible chat message shape                              */
@@ -59,27 +60,6 @@ async function fetchContextBundle(
 	} catch {
 		return ""
 	}
-}
-
-function fireWriteEvent(
-	options: MdbrainCoreOptions,
-	role: "user" | "assistant",
-	body: string,
-): void {
-	fetch(`${options.apiUrl}/v1/write-event`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${options.apiKey}`,
-		},
-		body: JSON.stringify({
-			role,
-			body,
-			agentId: options.agentId ?? options.userId,
-		}),
-	}).catch((err) => {
-		console.warn("[mdbrain] write-event failed:", role, err)
-	})
 }
 
 function extractUserQuery(messages: ChatMessage[]): string | undefined {

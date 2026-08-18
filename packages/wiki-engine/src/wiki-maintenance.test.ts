@@ -61,14 +61,14 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 		findOneAndUpdate: vi.fn(async (filter: Document, update: Document) => {
 			const k = store.key(filter.slug, filter.scope, filter.scopeRef)
 			const existing = store.docs.get(k)
-			if (!existing) return { value: null }
+			if (!existing) return null
 			const updated = {
 				...existing,
 				...update.$set,
 				revision: (existing.revision ?? 1) + (update.$inc?.revision ?? 0),
 			}
 			store.docs.set(k, updated)
-			return { value: updated }
+			return updated
 		}),
 		updateOne: vi.fn(async (filter: Document, update: Document) => {
 			const k = store.key(filter.slug, filter.scope, filter.scopeRef)

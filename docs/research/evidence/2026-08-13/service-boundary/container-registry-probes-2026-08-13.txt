@@ -1,0 +1,18 @@
+# Docker Hub API probes — accessed 2026-08-13
+## GET https://hub.docker.com/v2/repositories/memongo/
+{"count":0,"next":null,"previous":null,"results":[]}
+## GET https://hub.docker.com/v2/repositories/romiluz13/
+{"count":0,"next":null,"previous":null,"results":[]}
+## GET https://hub.docker.com/v2/search/repositories/?query=memongo
+{"count":8,"next":"","previous":"","results":[{"repo_name":"smartcommunitylab/foodmemongo","short_description":"","star_count":0,"pull_count":212,"repo_owner":"","is_automated":false,"is_official":false},{"repo_name":"vbhadrir/acmemongo-tuned","short_description":"","star_count":0,"pull_count":68,"repo_owner":"","is_automated":false,"is_official":false},{"repo_name":"vbhadrir/acmemongo-tune","short_description":"","star_count":0,"pull_count":55,"repo_owner":"","is_automated":false,"is_official":false},{"repo_name":"caliguy2322/waitmemongo","short_description":"","star_count":0,"pull_count":125,"repo_owner":"","is_automated":false,"is_official":false},{"repo_name":"ohonores/primemongo","short_description":"","star_count":0,"pull_count":55,"repo_owner":"","is_automated":false,"is_official":false},{"repo_name":"guang810828/comsumemongo","short_description":"","star_count":0,"pull_count":164,"repo_owner":"","is_automated":false,"is_official":false},{"repo_name":"mariusalc/pmgamemongo","short_description":"","star_count":0,"pull_count":61,"repo_owner":"","is_automated":false,"is_official":false},{"repo_name":"shivangi17/persistentvolumemongo","short_description":"","star_count":0,"pull_count":140,"repo_owner":"","is_automated":false,"is_official":false}]}
+
+## GHCR anonymous probe: GET https://ghcr.io/v2/romiluz13/memongo/tags/list
+HTTP/2 401 
+content-type: application/json
+www-authenticate: Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:romiluz13/memongo:pull"
+date: Thu, 13 Aug 2026 22:38:06 GMT
+content-length: 73
+x-github-request-id: C7F8:15A762:2BECC:109E6E:6A7E474E
+x-github-edge-region: israelcentral
+
+{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}

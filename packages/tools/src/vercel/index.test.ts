@@ -28,6 +28,12 @@ function createMockModel(): LanguageModelV2 {
 	}
 }
 
+async function flushMicrotasks(): Promise<void> {
+	for (let i = 0; i < 5; i++) {
+		await Promise.resolve()
+	}
+}
+
 describe("withMdbrain (Vercel AI SDK middleware)", () => {
 	const originalFetch = globalThis.fetch
 
@@ -38,6 +44,7 @@ describe("withMdbrain (Vercel AI SDK middleware)", () => {
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch
+		vi.restoreAllMocks()
 	})
 
 	function mockFetchForContextBundle(
@@ -106,10 +113,12 @@ describe("withMdbrain (Vercel AI SDK middleware)", () => {
 			mode: { type: "regular" },
 		}
 
-		await wrapped.doGenerate(params)
+		const result = await wrapped.doGenerate(params)
 
 		// Wait for fire-and-forget to flush
 		await new Promise((r) => setTimeout(r, 50))
+
+		expect(result.content).toEqual([{ type: "text", text: "Hello from LLM" }])
 
 		// Should have called fetch 3 times: context-bundle + write-event (user) + write-event (assistant)
 		expect(mockFetch).toHaveBeenCalledTimes(3)
@@ -124,6 +133,10 @@ describe("withMdbrain (Vercel AI SDK middleware)", () => {
 		const userBody = JSON.parse(userCall![1].body)
 		expect(userBody.role).toBe("user")
 		expect(userBody.body).toBe("Tell me about dogs")
+		const userIdempotencyKey = new Headers(userCall![1].headers).get(
+			"Idempotency-Key",
+		)
+		expect(userIdempotencyKey).toBeTruthy()
 
 		// Check assistant write-event
 		const assistantCall = mockFetch.mock.calls.find(
@@ -135,6 +148,170 @@ describe("withMdbrain (Vercel AI SDK middleware)", () => {
 		const assistantBody = JSON.parse(assistantCall![1].body)
 		expect(assistantBody.role).toBe("assistant")
 		expect(assistantBody.body).toBe("Hello from LLM")
+		const assistantIdempotencyKey = new Headers(assistantCall![1].headers).get(
+			"Idempotency-Key",
+		)
+		expect(assistantIdempotencyKey).toBeTruthy()
+		expect(assistantIdempotencyKey).not.toBe(userIdempotencyKey)
+	})
+
+	it("reports a non-retryable write rejection without changing the model response", async () => {
+		const mockFetch = globalThis.fetch as ReturnType<typeof vi.fn>
+		mockFetch
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ rendered: "" }), { status: 200 }),
+			)
+			.mockResolvedValueOnce(new Response(null, { status: 400 }))
+		const onWriteError = vi.fn()
+		const wrapped = withMdbrain(createMockModel(), {
+			...BASE_OPTIONS,
+			onWriteError,
+		})
+
+		const result = await wrapped.doGenerate({
+			prompt: [{ role: "system", content: "Answer succinctly." }],
+			inputFormat: "prompt",
+			mode: { type: "regular" },
+		})
+		await flushMicrotasks()
+
+		expect(result.content).toEqual([{ type: "text", text: "Hello from LLM" }])
+		expect(mockFetch).toHaveBeenCalledTimes(2)
+		expect(onWriteError).toHaveBeenCalledOnce()
+		expect(onWriteError).toHaveBeenCalledWith({
+			role: "assistant",
+			kind: "http",
+			status: 400,
+			code: "HTTP_ERROR",
+			message: "Write request returned HTTP 400",
+			attempts: 1,
+		})
+		expect(JSON.stringify(onWriteError.mock.calls[0][0])).not.toContain(
+			BASE_OPTIONS.apiKey,
+		)
+		expect(JSON.stringify(onWriteError.mock.calls[0][0])).not.toContain(
+			"Hello from LLM",
+		)
+	})
+
+	it("retries a transient HTTP rejection once with the same key before reporting it", async () => {
+		const mockFetch = globalThis.fetch as ReturnType<typeof vi.fn>
+		mockFetch
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ rendered: "" }), { status: 200 }),
+			)
+			.mockResolvedValueOnce(new Response(null, { status: 503 }))
+			.mockResolvedValueOnce(new Response(null, { status: 503 }))
+		const onWriteError = vi.fn()
+		const wrapped = withMdbrain(createMockModel(), {
+			...BASE_OPTIONS,
+			onWriteError,
+		})
+
+		const result = await wrapped.doGenerate({
+			prompt: [{ role: "system", content: "Answer succinctly." }],
+			inputFormat: "prompt",
+			mode: { type: "regular" },
+		})
+		await flushMicrotasks()
+
+		expect(result.content).toEqual([{ type: "text", text: "Hello from LLM" }])
+		const writeCalls = mockFetch.mock.calls.filter((call: unknown[]) =>
+			String(call[0]).includes("/v1/write-event"),
+		)
+		expect(writeCalls).toHaveLength(2)
+		const firstKey = new Headers(writeCalls[0][1].headers).get(
+			"Idempotency-Key",
+		)
+		const secondKey = new Headers(writeCalls[1][1].headers).get(
+			"Idempotency-Key",
+		)
+		expect(firstKey).toBeTruthy()
+		expect(secondKey).toBe(firstKey)
+		expect(onWriteError).toHaveBeenCalledOnce()
+		expect(onWriteError).toHaveBeenCalledWith({
+			role: "assistant",
+			kind: "http",
+			status: 503,
+			code: "HTTP_ERROR",
+			message: "Write request returned HTTP 503",
+			attempts: 2,
+		})
+	})
+
+	it("falls back to a sanitized console warning when the failure observer rejects", async () => {
+		const mockFetch = globalThis.fetch as ReturnType<typeof vi.fn>
+		mockFetch
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ rendered: "" }), { status: 200 }),
+			)
+			.mockResolvedValueOnce(new Response(null, { status: 400 }))
+		const onWriteError = vi
+			.fn()
+			.mockRejectedValue(new Error("observer leaked a secret"))
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+		const wrapped = withMdbrain(createMockModel(), {
+			...BASE_OPTIONS,
+			onWriteError,
+		})
+
+		const result = await wrapped.doGenerate({
+			prompt: [{ role: "system", content: "Answer succinctly." }],
+			inputFormat: "prompt",
+			mode: { type: "regular" },
+		})
+		await flushMicrotasks()
+
+		expect(result.content).toEqual([{ type: "text", text: "Hello from LLM" }])
+		expect(onWriteError).toHaveBeenCalledOnce()
+		expect(warn).toHaveBeenCalledOnce()
+		expect(warn).toHaveBeenCalledWith("[mdbrain] write-event failed:", {
+			role: "assistant",
+			kind: "http",
+			status: 400,
+			code: "HTTP_ERROR",
+			message: "Write request returned HTTP 400",
+			attempts: 1,
+		})
+		expect(JSON.stringify(warn.mock.calls)).not.toContain("observer leaked")
+	})
+
+	it("retries a network write failure once with the same key before reporting it", async () => {
+		const mockFetch = globalThis.fetch as ReturnType<typeof vi.fn>
+		mockFetch
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ rendered: "" }), { status: 200 }),
+			)
+			.mockRejectedValueOnce(new Error("connection reset"))
+			.mockRejectedValueOnce(new Error("still unavailable"))
+		const onWriteError = vi.fn()
+		const wrapped = withMdbrain(createMockModel(), {
+			...BASE_OPTIONS,
+			onWriteError,
+		})
+
+		const result = await wrapped.doGenerate({
+			prompt: [{ role: "system", content: "Answer succinctly." }],
+			inputFormat: "prompt",
+			mode: { type: "regular" },
+		})
+		await flushMicrotasks()
+
+		expect(result.content).toEqual([{ type: "text", text: "Hello from LLM" }])
+		const writeCalls = mockFetch.mock.calls.filter((call: unknown[]) =>
+			String(call[0]).includes("/v1/write-event"),
+		)
+		expect(writeCalls).toHaveLength(2)
+		expect(new Headers(writeCalls[1][1].headers).get("Idempotency-Key")).toBe(
+			new Headers(writeCalls[0][1].headers).get("Idempotency-Key"),
+		)
+		expect(onWriteError).toHaveBeenCalledWith({
+			role: "assistant",
+			kind: "network",
+			code: "NETWORK_ERROR",
+			message: "Network request failed",
+			attempts: 2,
+		})
 	})
 
 	it("uses LRU cache on second identical call", async () => {

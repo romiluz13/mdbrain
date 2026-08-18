@@ -46,6 +46,7 @@ docs/audit/
 
 # Pi subagent scratch
 .pi-subagents/
+.pi/
 
 # Docker runtime
 docker/mongodb/.runtime/

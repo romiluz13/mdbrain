@@ -5,8 +5,37 @@
 
 export type MdbrainContainerTag = string
 
+export type MdbrainWikiPromotion = {
+	page: {
+		kind: "entity" | "concept" | "synthesis" | "source" | "report" | "procedure"
+		title: string
+		slug: string
+		summary: string
+		body: string
+		frontmatter: Record<string, unknown> & { type: string }
+		claims: Array<{
+			id: string
+			text: string
+			confidence?: number
+			evidence?: Array<Record<string, unknown>>
+			derivedFrom?: string[]
+		}>
+		scope: "session" | "user" | "agent" | "workspace" | "tenant" | "global"
+		scopeRef: string
+		trustTier: "restricted" | "standard" | "admin"
+		permissions?: {
+			allowedSubjects?: string[]
+			allowedGroups?: string[]
+			allowedRoles?: string[]
+			allowedDepartments?: string[]
+		}
+	}
+}
+
 export type MdbrainAddInput = {
 	content: string
+	idempotencyKey: string
+	requestId?: string
 	/** @deprecated Prefer `sessionId`. */
 	containerTag?: MdbrainContainerTag
 	entityContext?: string
@@ -14,6 +43,10 @@ export type MdbrainAddInput = {
 	metadata?: Record<string, string | number | boolean | null>
 	agentId?: string
 	sessionId?: string
+	scope?: "session" | "user" | "agent" | "workspace" | "tenant" | "global"
+	scopeRef?: string
+	promotionPolicy?: "none" | "wiki"
+	wikiPromotion?: MdbrainWikiPromotion
 }
 
 export type MdbrainSearchInput = {
@@ -24,6 +57,8 @@ export type MdbrainSearchInput = {
 	agentId?: string
 	minScore?: number
 	sessionKey?: string
+	scope?: "session" | "user" | "agent" | "workspace" | "tenant" | "global"
+	scopeRef?: string
 }
 
 export type SearchConfig = {
@@ -349,39 +384,6 @@ export type MdbrainReadFileResponse = {
 	disabled?: boolean
 }
 
-export type MdbrainStatusResponse = {
-	backend: "mongodb"
-	provider: string
-	model?: string
-	requestedProvider?: string
-	files?: number
-	chunks?: number
-	dirty?: boolean
-	workspaceDir?: string
-	sources?: string[]
-	sourceCounts?: Array<{ source: string; files: number; chunks: number }>
-	cache?: { enabled: boolean; entries?: number; maxEntries?: number }
-	fts?: { enabled: boolean; available: boolean; error?: string }
-	vector?: {
-		enabled: boolean
-		available?: boolean
-		loadError?: string
-		dims?: number
-	}
-	batch?: {
-		enabled: boolean
-		failures: number
-		limit: number
-		wait: boolean
-		concurrency: number
-		pollIntervalMs: number
-		timeoutMs: number
-		lastError?: string
-		lastProvider?: string
-	}
-	custom?: Record<string, unknown>
-}
-
 export type MdbrainConversationRecallCitation = {
 	eventId: string
 	sessionId?: string
@@ -408,40 +410,6 @@ export type MdbrainConversationRecallResponse = {
 	}
 }
 
-export type MdbrainDetailedStatusResponse = {
-	events: { count: number; latestTimestamp?: string }
-	entities: { count: number }
-	relations: { count: number }
-	episodes: { count: number; latestTimestamp?: string }
-	procedures: { count: number; latestTimestamp?: string }
-	projectionLag: Record<string, number | null>
-	projectionHealth: Record<
-		string,
-		| "ok"
-		| "projection-behind"
-		| "derived-product-unavailable"
-		| "health-uncertain"
-	>
-	laneCoverage: Record<
-		string,
-		{ hasData: boolean; count: number; lastUpdated: string | null }
-	>
-	health: {
-		overall: "ok" | "degraded" | "health-uncertain"
-		retrieval: "ok" | "retrieval-degraded" | "health-uncertain"
-		recentNoRelevantResults: boolean
-		canonicalIngest: "ok" | "canonical-ingest-failed" | "health-uncertain"
-		derivedProducts: Record<
-			string,
-			| "ok"
-			| "projection-behind"
-			| "derived-product-unavailable"
-			| "health-uncertain"
-		>
-		diagnostics: string[]
-	}
-}
-
 export type MdbrainStatsResponse = {
 	sources: Array<{ source: string; files: number; chunks: number }>
 	totalFiles: number
@@ -457,11 +425,6 @@ export type MdbrainStatsResponse = {
 		size: number
 		accesses: number
 	}>
-}
-
-export type MdbrainProbeEmbeddingResponse = {
-	ok: boolean
-	error?: string
 }
 
 export type MdbrainProfileResponse = {

@@ -1,68 +1,49 @@
 ---
 title: Architecture
-description: Mdbrain's package structure, data flow, and deployment topology.
+description: MDBrain's service boundary, package structure, and data flow.
 icon: "sitemap"
 ---
 
-Mdbrain is a Turborepo monorepo built around a small supported core. The
-Company Brain framework runtime is `apps/api` -> `packages/memory-bridge` ->
-`packages/memory-engine`.
+MDBrain owns the governed company wiki. Memongo owns long-term memory. MDBrain
+uses Memongo exclusively through a pinned, versioned HTTP contract and never
+imports Memongo storage internals.
 
 ## Packages
 
 | Package | Role |
 |---------|------|
-| `@mdbrain/memory-engine` | Core MongoDB memory: embeddings, graph, episodes, search, KB, analytics |
-| `@mdbrain/memory-bridge` | Stable facade for the engine -- config resolution, bridge API |
-| `@mdbrain/memory` | Published re-export of the engine + bridge |
+| `@mdbrain/wiki-engine` | Governed wiki schema, CRUD, search, revisions, OKF, and connectors |
+| `@mdbrain/memory-bridge` | Compatibility-checked Memongo HTTP gateway |
+| `@mdbrain/memory` | Aggregate client and gateway exports |
 | `@mdbrain/client` | TypeScript HTTP client SDK |
-| `@mdbrain/tools` | AI SDK tool helpers (Vercel AI SDK compatible) |
-| `@mdbrain/lib` | Shared types and utilities (internal) |
+| `@mdbrain/tools` | AI SDK tool helpers for supported operations |
+| `@mdbrain/lib` | Shared types and utilities |
 
-## Framework surfaces
+## Runtime flow
 
-| Surface | Role |
-|---|---|
-| HTTP API | App and service integration |
-| TypeScript client | Typed app access to API operations |
-| AI SDK tools | Explicit function tools plus optional middleware for app frameworks |
-| MCP server | Agent and IDE client integration |
-| Web console | Operator review and inspection |
+```text
+Client SDK / HTTP -> apps/api -> memory-bridge -> Memongo HTTP -> Memongo storage
+                              \-> WikiStore -> wiki MongoDB
+                              \-> delivery intents -> receipt-gated promotion
 
-The `@mdbrain/tools` middleware helpers can write conversation events
-automatically after model calls. Use explicit function tools or the TypeScript
-client when an app needs strict read-first behavior.
+MCP client (stdio) -> apps/mcp -> client SDK -> apps/api
+```
+
+The wiki MongoDB contains only MDBrain-owned collections. Production requires
+transactions. Event-producing memory writes first persist a durable local
+intent, then dispatch to Memongo with a caller-owned idempotency key. Explicit
+wiki promotion runs only after a Memongo receipt is persisted. A bounded
+background reconciler resumes stale, retryable, ambiguous, and
+promotion-pending intents with the original key.
 
 ## Apps
 
 | App | Port | Description |
 |-----|------|-------------|
-| `apps/api` | 3847 | HTTP API server (Hono) |
+| `apps/api` | 3847 | Hono HTTP API and orchestration gateway |
 | `apps/mcp` | stdio | MCP server wrapping the HTTP API |
-| `apps/web` | 3040 | Next.js web console |
-| `apps/docs` | 3003 | Mintlify docs for the supported product core |
+| `apps/web` | 3040 | Next.js operator console |
+| `apps/docs` | 3003 | Product documentation |
 
-## Status by surface
-
-| Status | Surfaces |
-|--------|----------|
-| Supported public | `apps/api`, `apps/mcp`, `apps/web`, `apps/docs`, `packages/memory-engine`, `packages/memory-bridge`, `packages/mdbrain-memory`, `packages/client`, `packages/tools` |
-| Runtime support | `packages/lib`, `docker/mongodb`, repo-owned validation scripts |
-| Not shipped | Historical research, diagnostic runs, raw artifacts, and planning notes |
-
-## Data flow
-
-```text
-Client SDK / HTTP  ->  apps/api  ->  memory-bridge  ->  memory-engine  ->  MongoDB
-                                                                                   |
-MCP client (stdio) ->  apps/mcp  ->  client SDK  ----------------------------------+
-```
-
-The engine writes to MongoDB collections with automated vector indexes, text
-indexes, and TTL policies. Search goes through the supported hybrid retrieval
-pipeline and falls back only when the engine explicitly chooses to do so.
-
-The first framework slice does not change this topology. It defines taxonomy,
-scope policy, adapter guidance, and write safety on top of the existing runtime.
-
-For the maintainer-facing package matrix and release map, see `docs/platform/PACKAGE-STATUS.md` and `docs/platform/MAINTAINER-MAP.md` in the repo root.
+`GET /health` reports process liveness. `GET /ready` verifies the pinned
+Memongo contract and a live transaction against the wiki store.

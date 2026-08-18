@@ -1,7 +1,7 @@
 {
 	"name": "@mdbrain/memory-bridge",
-	"version": "1.1.0",
-	"description": "Mdbrain bridge: stable facade for the memory engine used by HTTP API and MCP",
+	"version": "2.0.0",
+	"description": "Mdbrain bridge: versioned Memongo HTTP gateway",
 	"type": "module",
 	"license": "Apache-2.0",
 	"repository": {
@@ -34,9 +34,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@mdbrain/lib": "1.1.0",
-		"@mdbrain/memory-engine": "1.1.0",
-		"@mdbrain/wiki-engine": "workspace:*"
+		"@mdbrain/lib": "2.0.0"
 	},
 	"devDependencies": {
 		"@mdbrain/tools": "workspace:*",

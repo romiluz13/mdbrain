@@ -13,8 +13,8 @@ on the supported runtime and documentation needed to run it.
 - `apps/mcp` - MCP stdio adapter over the HTTP API
 - `apps/web` - operator console
 - `apps/docs` - public documentation
-- `packages/memory-engine` - MongoDB memory core
-- `packages/memory-bridge` - stable facade over the engine
+- `packages/wiki-engine` - governed MongoDB wiki
+- `packages/memory-bridge` - versioned Memongo HTTP gateway
 - `packages/mdbrain-memory` - `@mdbrain/memory` convenience package
 - `packages/client` - TypeScript HTTP client
 - `packages/tools` - AI SDK tool helpers
@@ -22,7 +22,7 @@ on the supported runtime and documentation needed to run it.
 ## Runtime support
 
 - `packages/lib` - shared types and utilities used by published packages
-- `docker/mongodb` - local MongoDB and Atlas Local Preview setup
+- `docker/mongodb` - local wiki MongoDB and Atlas Local Preview setup
 - `.github/workflows` - CI and package publish workflows
 - `scripts/check-publishability.ts` - package validation
 - `scripts/proof-pack.ts` - live API proof checks

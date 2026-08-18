@@ -1,20 +1,9 @@
 import type {
 	MdbrainAddInput,
-	MdbrainAccessSummaryResponse,
-	MdbrainAccessTrendResponse,
 	MdbrainActiveSlateInput,
-	MdbrainBenchmarkIngestResponse,
-	MdbrainConsolidateInput,
-	MdbrainConsolidateResponse,
-	MdbrainConversationImportInput,
-	MdbrainConversationImportResponse,
 	MdbrainConversationRecallInput,
 	MdbrainConversationRecallResponse,
-	MdbrainMemoryJob,
-	MdbrainMemoryJobStatus,
-	MdbrainMemoryJobType,
 	MdbrainContextBundleInput,
-	MdbrainDetailedStatusResponse,
 	MdbrainDiscoveryProjectionInput,
 	MdbrainExtractInput,
 	MdbrainExtractResponse,
@@ -25,144 +14,30 @@ import type {
 	MdbrainLifecycleHistoryInput,
 	MdbrainLifecycleItem,
 	MdbrainLifecycleUpdateInput,
-	MdbrainNoveltyResponse,
-	MdbrainProbeEmbeddingResponse,
 	MdbrainProfileInput,
 	MdbrainProfileResponse,
-	MdbrainReadFileResponse,
-	MdbrainRelevanceBenchmarkResponse,
-	MdbrainRelevanceExplainResponse,
-	MdbrainRelevanceReportResponse,
-	MdbrainRelevanceSampleRateResponse,
 	MdbrainProcedureOutcomeInput,
-	MdbrainRecallTrace,
-	MdbrainScanNoveltyInput,
 	MdbrainSearchInput,
 	MdbrainSearchKBResponse,
 	MdbrainSearchResponse,
 	SearchConfig,
-	MdbrainStatsResponse,
-	MdbrainStatusResponse,
-	MdbrainTraceChainInput,
-	MdbrainTraceChainResponse,
-	MdbrainSelfEditInput,
-	MdbrainSelfEditResponse,
+	MdbrainWikiPromotion,
 } from "./types.js"
+import {
+	apiDelete,
+	apiGet,
+	apiPatch,
+	apiPost,
+	MdbrainClientError,
+	resolveDeadlineMs,
+} from "./transport.js"
+import type {
+	MdbrainClientOptions,
+	MdbrainRequestOptions,
+} from "./transport.js"
 
-export type MdbrainClientOptions = {
-	/** Mdbrain API base URL (e.g. http://127.0.0.1:3847). */
-	baseUrl?: string
-	/** Optional Bearer token; also reads `MDBRAIN_API_KEY` when unset. */
-	apiKey?: string
-	/** Max retries for 429/503 (default 2). */
-	maxRetries?: number
-}
-
-/** Thrown when the Mdbrain HTTP API returns a non-OK status. */
-export class MdbrainClientError extends Error {
-	readonly status: number
-	readonly body: string
-
-	constructor(status: number, body: string, message?: string) {
-		super(message ?? `Mdbrain API ${status}: ${body || "(empty)"}`)
-		this.name = "MdbrainClientError"
-		this.status = status
-		this.body = body
-	}
-}
-
-function resolveBaseUrl(opts: MdbrainClientOptions): string {
-	const raw =
-		opts.baseUrl ?? process.env.MDBRAIN_API_URL ?? "http://127.0.0.1:3847"
-	return raw.replace(/\/$/, "")
-}
-
-function resolveApiKey(opts: MdbrainClientOptions): string | undefined {
-	return opts.apiKey ?? process.env.MDBRAIN_API_KEY ?? undefined
-}
-
-function shouldRetryStatus(status: number): boolean {
-	return status === 429 || status === 503
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((r) => setTimeout(r, ms))
-}
-
-function buildHeaders(
-	opts: MdbrainClientOptions,
-	method: string,
-): Record<string, string> {
-	const key = resolveApiKey(opts)
-	const headers: Record<string, string> = {}
-	if (key) {
-		headers.Authorization = `Bearer ${key}`
-	}
-	if (method !== "GET" && method !== "HEAD") {
-		headers["Content-Type"] = "application/json"
-	}
-	return headers
-}
-
-async function apiFetch<T>(
-	opts: MdbrainClientOptions,
-	path: string,
-	init: RequestInit,
-): Promise<T> {
-	const url = `${resolveBaseUrl(opts)}${path}`
-	const method = (init.method ?? "GET").toUpperCase()
-	const maxRetries = opts.maxRetries ?? 2
-	let attempt = 0
-	for (;;) {
-		const res = await fetch(url, {
-			...init,
-			headers: { ...buildHeaders(opts, method), ...init.headers },
-		})
-		if (res.ok) {
-			return (await res.json()) as T
-		}
-		const text = await res.text()
-		if (shouldRetryStatus(res.status) && attempt < maxRetries) {
-			attempt += 1
-			await sleep(200 * attempt)
-			continue
-		}
-		throw new MdbrainClientError(res.status, text)
-	}
-}
-
-async function apiPost<T>(
-	opts: MdbrainClientOptions,
-	path: string,
-	body: Record<string, unknown>,
-): Promise<T> {
-	return apiFetch<T>(opts, path, {
-		method: "POST",
-		body: JSON.stringify(body),
-	})
-}
-
-async function apiGet<T>(opts: MdbrainClientOptions, path: string): Promise<T> {
-	return apiFetch<T>(opts, path, { method: "GET" })
-}
-
-async function apiPatch<T>(
-	opts: MdbrainClientOptions,
-	path: string,
-	body: Record<string, unknown>,
-): Promise<T> {
-	return apiFetch<T>(opts, path, {
-		method: "PATCH",
-		body: JSON.stringify(body),
-	})
-}
-
-async function apiDelete<T>(
-	opts: MdbrainClientOptions,
-	path: string,
-): Promise<T> {
-	return apiFetch<T>(opts, path, { method: "DELETE" })
-}
+export { MdbrainClientError }
+export type { MdbrainClientOptions, MdbrainRequestOptions }
 
 function q(
 	agentId?: string,
@@ -467,14 +342,29 @@ export class MdbrainClient {
 
 	async add(
 		input: MdbrainAddInput,
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<{ ok: true; eventId: string; chunkCreated: boolean }> {
-		return apiPost(this._opts, "/v1/add", {
-			content: input.content,
-			agentId: input.agentId,
-			containerTag: input.containerTag,
-			sessionId: input.sessionId ?? input.containerTag,
-			metadata: normalizeMetadata(input.metadata),
-		})
+		return apiPost(
+			this._opts,
+			"/v1/add",
+			{
+				content: input.content,
+				agentId: input.agentId,
+				containerTag: input.containerTag,
+				sessionId: input.sessionId ?? input.containerTag,
+				metadata: normalizeMetadata(input.metadata),
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				promotionPolicy: input.promotionPolicy,
+				wikiPromotion: input.wikiPromotion,
+			},
+			{
+				"Idempotency-Key": input.idempotencyKey,
+				...(input.requestId ? { "X-Request-ID": input.requestId } : {}),
+			},
+			"same-key",
+			requestOptions,
+		)
 	}
 
 	async search(
@@ -483,217 +373,338 @@ export class MdbrainClient {
 			minScore?: number
 			sessionKey?: string
 		},
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainSearchResponse> {
-		return apiPost(this._opts, "/v1/search", {
-			query: input.query,
-			agentId: input.agentId,
-			limit: input.limit,
-			minScore: input.minScore,
-			containerTag: input.containerTag,
-			sessionKey: input.sessionKey ?? input.containerTag,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/search",
+			{
+				query: input.query,
+				agentId: input.agentId,
+				limit: input.limit,
+				minScore: input.minScore,
+				containerTag: input.containerTag,
+				sessionKey: input.sessionKey ?? input.containerTag,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
-	async searchDetailed(input: {
-		query: string
-		agentId?: string
-		limit?: number
-		maxResults?: number
-		minScore?: number
-		searchMode?: "auto" | "direct" | "agentic"
-		sourcePreference?: string[]
-		timeRange?: { preset?: string; start?: string; end?: string }
-		needExactEvidence?: boolean
-		maxPasses?: number
-		returnPlan?: boolean
-		conversationScope?: { sessionKey?: string }
-		structuredScope?: {
-			type?: string
-			state?: string | string[]
-			salience?: string[]
-		}
-		referenceScope?: {
-			source?: string
-			category?: string
-			tags?: string[]
-		}
-		proceduralScope?: { state?: string; intentTags?: string[] }
-		searchConfig?: SearchConfig
-		/** @deprecated This legacy alias is ignored by the canonical detailed search path. */
-		containerTag?: string
-	}): Promise<MdbrainSearchDetailedResponse> {
-		return apiPost(this._opts, "/v1/search-detailed", {
-			query: input.query,
-			agentId: input.agentId,
-			limit: input.limit,
-			maxResults: input.maxResults,
-			minScore: input.minScore,
-			searchMode: input.searchMode,
-			sourcePreference: input.sourcePreference,
-			timeRange: input.timeRange,
-			needExactEvidence: input.needExactEvidence,
-			maxPasses: input.maxPasses,
-			returnPlan: input.returnPlan,
-			conversationScope: input.conversationScope,
-			structuredScope: input.structuredScope,
-			referenceScope: input.referenceScope,
-			proceduralScope: input.proceduralScope,
-			searchConfig: input.searchConfig,
-		})
+	async searchDetailed(
+		input: {
+			query: string
+			agentId?: string
+			limit?: number
+			maxResults?: number
+			minScore?: number
+			searchMode?: "auto" | "direct" | "agentic"
+			sourcePreference?: string[]
+			timeRange?: { preset?: string; start?: string; end?: string }
+			needExactEvidence?: boolean
+			maxPasses?: number
+			returnPlan?: boolean
+			conversationScope?: { sessionKey?: string }
+			structuredScope?: {
+				type?: string
+				state?: string | string[]
+				salience?: string[]
+			}
+			referenceScope?: {
+				source?: string
+				category?: string
+				tags?: string[]
+			}
+			proceduralScope?: { state?: string; intentTags?: string[] }
+			searchConfig?: SearchConfig
+			/** @deprecated This legacy alias is ignored by the canonical detailed search path. */
+			containerTag?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainSearchDetailedResponse> {
+		return apiPost(
+			this._opts,
+			"/v1/search-detailed",
+			{
+				query: input.query,
+				agentId: input.agentId,
+				limit: input.limit,
+				maxResults: input.maxResults,
+				minScore: input.minScore,
+				searchMode: input.searchMode,
+				sourcePreference: input.sourcePreference,
+				timeRange: input.timeRange,
+				needExactEvidence: input.needExactEvidence,
+				maxPasses: input.maxPasses,
+				returnPlan: input.returnPlan,
+				conversationScope: input.conversationScope,
+				structuredScope: input.structuredScope,
+				referenceScope: input.referenceScope,
+				proceduralScope: input.proceduralScope,
+				searchConfig: input.searchConfig,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
-	async searchKB(input: {
-		query: string
-		agentId?: string
-		limit?: number
-		minScore?: number
-		filter?: { tags?: string[]; category?: string; source?: string }
-	}): Promise<MdbrainSearchKBResponse> {
-		return apiPost(this._opts, "/v1/search-kb", {
-			query: input.query,
-			agentId: input.agentId,
-			limit: input.limit,
-			minScore: input.minScore,
-			filter: input.filter,
-		})
+	async searchKB(
+		input: {
+			query: string
+			agentId?: string
+			limit?: number
+			minScore?: number
+			filter?: { tags?: string[]; category?: string; source?: string }
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainSearchKBResponse> {
+		return apiPost(
+			this._opts,
+			"/v1/search-kb",
+			{
+				query: input.query,
+				agentId: input.agentId,
+				limit: input.limit,
+				minScore: input.minScore,
+				filter: input.filter,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
 	async recallConversation(
 		input: MdbrainConversationRecallInput = {},
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainConversationRecallResponse> {
-		return apiPost(this._opts, "/v1/recall-conversation", {
-			query: input.query,
-			sessionId: input.sessionId,
-			roles: input.roles,
-			startTime: input.startTime,
-			endTime: input.endTime,
-			timezone: input.timezone,
-			includeToolMessages: input.includeToolMessages,
-			limit: input.limit,
-			agentId: input.agentId,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/recall-conversation",
+			{
+				query: input.query,
+				sessionId: input.sessionId,
+				roles: input.roles,
+				startTime: input.startTime,
+				endTime: input.endTime,
+				timezone: input.timezone,
+				includeToolMessages: input.includeToolMessages,
+				limit: input.limit,
+				agentId: input.agentId,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
 	async getLifecycleItem(
 		input: MdbrainLifecycleGetInput,
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainLifecycleItem> {
-		return apiPost(this._opts, "/v1/lifecycle/get", {
-			handle: input.handle,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/lifecycle/get",
+			{ handle: input.handle },
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
 	async updateLifecycleItem(
 		input: MdbrainLifecycleUpdateInput,
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainLifecycleItem> {
-		return apiPost(this._opts, "/v1/lifecycle/update", {
-			handle: input.handle,
-			patch: input.patch,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/lifecycle/update",
+			{
+				handle: input.handle,
+				patch: input.patch,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 
 	async deleteLifecycleItem(
 		input: MdbrainLifecycleDeleteInput,
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainLifecycleItem> {
-		return apiPost(this._opts, "/v1/lifecycle/delete", {
-			handle: input.handle,
-			invalidatedBy: input.invalidatedBy,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/lifecycle/delete",
+			{
+				handle: input.handle,
+				invalidatedBy: input.invalidatedBy,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 
 	async getLifecycleHistory(
 		input: MdbrainLifecycleHistoryInput,
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainLifecycleHistoryEntry[]> {
-		return apiPost(this._opts, "/v1/lifecycle/history", {
-			handle: input.handle,
-			limit: input.limit,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/lifecycle/history",
+			{
+				handle: input.handle,
+				limit: input.limit,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
 	async reportProcedureOutcome(
 		input: MdbrainProcedureOutcomeInput,
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainLifecycleItem> {
-		return apiPost(this._opts, "/v1/procedures/outcome", {
-			handle: input.handle,
-			success: input.success,
-			note: input.note,
-			actorRole: input.actorRole,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/procedures/outcome",
+			{
+				handle: input.handle,
+				success: input.success,
+				note: input.note,
+				actorRole: input.actorRole,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 
 	async applyMemoryFeedback(
 		input: MdbrainMemoryFeedbackInput,
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainLifecycleItem> {
-		return apiPost(this._opts, "/v1/memory/feedback", {
-			handle: input.handle,
-			signal: input.signal,
-			...(input.signal === "correct" ? { patch: input.patch } : {}),
-			...(input.signal === "irrelevant" && input.invalidatedBy
-				? { invalidatedBy: input.invalidatedBy }
-				: {}),
-			note: input.note,
-			actorRole: input.actorRole,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/memory/feedback",
+			{
+				handle: input.handle,
+				signal: input.signal,
+				...(input.signal === "correct" ? { patch: input.patch } : {}),
+				...(input.signal === "irrelevant" && input.invalidatedBy
+					? { invalidatedBy: input.invalidatedBy }
+					: {}),
+				note: input.note,
+				actorRole: input.actorRole,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 
-	async readFile(input: {
-		relPath: string
-		from?: number
-		lines?: number
-		agentId?: string
-	}): Promise<MdbrainReadFileResponse> {
-		return apiPost(this._opts, "/v1/read-file", {
-			relPath: input.relPath,
-			from: input.from,
-			lines: input.lines,
-			agentId: input.agentId,
-		})
+	async writeEvent(
+		input: {
+			role: "user" | "assistant" | "system" | "tool"
+			body: string
+			idempotencyKey: string
+			requestId?: string
+			agentId?: string
+			sessionId?: string
+			timestamp?: string
+			metadata?: Record<string, string | number | boolean | null>
+			scope?: "session" | "user" | "agent" | "workspace" | "tenant" | "global"
+			scopeRef?: string
+			promotionPolicy?: "none" | "wiki"
+			wikiPromotion?: MdbrainWikiPromotion
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<{ ok: true; eventId: string; chunkCreated: boolean }> {
+		return apiPost(
+			this._opts,
+			"/v1/write-event",
+			{
+				role: input.role,
+				body: input.body,
+				agentId: input.agentId,
+				sessionId: input.sessionId,
+				timestamp: input.timestamp,
+				metadata: normalizeMetadata(input.metadata),
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				promotionPolicy: input.promotionPolicy,
+				wikiPromotion: input.wikiPromotion,
+			},
+			{
+				"Idempotency-Key": input.idempotencyKey,
+				...(input.requestId ? { "X-Request-ID": input.requestId } : {}),
+			},
+			"same-key",
+			requestOptions,
+		)
 	}
 
-	async writeEvent(input: {
-		role: "user" | "assistant" | "system" | "tool"
-		body: string
-		agentId?: string
-		sessionId?: string
-		timestamp?: string
-		metadata?: Record<string, unknown>
-		scope?: string
-	}): Promise<{ ok: true; eventId: string; chunkCreated: boolean }> {
-		return apiPost(this._opts, "/v1/write-event", {
-			role: input.role,
-			body: input.body,
-			agentId: input.agentId,
-			sessionId: input.sessionId,
-			timestamp: input.timestamp,
-			metadata: input.metadata,
-			scope: input.scope,
-		})
+	async writeStructured(
+		input: {
+			entry: Record<string, unknown>
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<{ upserted: boolean; id: string }> {
+		return apiPost(
+			this._opts,
+			"/v1/write-structured",
+			{
+				entry: input.entry,
+				agentId: input.agentId,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 
-	async writeStructured(input: {
-		entry: Record<string, unknown>
-		agentId?: string
-	}): Promise<{ upserted: boolean; id: string }> {
-		return apiPost(this._opts, "/v1/write-structured", {
-			entry: input.entry,
-			agentId: input.agentId,
-		})
+	async writeProcedure(
+		input: {
+			entry: Record<string, unknown>
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<{ upserted: boolean; id: string }> {
+		return apiPost(
+			this._opts,
+			"/v1/write-procedure",
+			{
+				entry: input.entry,
+				agentId: input.agentId,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 
-	async writeProcedure(input: {
-		entry: Record<string, unknown>
-		agentId?: string
-	}): Promise<{ upserted: boolean; id: string }> {
-		return apiPost(this._opts, "/v1/write-procedure", {
-			entry: input.entry,
-			agentId: input.agentId,
-		})
-	}
-
-	async extract(input: MdbrainExtractInput): Promise<MdbrainExtractResponse> {
-		return apiPost(this._opts, "/v1/extract", {
-			eventId: input.eventId,
-			agentId: input.agentId,
-		})
+	async extract(
+		input: MdbrainExtractInput,
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainExtractResponse> {
+		return apiPost(
+			this._opts,
+			"/v1/extract",
+			{
+				eventId: input.eventId,
+				agentId: input.agentId,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 
 	async profile(
@@ -705,32 +716,49 @@ export class MdbrainClient {
 			maxPerType?: number
 			activityWindowMs?: number
 		} = {},
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainProfileResponse> {
-		return apiPost(this._opts, "/v1/profile", {
-			agentId: input.agentId,
-			containerTag: input.containerTag,
-			scope: input.scope,
-			scopeRef: input.scopeRef ?? input.containerTag,
-			maxEntities: input.maxEntities,
-			maxEpisodes: input.maxEpisodes,
-			maxPerType: input.maxPerType,
-			activityWindowMs: input.activityWindowMs,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/profile",
+			{
+				agentId: input.agentId,
+				containerTag: input.containerTag,
+				scope: input.scope,
+				scopeRef: input.scopeRef ?? input.containerTag,
+				maxEntities: input.maxEntities,
+				maxEpisodes: input.maxEpisodes,
+				maxPerType: input.maxPerType,
+				activityWindowMs: input.activityWindowMs,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
 	async hydrateActiveSlate(
 		input: MdbrainActiveSlateInput = {},
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainActiveSlateResponse> {
-		return apiPost(this._opts, "/v1/hydrate-active-slate", {
-			agentId: input.agentId,
-			scope: input.scope,
-			scopeRef: input.scopeRef,
-			maxItems: input.maxItems,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/hydrate-active-slate",
+			{
+				agentId: input.agentId,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				maxItems: input.maxItems,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
 	async state(
 		input: MdbrainActiveSlateInput = {},
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainStateResponse> {
 		return apiGet(
 			this._opts,
@@ -738,365 +766,149 @@ export class MdbrainClient {
 				scope: input.scope,
 				scopeRef: input.scopeRef,
 			})}`,
+			requestOptions,
 		)
 	}
 
 	async buildDiscoveryProjection(
 		input: MdbrainDiscoveryProjectionInput,
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainDiscoveryProjectionResponse> {
-		return apiPost(this._opts, "/v1/discovery-projection", {
-			agentId: input.agentId,
-			kind: input.kind,
-			query: input.query,
-			scope: input.scope,
-			scopeRef: input.scopeRef,
-			maxItems: input.maxItems,
-			timeRange: input.timeRange,
-		})
+		return apiPost(
+			this._opts,
+			"/v1/discovery-projection",
+			{
+				agentId: input.agentId,
+				kind: input.kind,
+				query: input.query,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				maxItems: input.maxItems,
+				timeRange: input.timeRange,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
 	async buildContextBundle(
 		input: MdbrainContextBundleInput = {},
+		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainContextBundleResponse> {
-		return apiPost(this._opts, "/v1/context-bundle", {
-			agentId: input.agentId,
-			query: input.query,
-			scope: input.scope,
-			scopeRef: input.scopeRef,
-			sessionId: input.sessionId,
-			tokenBudget: input.tokenBudget,
-			maxActiveItems: input.maxActiveItems,
-			maxEvidenceItems: input.maxEvidenceItems,
-			maxRecentEvents: input.maxRecentEvents,
-			includeDiscoveryProjection: input.includeDiscoveryProjection,
-			discoveryKind: input.discoveryKind,
-			includeProfile: input.includeProfile,
-			timeRange: input.timeRange,
-			mode: input.mode,
-		})
-	}
-
-	async status(agentId?: string): Promise<MdbrainStatusResponse> {
-		return apiGet(this._opts, `/v1/status${q(agentId)}`)
-	}
-
-	async getDetailedStatus(
-		agentId?: string,
-	): Promise<MdbrainDetailedStatusResponse> {
-		return apiGet(this._opts, `/v1/status/detailed${q(agentId)}`)
-	}
-
-	async stats(agentId?: string): Promise<MdbrainStatsResponse> {
-		return apiGet(this._opts, `/v1/stats${q(agentId)}`)
-	}
-
-	async sync(input?: {
-		agentId?: string
-		reason?: string
-		force?: boolean
-	}): Promise<{ ok: true }> {
-		return apiPost(this._opts, "/v1/sync", {
-			agentId: input?.agentId,
-			reason: input?.reason,
-			force: input?.force,
-		})
-	}
-
-	async probeEmbedding(
-		agentId?: string,
-	): Promise<MdbrainProbeEmbeddingResponse> {
-		return apiGet(this._opts, `/v1/probes/embedding${q(agentId)}`)
-	}
-
-	async probeVector(agentId?: string): Promise<{ ok: boolean }> {
-		return apiGet(this._opts, `/v1/probes/vector${q(agentId)}`)
-	}
-
-	async relevanceExplain(input: {
-		query: string
-		agentId?: string
-		sourceScope?: "all" | "memory" | "kb" | "structured"
-		sessionKey?: string
-		maxResults?: number
-		minScore?: number
-		deep?: boolean
-	}): Promise<MdbrainRelevanceExplainResponse> {
-		return apiPost(this._opts, "/v1/admin/relevance/explain", {
-			query: input.query,
-			agentId: input.agentId,
-			sourceScope: input.sourceScope,
-			sessionKey: input.sessionKey,
-			maxResults: input.maxResults,
-			minScore: input.minScore,
-			deep: input.deep,
-		})
-	}
-
-	async relevanceBenchmark(input?: {
-		agentId?: string
-		datasetPath?: string
-		maxResults?: number
-		minScore?: number
-		retrievalLane?: "native" | "raw-session"
-	}): Promise<MdbrainRelevanceBenchmarkResponse> {
-		return apiPost(this._opts, "/v1/admin/relevance/benchmark", {
-			agentId: input?.agentId,
-			datasetPath: input?.datasetPath,
-			maxResults: input?.maxResults,
-			minScore: input?.minScore,
-			retrievalLane: input?.retrievalLane,
-		})
-	}
-
-	async benchmarkIngest(input: {
-		datasetPath: string
-		agentId?: string
-		scope?: "session" | "user" | "agent" | "workspace" | "tenant" | "global"
-		limitConversations?: number
-		limitTurnsPerConversation?: number
-	}): Promise<MdbrainBenchmarkIngestResponse> {
-		return apiPost(this._opts, "/v1/admin/benchmarks/ingest", {
-			datasetPath: input.datasetPath,
-			agentId: input.agentId,
-			scope: input.scope,
-			limitConversations: input.limitConversations,
-			limitTurnsPerConversation: input.limitTurnsPerConversation,
-		})
-	}
-
-	async importConversations(
-		input: MdbrainConversationImportInput,
-	): Promise<MdbrainConversationImportResponse> {
-		return apiPost(this._opts, "/v1/import/conversations", {
-			datasetPath: input.datasetPath,
-			agentId: input.agentId,
-			scope: input.scope,
-			limitConversations: input.limitConversations,
-			limitTurnsPerConversation: input.limitTurnsPerConversation,
-		})
-	}
-
-	async relevanceReport(
-		agentId?: string,
-		windowMs?: number,
-	): Promise<MdbrainRelevanceReportResponse> {
-		return apiGet(
+		return apiPost(
 			this._opts,
-			`/v1/admin/relevance/report${q(agentId, { windowMs })}`,
+			"/v1/context-bundle",
+			{
+				agentId: input.agentId,
+				query: input.query,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				sessionId: input.sessionId,
+				tokenBudget: input.tokenBudget,
+				maxActiveItems: input.maxActiveItems,
+				maxEvidenceItems: input.maxEvidenceItems,
+				maxRecentEvents: input.maxRecentEvents,
+				includeDiscoveryProjection: input.includeDiscoveryProjection,
+				discoveryKind: input.discoveryKind,
+				includeProfile: input.includeProfile,
+				timeRange: input.timeRange,
+				mode: input.mode,
+			},
+			undefined,
+			"safe",
+			requestOptions,
 		)
-	}
-
-	async relevanceSampleRate(
-		agentId?: string,
-	): Promise<MdbrainRelevanceSampleRateResponse> {
-		return apiGet(this._opts, `/v1/admin/relevance/sample-rate${q(agentId)}`)
-	}
-
-	async accessTrends(input?: {
-		agentId?: string
-		collection?:
-			| "events"
-			| "structured_mem"
-			| "procedures"
-			| "episodes"
-			| "entities"
-			| "relations"
-		memoryIds?: string[]
-		windowDays?: number
-		limit?: number
-	}): Promise<MdbrainAccessTrendResponse> {
-		return apiGet(
-			this._opts,
-			`/v1/admin/access-trends${q(input?.agentId, {
-				collection: input?.collection,
-				memoryIds: input?.memoryIds?.join(","),
-				windowDays: input?.windowDays,
-				limit: input?.limit,
-			})}`,
-		)
-	}
-
-	async accessSummaries(input: {
-		agentId?: string
-		collection:
-			| "events"
-			| "structured_mem"
-			| "procedures"
-			| "episodes"
-			| "entities"
-			| "relations"
-		memoryIds: string[]
-		windowDays?: number
-	}): Promise<MdbrainAccessSummaryResponse> {
-		return apiGet(
-			this._opts,
-			`/v1/admin/access-summaries${q(input.agentId, {
-				collection: input.collection,
-				memoryIds: input.memoryIds.join(","),
-				windowDays: input.windowDays,
-			})}`,
-		)
-	}
-
-	async listRecallTraces(input?: {
-		agentId?: string
-		limit?: number
-	}): Promise<MdbrainRecallTrace[]> {
-		return apiGet(
-			this._opts,
-			`/v1/admin/traces${q(input?.agentId, { limit: input?.limit })}`,
-		)
-	}
-
-	async getRecallTrace(input: {
-		traceId: string
-		agentId?: string
-	}): Promise<MdbrainRecallTrace | null> {
-		return apiGet(
-			this._opts,
-			`/v1/admin/traces/${encodeURIComponent(input.traceId)}${q(input.agentId)}`,
-		)
-	}
-
-	async listJobs(input?: {
-		agentId?: string
-		status?: MdbrainMemoryJobStatus
-		limit?: number
-		jobType?: MdbrainMemoryJobType
-	}): Promise<MdbrainMemoryJob[]> {
-		return apiGet(
-			this._opts,
-			`/v1/jobs${q(input?.agentId, {
-				status: input?.status,
-				limit: input?.limit,
-				jobType: input?.jobType,
-			})}`,
-		)
-	}
-
-	async getJob(input: {
-		jobId: string
-		agentId?: string
-	}): Promise<MdbrainMemoryJob | null> {
-		return apiGet(
-			this._opts,
-			`/v1/jobs/${encodeURIComponent(input.jobId)}${q(input.agentId)}`,
-		)
-	}
-
-	async traceChain(
-		input: MdbrainTraceChainInput,
-	): Promise<MdbrainTraceChainResponse> {
-		return apiPost(this._opts, "/v1/chain-trace", {
-			factId: input.factId,
-			collection: input.collection,
-			agentId: input.agentId,
-			maxDepth: input.maxDepth,
-		})
-	}
-
-	async scanNovelty(
-		input?: MdbrainScanNoveltyInput,
-	): Promise<MdbrainNoveltyResponse> {
-		return apiPost(this._opts, "/v1/novelty-scan", {
-			agentId: input?.agentId,
-			limit: input?.limit,
-			scope: input?.scope,
-		})
-	}
-
-	async consolidate(
-		input?: MdbrainConsolidateInput,
-	): Promise<MdbrainConsolidateResponse> {
-		return apiPost(this._opts, "/v1/consolidate", {
-			agentId: input?.agentId,
-			maxEvents: input?.maxEvents,
-			minCombinedScore: input?.minCombinedScore,
-			scope: input?.scope,
-		})
-	}
-
-	async selfEdit(
-		input: MdbrainSelfEditInput,
-	): Promise<MdbrainSelfEditResponse> {
-		return apiPost(this._opts, "/v1/self-edit", {
-			block: input.block,
-			action: input.action,
-			content: input.content,
-			agentId: input.agentId,
-		})
 	}
 
 	// ---------------------------------------------------------------------------
 	// Wiki (T6 MCP tools)
 	// ---------------------------------------------------------------------------
 
-	async wikiSearch(input: {
-		query: string
-		scope?: string
-		scopeRef?: string
-		kind?: string
-		trustTier?: string
-		state?: string
-		privacyTier?: string
-		recipe?: "fast" | "hybrid" | "deep"
-		maxResults?: number
-		minScore?: number
-		agentId?: string
-	}): Promise<unknown> {
-		return apiPost(this._opts, "/v1/wiki/search", {
-			query: input.query,
-			scope: input.scope,
-			scopeRef: input.scopeRef,
-			kind: input.kind,
-			trustTier: input.trustTier,
-			state: input.state,
-			privacyTier: input.privacyTier,
-			recipe: input.recipe,
-			maxResults: input.maxResults,
-			minScore: input.minScore,
-			agentId: input.agentId,
-		})
+	async wikiSearch(
+		input: {
+			query: string
+			scope?: string
+			scopeRef?: string
+			kind?: string
+			trustTier?: string
+			state?: string
+			privacyTier?: string
+			recipe?: "fast" | "hybrid" | "deep"
+			maxResults?: number
+			minScore?: number
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<unknown> {
+		return apiPost(
+			this._opts,
+			"/v1/wiki/search",
+			{
+				query: input.query,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				kind: input.kind,
+				trustTier: input.trustTier,
+				state: input.state,
+				privacyTier: input.privacyTier,
+				recipe: input.recipe,
+				maxResults: input.maxResults,
+				minScore: input.minScore,
+				agentId: input.agentId,
+			},
+			undefined,
+			"safe",
+			requestOptions,
+		)
 	}
 
-	async wikiGet(input: {
-		slug: string
-		scope: string
-		scopeRef: string
-		format?: "json" | "markdown" | "html"
-		agentId?: string
-	}): Promise<unknown> {
+	async wikiGet(
+		input: {
+			slug: string
+			scope: string
+			scopeRef: string
+			format?: "json" | "markdown" | "html"
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<unknown> {
 		const qs = new URLSearchParams({
 			scope: input.scope,
 			scopeRef: input.scopeRef,
 		})
 		if (input.format) qs.set("format", input.format)
 		if (input.agentId) qs.set("agentId", input.agentId)
-		return apiGet(this._opts, `/v1/wiki/${input.slug}?${qs}`)
+		return apiGet(this._opts, `/v1/wiki/${input.slug}?${qs}`, requestOptions)
 	}
 
-	async wikiApply(input: {
-		// Create or update a wiki page. When slug+scope+scopeRef match an
-		// existing page, it updates; otherwise it creates.
-		kind: string
-		title: string
-		slug: string
-		summary: string
-		body: string
-		frontmatter: {
-			type: string
-			title?: string
-			description?: string
-			resource?: string
-			tags?: string[]
-			entityTypes?: string[]
-			privacyTier?: string
-		}
-		scope: string
-		scopeRef: string
-		trustTier: string
-		agentId?: string
-	}): Promise<unknown> {
+	async wikiApply(
+		input: {
+			// Create or update a wiki page. When slug+scope+scopeRef match an
+			// existing page, it updates; otherwise it creates.
+			kind: string
+			title: string
+			slug: string
+			summary: string
+			body: string
+			frontmatter: {
+				type: string
+				title?: string
+				description?: string
+				resource?: string
+				tags?: string[]
+				entityTypes?: string[]
+				privacyTier?: string
+			}
+			scope: string
+			scopeRef: string
+			trustTier: string
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<unknown> {
+		const deadlineAt =
+			Date.now() + resolveDeadlineMs(this._opts, requestOptions)
 		// Upsert: try POST (create); on 409 DUPLICATE_SLUG, fall back to PATCH
 		// (update existing page, bumps revision). Honors the create-or-update
 		// contract the tool description advertises.
@@ -1113,42 +925,71 @@ export class MdbrainClient {
 			agentId: input.agentId,
 		}
 		try {
-			return await apiPost(this._opts, "/v1/wiki", body)
+			return await apiPost(
+				this._opts,
+				"/v1/wiki",
+				body,
+				undefined,
+				"never",
+				requestOptions,
+			)
 		} catch (err) {
 			if (err instanceof MdbrainClientError && err.status === 409) {
-				return apiPatch(this._opts, `/v1/wiki/${input.slug}`, body)
+				const remainingOptions: MdbrainRequestOptions = {
+					...requestOptions,
+					timeoutMs: Math.max(0, deadlineAt - Date.now()),
+				}
+				return apiPatch(
+					this._opts,
+					`/v1/wiki/${input.slug}`,
+					body,
+					remainingOptions,
+				)
 			}
 			throw err
 		}
 	}
 
-	async wikiExportOkf(input: {
-		scope: string
-		scopeRef: string
-		outDir: string
-		okfBundleId?: string
-		trustTier?: string
-		agentId?: string
-		returnContent?: boolean
-	}): Promise<unknown> {
-		return apiPost(this._opts, "/v1/wiki/okf-export", {
-			scope: input.scope,
-			scopeRef: input.scopeRef,
-			outDir: input.outDir,
-			okfBundleId: input.okfBundleId,
-			trustTier: input.trustTier,
-			agentId: input.agentId,
-			returnContent: input.returnContent,
-		})
+	async wikiExportOkf(
+		input: {
+			scope: string
+			scopeRef: string
+			outDir: string
+			okfBundleId?: string
+			trustTier?: string
+			agentId?: string
+			returnContent?: boolean
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<unknown> {
+		return apiPost(
+			this._opts,
+			"/v1/wiki/okf-export",
+			{
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				outDir: input.outDir,
+				okfBundleId: input.okfBundleId,
+				trustTier: input.trustTier,
+				agentId: input.agentId,
+				returnContent: input.returnContent,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 
-	async wikiLint(input: {
-		scope: string
-		scopeRef: string
-		kind?: string
-		limit?: number
-		agentId?: string
-	}): Promise<unknown> {
+	async wikiLint(
+		input: {
+			scope: string
+			scopeRef: string
+			kind?: string
+			limit?: number
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<unknown> {
 		// Lists pages for lint review. Surfaces pages needing attention for
 		// manual review. T12 contradiction detector will populate contradictions[]
 		// for a fuller lint; for now this lists pages (optionally by kind) so a
@@ -1162,16 +1003,19 @@ export class MdbrainClient {
 		if (input.agentId) qs.set("agentId", input.agentId)
 		const limit = input.limit ?? 100
 		qs.set("limit", String(limit))
-		return apiGet(this._opts, `/v1/wiki/lint?${qs}`)
+		return apiGet(this._opts, `/v1/wiki/lint?${qs}`, requestOptions)
 	}
 
-	async wikiDelete(input: {
-		slug: string
-		scope: string
-		scopeRef: string
-		hard?: boolean
-		agentId?: string
-	}): Promise<{
+	async wikiDelete(
+		input: {
+			slug: string
+			scope: string
+			scopeRef: string
+			hard?: boolean
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<{
 		ok: boolean
 		slug: string
 		scope: string
@@ -1184,37 +1028,39 @@ export class MdbrainClient {
 		})
 		if (input.hard) params.set("hard", "true")
 		if (input.agentId) params.set("agentId", input.agentId)
-		return apiDelete(this._opts, `/v1/wiki/${input.slug}?${params}`)
+		return apiDelete(
+			this._opts,
+			`/v1/wiki/${input.slug}?${params}`,
+			requestOptions,
+		)
 	}
 
-	async wikiImportOkf(input: {
-		bundleDir: string
-		scope: string
-		scopeRef: string
-		trustTier: "restricted" | "standard" | "admin"
-		okfBundleId: string
-		agentId?: string
-	}): Promise<unknown> {
-		return apiPost(this._opts, "/v1/wiki/okf-import", {
-			bundleDir: input.bundleDir,
-			scope: input.scope,
-			scopeRef: input.scopeRef,
-			trustTier: input.trustTier,
-			okfBundleId: input.okfBundleId,
-			agentId: input.agentId,
-		})
-	}
-
-	async wikiMaintain(input: {
-		scope: string
-		scopeRef: string
-		agentId?: string
-	}): Promise<unknown> {
-		return apiPost(this._opts, "/v1/wiki/maintain", {
-			scope: input.scope,
-			scopeRef: input.scopeRef,
-			agentId: input.agentId,
-		})
+	async wikiImportOkf(
+		input: {
+			bundleDir: string
+			scope: string
+			scopeRef: string
+			trustTier: "restricted" | "standard" | "admin"
+			okfBundleId: string
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<unknown> {
+		return apiPost(
+			this._opts,
+			"/v1/wiki/okf-import",
+			{
+				bundleDir: input.bundleDir,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				trustTier: input.trustTier,
+				okfBundleId: input.okfBundleId,
+				agentId: input.agentId,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
 	}
 }
 

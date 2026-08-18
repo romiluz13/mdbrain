@@ -11,7 +11,7 @@ import {
 	type MemoryEvalFixture,
 	type MemoryEvalSeedStep,
 	type SearchDetailedEvalCase,
-} from "../packages/memory-engine/src/test-helpers/memory-eval-fixtures.js"
+} from "./memory-eval-fixtures.js"
 
 type EvidenceCoverage = "none" | "indirect" | "partial" | "direct"
 type TrustConfidence = "low" | "medium" | "high" | null
@@ -516,6 +516,12 @@ async function executeSeedStep(
 	switch (step.kind) {
 		case "write-event":
 			await client.writeEvent({
+				idempotencyKey: [
+					step.agentId,
+					step.sessionId,
+					step.timestamp,
+					step.role,
+				].join(":"),
 				agentId: step.agentId,
 				sessionId: step.sessionId,
 				role: step.role,

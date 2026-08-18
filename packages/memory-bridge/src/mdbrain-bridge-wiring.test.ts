@@ -28,22 +28,6 @@ describe("Phase 7-11 wiring: bridge functions", () => {
 		expect(typeof bridge.mdbrainBridgeRecallConversation).toBe("function")
 	})
 
-	it("exports mdbrainBridgeTraceChain", async () => {
-		expect(typeof bridge.mdbrainBridgeTraceChain).toBe("function")
-	})
-
-	it("exports mdbrainBridgeScanNovelty", async () => {
-		expect(typeof bridge.mdbrainBridgeScanNovelty).toBe("function")
-	})
-
-	it("exports mdbrainBridgeConsolidate", async () => {
-		expect(typeof bridge.mdbrainBridgeConsolidate).toBe("function")
-	})
-
-	it("exports mdbrainBridgeImportConversations", async () => {
-		expect(typeof bridge.mdbrainBridgeImportConversations).toBe("function")
-	})
-
 	it("exports mdbrainBridgeReportProcedureOutcome", async () => {
 		expect(typeof bridge.mdbrainBridgeReportProcedureOutcome).toBe("function")
 	})
@@ -77,26 +61,6 @@ describe("Phase 10 wiring: client methods", () => {
 	it("MdbrainClient has recallConversation method", async () => {
 		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
 		expect(typeof client.recallConversation).toBe("function")
-	})
-
-	it("MdbrainClient has traceChain method", async () => {
-		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
-		expect(typeof client.traceChain).toBe("function")
-	})
-
-	it("MdbrainClient has scanNovelty method", async () => {
-		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
-		expect(typeof client.scanNovelty).toBe("function")
-	})
-
-	it("MdbrainClient has consolidate method", async () => {
-		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
-		expect(typeof client.consolidate).toBe("function")
-	})
-
-	it("MdbrainClient has importConversations method", async () => {
-		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
-		expect(typeof client.importConversations).toBe("function")
 	})
 
 	it("MdbrainClient has reportProcedureOutcome method", async () => {
@@ -141,30 +105,6 @@ describe("Phase 10 wiring: AI SDK tools", () => {
 		expect(tools.mdbrain_recall_conversation).toBeDefined()
 	})
 
-	it("createMdbrainTools includes mdbrain_chain_trace", async () => {
-		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
-		const tools = createMdbrainTools(client)
-		expect(tools.mdbrain_chain_trace).toBeDefined()
-	})
-
-	it("createMdbrainTools includes mdbrain_novelty_scan", async () => {
-		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
-		const tools = createMdbrainTools(client)
-		expect(tools.mdbrain_novelty_scan).toBeDefined()
-	})
-
-	it("createMdbrainTools includes mdbrain_consolidate", async () => {
-		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
-		const tools = createMdbrainTools(client)
-		expect(tools.mdbrain_consolidate).toBeDefined()
-	})
-
-	it("createMdbrainTools includes mdbrain_import_conversations", async () => {
-		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
-		const tools = createMdbrainTools(client)
-		expect(tools.mdbrain_import_conversations).toBeDefined()
-	})
-
 	it("createMdbrainTools includes mdbrain_procedure_outcome", async () => {
 		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
 		const tools = createMdbrainTools(client)
@@ -175,11 +115,5 @@ describe("Phase 10 wiring: AI SDK tools", () => {
 		const client = new MdbrainClient({ baseUrl: "http://localhost:9999" })
 		const tools = createMdbrainTools(client)
 		expect(tools.mdbrain_memory_feedback).toBeDefined()
-	})
-})
-
-describe("Phase 10 wiring: client types exported", () => {
-	it("exports MdbrainTraceChainInput type", async () => {
-		expect(MdbrainClient).toBeDefined()
 	})
 })

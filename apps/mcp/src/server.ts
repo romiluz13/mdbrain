@@ -34,10 +34,23 @@ const LIFECYCLE_HISTORY_TOOL_NAMES = new Set([
 	"mdbrain_lifecycle_history",
 	"mdbrain_memory_history",
 ])
-const IMPORT_TOOL_NAMES = new Set([
-	"mdbrain_import_conversations",
-	"mdbrain_import_conversation_history",
-])
+const MEMORY_SCOPES = [
+	"session",
+	"user",
+	"agent",
+	"workspace",
+	"tenant",
+	"global",
+] as const
+
+function parseMemoryScope(
+	value: unknown,
+): (typeof MEMORY_SCOPES)[number] | undefined {
+	return typeof value === "string" &&
+		MEMORY_SCOPES.includes(value as (typeof MEMORY_SCOPES)[number])
+		? (value as (typeof MEMORY_SCOPES)[number])
+		: undefined
+}
 
 function jsonResult(payload: unknown, isError = false) {
 	const structuredContent =
@@ -64,6 +77,8 @@ export const toolList = [
 				agentId: { type: "string" },
 				limit: { type: "number" },
 				minScore: { type: "number" },
+				scope: { type: "string" },
+				scopeRef: { type: "string" },
 			},
 			required: ["query"],
 		},
@@ -82,30 +97,20 @@ export const toolList = [
 		},
 	},
 	{
-		name: "mdbrain_read_file",
-		description: "Read memory file by path (memory_get parity)",
-		inputSchema: {
-			type: "object",
-			properties: {
-				relPath: { type: "string" },
-				agentId: { type: "string" },
-				from: { type: "number" },
-				lines: { type: "number" },
-			},
-			required: ["relPath"],
-		},
-	},
-	{
 		name: "mdbrain_add",
 		description: "Add user message to memory",
 		inputSchema: {
 			type: "object",
 			properties: {
 				content: { type: "string" },
+				idempotencyKey: { type: "string" },
+				requestId: { type: "string" },
 				agentId: { type: "string" },
 				sessionId: { type: "string" },
+				scope: { type: "string", enum: [...MEMORY_SCOPES] },
+				scopeRef: { type: "string" },
 			},
-			required: ["content"],
+			required: ["content", "idempotencyKey"],
 		},
 	},
 	{
@@ -116,10 +121,14 @@ export const toolList = [
 			properties: {
 				role: { type: "string", enum: ["user", "assistant", "system", "tool"] },
 				body: { type: "string" },
+				idempotencyKey: { type: "string" },
+				requestId: { type: "string" },
 				agentId: { type: "string" },
 				sessionId: { type: "string" },
+				scope: { type: "string", enum: [...MEMORY_SCOPES] },
+				scopeRef: { type: "string" },
 			},
-			required: ["role", "body"],
+			required: ["role", "body", "idempotencyKey"],
 		},
 	},
 	{
@@ -511,93 +520,6 @@ export const toolList = [
 		},
 	},
 	{
-		name: "mdbrain_status",
-		description: "Memory provider status",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-			},
-		},
-	},
-	{
-		name: "mdbrain_chain_trace",
-		description:
-			"Trace the provenance chain of a derived fact back to its source events",
-		inputSchema: {
-			type: "object",
-			properties: {
-				factId: { type: "string" },
-				collection: {
-					type: "string",
-					enum: [
-						"structured_mem",
-						"entities",
-						"relations",
-						"procedures",
-						"entity_links",
-					],
-				},
-				agentId: { type: "string" },
-				maxDepth: { type: "number" },
-			},
-			required: ["factId", "collection"],
-		},
-	},
-	{
-		name: "mdbrain_novelty_scan",
-		description:
-			"Scan for the most novel/surprising events using vector distance scoring",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				limit: { type: "number" },
-				scope: { type: "string" },
-			},
-		},
-	},
-	{
-		name: "mdbrain_consolidate",
-		description:
-			"Run the consolidation pipeline to promote high-value events to structured facts",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				maxEvents: { type: "number" },
-				minCombinedScore: { type: "number" },
-				scope: { type: "string" },
-			},
-		},
-	},
-	{
-		name: "mdbrain_self_edit",
-		description:
-			"Edit your own core memory blocks directly. Use 'user' for user preferences/profile, 'persona' for your identity/behavior, 'instructions' for task instructions. Changes persist across sessions.",
-		inputSchema: {
-			type: "object",
-			required: ["block", "action", "content"],
-			properties: {
-				block: {
-					type: "string",
-					enum: ["user", "persona", "instructions"],
-					description: "Which core memory block to edit",
-				},
-				action: {
-					type: "string",
-					enum: ["append", "replace", "prepend"],
-					description: "How to modify the block",
-				},
-				content: {
-					type: "string",
-					description: "The content to write",
-				},
-				agentId: { type: "string" },
-			},
-		},
-	},
-	{
 		name: "mdbrain_state_unified",
 		description:
 			"Get all three state surfaces (profile, blocks, bundle) in one call",
@@ -608,179 +530,6 @@ export const toolList = [
 				scope: { type: "string" },
 				scopeRef: { type: "string" },
 			},
-		},
-	},
-	{
-		name: "mdbrain_benchmark_ingest",
-		description:
-			"Replay a benchmark conversation dataset through the canonical writeConversationEvent() pipeline",
-		inputSchema: {
-			type: "object",
-			properties: {
-				datasetPath: { type: "string", minLength: 1 },
-				agentId: { type: "string" },
-				scope: {
-					type: "string",
-					enum: ["session", "user", "agent", "workspace", "tenant", "global"],
-				},
-				limitConversations: { type: "integer", minimum: 1 },
-				limitTurnsPerConversation: { type: "integer", minimum: 1 },
-			},
-			required: ["datasetPath"],
-		},
-	},
-	{
-		name: "mdbrain_import_conversations",
-		description:
-			"Import conversation history through the canonical writeConversationEvent() pipeline",
-		inputSchema: {
-			type: "object",
-			properties: {
-				datasetPath: { type: "string", minLength: 1 },
-				agentId: { type: "string" },
-				scope: {
-					type: "string",
-					enum: ["session", "user", "agent", "workspace", "tenant", "global"],
-				},
-				limitConversations: { type: "integer", minimum: 1 },
-				limitTurnsPerConversation: { type: "integer", minimum: 1 },
-			},
-			required: ["datasetPath"],
-		},
-	},
-	{
-		name: "mdbrain_import_conversation_history",
-		description:
-			"Semantic alias for mdbrain_import_conversations. Import conversation history through the same canonical writeConversationEvent() runtime path.",
-		inputSchema: {
-			type: "object",
-			properties: {
-				datasetPath: { type: "string", minLength: 1 },
-				agentId: { type: "string" },
-				scope: {
-					type: "string",
-					enum: ["session", "user", "agent", "workspace", "tenant", "global"],
-				},
-				limitConversations: { type: "integer", minimum: 1 },
-				limitTurnsPerConversation: { type: "integer", minimum: 1 },
-			},
-			required: ["datasetPath"],
-		},
-	},
-	{
-		name: "mdbrain_admin_access_trends",
-		description:
-			"Inspect rolling 7-day access trends from the access_events time series collection",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				collection: {
-					type: "string",
-					enum: [
-						"events",
-						"structured_mem",
-						"procedures",
-						"episodes",
-						"entities",
-						"relations",
-					],
-				},
-				memoryIds: {
-					type: "array",
-					items: { type: "string", minLength: 1 },
-				},
-				windowDays: { type: "integer", minimum: 1 },
-				limit: { type: "integer", minimum: 1, maximum: 100 },
-			},
-		},
-	},
-	{
-		name: "mdbrain_admin_access_summaries",
-		description:
-			"Inspect aggregate access counts and last-access timestamps from the access_events time series collection",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				collection: {
-					type: "string",
-					enum: [
-						"events",
-						"structured_mem",
-						"procedures",
-						"episodes",
-						"entities",
-						"relations",
-					],
-				},
-				memoryIds: {
-					type: "array",
-					items: { type: "string", minLength: 1 },
-				},
-				windowDays: { type: "integer", minimum: 1 },
-			},
-			required: ["collection", "memoryIds"],
-		},
-	},
-	{
-		name: "mdbrain_admin_list_traces",
-		description: "List recent recall traces for operator debugging",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				limit: { type: "integer", minimum: 1, maximum: 100 },
-			},
-		},
-	},
-	{
-		name: "mdbrain_admin_get_trace",
-		description: "Fetch one recall trace by traceId",
-		inputSchema: {
-			type: "object",
-			properties: {
-				traceId: { type: "string", minLength: 1 },
-				agentId: { type: "string" },
-			},
-			required: ["traceId"],
-		},
-	},
-	{
-		name: "mdbrain_list_jobs",
-		description: "List memory jobs for an agent",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				status: {
-					type: "string",
-					enum: ["pending", "running", "completed", "failed", "cancelled"],
-				},
-				limit: { type: "integer", minimum: 1, maximum: 100 },
-				jobType: {
-					type: "string",
-					enum: [
-						"consolidation",
-						"extraction",
-						"import",
-						"materialization",
-						"enrichment",
-					],
-				},
-			},
-		},
-	},
-	{
-		name: "mdbrain_get_job",
-		description: "Fetch one memory job by jobId",
-		inputSchema: {
-			type: "object",
-			properties: {
-				jobId: { type: "string", minLength: 1 },
-				agentId: { type: "string" },
-			},
-			required: ["jobId"],
 		},
 	},
 	{
@@ -909,104 +658,6 @@ export const toolList = [
 				agentId: { type: "string" },
 			},
 			required: ["entry"],
-		},
-	},
-	{
-		name: "mdbrain_status_detailed",
-		description:
-			"Detailed health status: events, entities, projection lag, lane coverage, diagnostics",
-		inputSchema: {
-			type: "object",
-			properties: { agentId: { type: "string" } },
-		},
-	},
-	{
-		name: "mdbrain_stats",
-		description:
-			"Memory statistics: source counts, embedding coverage, index stats",
-		inputSchema: {
-			type: "object",
-			properties: { agentId: { type: "string" } },
-		},
-	},
-	{
-		name: "mdbrain_sync",
-		description: "Trigger a memory sync operation",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				reason: { type: "string" },
-				force: { type: "boolean" },
-			},
-		},
-	},
-	{
-		name: "mdbrain_probe_embedding",
-		description: "Probe embedding model availability",
-		inputSchema: {
-			type: "object",
-			properties: { agentId: { type: "string" } },
-		},
-	},
-	{
-		name: "mdbrain_probe_vector",
-		description: "Probe vector search availability",
-		inputSchema: {
-			type: "object",
-			properties: { agentId: { type: "string" } },
-		},
-	},
-	{
-		name: "mdbrain_relevance_explain",
-		description:
-			"Detailed relevance diagnostics for a query: artifacts, health, scores",
-		inputSchema: {
-			type: "object",
-			properties: {
-				query: { type: "string" },
-				agentId: { type: "string" },
-				sourceScope: {
-					type: "string",
-					enum: ["all", "memory", "kb", "structured"],
-				},
-				maxResults: { type: "number" },
-				minScore: { type: "number" },
-				deep: { type: "boolean" },
-			},
-			required: ["query"],
-		},
-	},
-	{
-		name: "mdbrain_relevance_benchmark",
-		description: "Run relevance benchmark suite",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				datasetPath: { type: "string" },
-				maxResults: { type: "number" },
-				minScore: { type: "number" },
-			},
-		},
-	},
-	{
-		name: "mdbrain_relevance_report",
-		description: "Relevance health report: hit rate, empty rate, fallback rate",
-		inputSchema: {
-			type: "object",
-			properties: {
-				agentId: { type: "string" },
-				windowMs: { type: "number" },
-			},
-		},
-	},
-	{
-		name: "mdbrain_relevance_sample_rate",
-		description: "Current relevance sampling rate and degraded signal count",
-		inputSchema: {
-			type: "object",
-			properties: { agentId: { type: "string" } },
 		},
 	},
 	{
@@ -1190,20 +841,6 @@ export const toolList = [
 		},
 	},
 	{
-		name: "mdbrain_wiki_maintain",
-		description:
-			"Trigger wiki self-maintenance (git-diff + Dreamer analysis) for a scope. The API route is a thin trigger — full execution runs via the CLI or webhook.",
-		inputSchema: {
-			type: "object",
-			properties: {
-				scope: { type: "string" },
-				scopeRef: { type: "string" },
-				agentId: { type: "string" },
-			},
-			required: ["scope", "scopeRef"],
-		},
-	},
-	{
 		name: "mdbrain_wiki_lint",
 		description:
 			"List wiki pages (optionally by kind) for lint review — spot stale/superseded entries needing attention. Contradiction surfacing lands with the T12 contradiction detector.",
@@ -1234,7 +871,7 @@ export const toolList = [
 const server = new Server(
 	{
 		name: "mdbrain",
-		version: "0.1.0",
+		version: "2.0.0",
 	},
 	{
 		capabilities: { tools: {} },
@@ -1258,6 +895,8 @@ export async function handleToolCall(
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 				limit: typeof args.limit === "number" ? args.limit : undefined,
 				minScore: typeof args.minScore === "number" ? args.minScore : undefined,
+				scope: parseMemoryScope(args.scope),
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
@@ -1269,21 +908,18 @@ export async function handleToolCall(
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
-		if (name === "mdbrain_read_file") {
-			const out = await mdbrain.readFile({
-				relPath: typeof args.relPath === "string" ? args.relPath : "",
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				from: typeof args.from === "number" ? args.from : undefined,
-				lines: typeof args.lines === "number" ? args.lines : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
 		if (name === "mdbrain_add") {
 			const out = await mdbrain.add({
 				content: typeof args.content === "string" ? args.content : "",
+				idempotencyKey:
+					typeof args.idempotencyKey === "string" ? args.idempotencyKey : "",
+				requestId:
+					typeof args.requestId === "string" ? args.requestId : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 				sessionId:
 					typeof args.sessionId === "string" ? args.sessionId : undefined,
+				scope: parseMemoryScope(args.scope),
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
@@ -1300,9 +936,15 @@ export async function handleToolCall(
 			const out = await mdbrain.writeEvent({
 				role,
 				body: typeof args.body === "string" ? args.body : "",
+				idempotencyKey:
+					typeof args.idempotencyKey === "string" ? args.idempotencyKey : "",
+				requestId:
+					typeof args.requestId === "string" ? args.requestId : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 				sessionId:
 					typeof args.sessionId === "string" ? args.sessionId : undefined,
+				scope: parseMemoryScope(args.scope),
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
@@ -1408,36 +1050,6 @@ export async function handleToolCall(
 						: undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_status") {
-			const out = await mdbrain.status(
-				typeof args.agentId === "string" ? args.agentId : undefined,
-			)
-			const guidance = {
-				quickStart:
-					"Call mdbrain_profile first. Then mdbrain_search_detailed for queries. Use mdbrain_write_event to save insights.",
-				bestPractices: [
-					"Call mdbrain_profile or mdbrain_state_unified at session start",
-					"Save decisions with mdbrain_write_structured",
-					"Use mdbrain_search_detailed before answering knowledge questions",
-					"Use mdbrain_build_context_bundle with mode: wake-up for fast session start",
-				],
-				capabilities: [
-					"semantic search",
-					"knowledge base search",
-					"graph traversal",
-					"memory consolidation",
-					"profile loading",
-					"novelty detection",
-					"reasoning chain tracing",
-					"active slate hydration",
-					"discovery projections",
-					"context bundle assembly",
-				],
-			}
-			return {
-				content: [{ type: "text", text: JSON.stringify({ ...out, guidance }) }],
-			}
 		}
 		if (RECALL_TOOL_NAMES.has(name)) {
 			const roles = Array.isArray(args.roles)
@@ -1612,75 +1224,6 @@ export async function handleToolCall(
 								signal,
 							})
 			return jsonResult(out)
-		}
-		if (name === "mdbrain_chain_trace") {
-			const out = await mdbrain.traceChain({
-				factId: typeof args.factId === "string" ? args.factId : "",
-				collection: typeof args.collection === "string" ? args.collection : "",
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				maxDepth: typeof args.maxDepth === "number" ? args.maxDepth : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_novelty_scan") {
-			const out = await mdbrain.scanNovelty({
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				limit: typeof args.limit === "number" ? args.limit : undefined,
-				scope: typeof args.scope === "string" ? args.scope : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_consolidate") {
-			const out = await mdbrain.consolidate({
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				maxEvents:
-					typeof args.maxEvents === "number" ? args.maxEvents : undefined,
-				minCombinedScore:
-					typeof args.minCombinedScore === "number"
-						? args.minCombinedScore
-						: undefined,
-				scope: typeof args.scope === "string" ? args.scope : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_self_edit") {
-			const block = typeof args.block === "string" ? args.block : ""
-			const action = typeof args.action === "string" ? args.action : "replace"
-			const validBlocks = ["user", "persona", "instructions"]
-			const validActions = ["append", "replace", "prepend"]
-			if (!validBlocks.includes(block)) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify({
-								error: "block must be user|persona|instructions",
-							}),
-						},
-					],
-					isError: true,
-				}
-			}
-			if (!validActions.includes(action)) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify({
-								error: "action must be append|replace|prepend",
-							}),
-						},
-					],
-					isError: true,
-				}
-			}
-			const out = await mdbrain.selfEdit({
-				block: block as "user" | "persona" | "instructions",
-				action: action as "append" | "replace" | "prepend",
-				content: typeof args.content === "string" ? args.content : "",
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
 		if (name === "mdbrain_search_detailed") {
 			const searchConfig =
@@ -1868,80 +1411,6 @@ export async function handleToolCall(
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
-		if (name === "mdbrain_status_detailed") {
-			const out = await mdbrain.getDetailedStatus(
-				typeof args.agentId === "string" ? args.agentId : undefined,
-			)
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_stats") {
-			const out = await mdbrain.stats(
-				typeof args.agentId === "string" ? args.agentId : undefined,
-			)
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_sync") {
-			const out = await mdbrain.sync({
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				reason: typeof args.reason === "string" ? args.reason : undefined,
-				force: typeof args.force === "boolean" ? args.force : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_probe_embedding") {
-			const out = await mdbrain.probeEmbedding(
-				typeof args.agentId === "string" ? args.agentId : undefined,
-			)
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_probe_vector") {
-			const out = await mdbrain.probeVector(
-				typeof args.agentId === "string" ? args.agentId : undefined,
-			)
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_relevance_explain") {
-			const out = await mdbrain.relevanceExplain({
-				query: typeof args.query === "string" ? args.query : "",
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				sourceScope:
-					args.sourceScope === "all" ||
-					args.sourceScope === "memory" ||
-					args.sourceScope === "kb" ||
-					args.sourceScope === "structured"
-						? args.sourceScope
-						: undefined,
-				maxResults:
-					typeof args.maxResults === "number" ? args.maxResults : undefined,
-				minScore: typeof args.minScore === "number" ? args.minScore : undefined,
-				deep: typeof args.deep === "boolean" ? args.deep : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_relevance_benchmark") {
-			const out = await mdbrain.relevanceBenchmark({
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				datasetPath:
-					typeof args.datasetPath === "string" ? args.datasetPath : undefined,
-				maxResults:
-					typeof args.maxResults === "number" ? args.maxResults : undefined,
-				minScore: typeof args.minScore === "number" ? args.minScore : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_relevance_report") {
-			const out = await mdbrain.relevanceReport(
-				typeof args.agentId === "string" ? args.agentId : undefined,
-				typeof args.windowMs === "number" ? args.windowMs : undefined,
-			)
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_relevance_sample_rate") {
-			const out = await mdbrain.relevanceSampleRate(
-				typeof args.agentId === "string" ? args.agentId : undefined,
-			)
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
 		if (name === "mdbrain_state_unified") {
 			const out = await mdbrain.state({
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
@@ -1965,178 +1434,6 @@ export async function handleToolCall(
 					},
 				],
 			}
-		}
-		if (name === "mdbrain_benchmark_ingest") {
-			if (
-				typeof args.datasetPath !== "string" ||
-				args.datasetPath.length === 0
-			) {
-				throw new Error("datasetPath is required")
-			}
-			const out = await mdbrain.benchmarkIngest({
-				datasetPath: args.datasetPath,
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				scope:
-					args.scope === "session" ||
-					args.scope === "user" ||
-					args.scope === "agent" ||
-					args.scope === "workspace" ||
-					args.scope === "tenant" ||
-					args.scope === "global"
-						? args.scope
-						: undefined,
-				limitConversations:
-					typeof args.limitConversations === "number"
-						? args.limitConversations
-						: undefined,
-				limitTurnsPerConversation:
-					typeof args.limitTurnsPerConversation === "number"
-						? args.limitTurnsPerConversation
-						: undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (IMPORT_TOOL_NAMES.has(name)) {
-			if (
-				typeof args.datasetPath !== "string" ||
-				args.datasetPath.length === 0
-			) {
-				throw new Error("datasetPath is required")
-			}
-			const out = await mdbrain.importConversations({
-				datasetPath: args.datasetPath,
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				scope:
-					args.scope === "session" ||
-					args.scope === "user" ||
-					args.scope === "agent" ||
-					args.scope === "workspace" ||
-					args.scope === "tenant" ||
-					args.scope === "global"
-						? args.scope
-						: undefined,
-				limitConversations:
-					typeof args.limitConversations === "number"
-						? args.limitConversations
-						: undefined,
-				limitTurnsPerConversation:
-					typeof args.limitTurnsPerConversation === "number"
-						? args.limitTurnsPerConversation
-						: undefined,
-			})
-			return jsonResult(out)
-		}
-		if (name === "mdbrain_admin_access_trends") {
-			const out = await mdbrain.accessTrends({
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				collection:
-					args.collection === "events" ||
-					args.collection === "structured_mem" ||
-					args.collection === "procedures" ||
-					args.collection === "episodes" ||
-					args.collection === "entities" ||
-					args.collection === "relations"
-						? args.collection
-						: undefined,
-				memoryIds: Array.isArray(args.memoryIds)
-					? args.memoryIds.filter(
-							(memoryId): memoryId is string =>
-								typeof memoryId === "string" && memoryId.trim().length > 0,
-						)
-					: undefined,
-				windowDays:
-					typeof args.windowDays === "number" ? args.windowDays : undefined,
-				limit:
-					typeof args.limit === "number"
-						? Math.max(1, Math.min(100, Math.floor(args.limit)))
-						: undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_admin_access_summaries") {
-			const memoryIds = Array.isArray(args.memoryIds)
-				? args.memoryIds.filter(
-						(memoryId): memoryId is string =>
-							typeof memoryId === "string" && memoryId.trim().length > 0,
-					)
-				: []
-			if (memoryIds.length === 0) {
-				throw new Error("memoryIds is required")
-			}
-			if (
-				args.collection !== "events" &&
-				args.collection !== "structured_mem" &&
-				args.collection !== "procedures" &&
-				args.collection !== "episodes" &&
-				args.collection !== "entities" &&
-				args.collection !== "relations"
-			) {
-				throw new Error("collection is required")
-			}
-			const out = await mdbrain.accessSummaries({
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				collection: args.collection,
-				memoryIds,
-				windowDays:
-					typeof args.windowDays === "number" ? args.windowDays : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_admin_list_traces") {
-			const out = await mdbrain.listRecallTraces({
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				limit:
-					typeof args.limit === "number"
-						? Math.max(1, Math.min(100, Math.floor(args.limit)))
-						: undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_admin_get_trace") {
-			if (typeof args.traceId !== "string" || !args.traceId.trim()) {
-				throw new Error("traceId is required")
-			}
-			const out = await mdbrain.getRecallTrace({
-				traceId: args.traceId,
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_list_jobs") {
-			const out = await mdbrain.listJobs({
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-				status:
-					args.status === "pending" ||
-					args.status === "running" ||
-					args.status === "completed" ||
-					args.status === "failed" ||
-					args.status === "cancelled"
-						? args.status
-						: undefined,
-				limit:
-					typeof args.limit === "number"
-						? Math.max(1, Math.min(100, Math.floor(args.limit)))
-						: undefined,
-				jobType:
-					args.jobType === "consolidation" ||
-					args.jobType === "extraction" ||
-					args.jobType === "import" ||
-					args.jobType === "materialization" ||
-					args.jobType === "enrichment"
-						? args.jobType
-						: undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_get_job") {
-			if (typeof args.jobId !== "string" || !args.jobId.trim()) {
-				throw new Error("jobId is required")
-			}
-			const out = await mdbrain.getJob({
-				jobId: args.jobId,
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
 		if (name === "mdbrain_wiki_search") {
 			const out = await mdbrain.wikiSearch({
@@ -2229,14 +1526,6 @@ export async function handleToolCall(
 				trustTier,
 				okfBundleId:
 					typeof args.okfBundleId === "string" ? args.okfBundleId : "",
-				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
-			})
-			return { content: [{ type: "text", text: JSON.stringify(out) }] }
-		}
-		if (name === "mdbrain_wiki_maintain") {
-			const out = await mdbrain.wikiMaintain({
-				scope: typeof args.scope === "string" ? args.scope : "",
-				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }

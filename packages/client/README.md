@@ -12,7 +12,7 @@ npm install @mdbrain/client
 
 - You are talking to `apps/api`.
 - You want retrying HTTP requests and a typed client surface.
-- You do not need direct engine access.
+- You do not need server-side gateway access.
 
 ## Example
 
@@ -26,6 +26,7 @@ const client = new MdbrainClient({
 await client.add({
 	content: "The user prefers concise release notes.",
 	sessionId: "main",
+	idempotencyKey: crypto.randomUUID(),
 })
 
 const results = await client.search({
@@ -34,10 +35,36 @@ const results = await client.search({
 })
 ```
 
-## Memory intelligence methods
+## Deadlines, cancellation, and retries
 
-- `client.traceChain()` -- reasoning chain traversal (`POST /v1/chain-trace`)
-- `client.scanNovelty()` -- surprisal novelty detection (`POST /v1/novelty-scan`)
-- `client.consolidate()` -- trigger consolidation agent (`POST /v1/consolidate`)
+Every request has a 10-second total deadline by default. Set a different client
+default with `defaultDeadlineMs`, or override one call and attach caller
+cancellation with its second argument:
 
-If you need server-side helpers or direct engine access, use [`@mdbrain/memory-bridge`](../memory-bridge/README.md) or [`@mdbrain/memory-engine`](../memory-engine/README.md).
+```ts
+const client = new MdbrainClient({
+	baseUrl: "http://127.0.0.1:3847",
+	defaultDeadlineMs: 5_000,
+})
+
+const controller = new AbortController()
+const results = await client.search(
+	{ query: "What does the user prefer?" },
+	{ timeoutMs: 2_000, signal: controller.signal },
+)
+```
+
+Safe reads retry transient transport failures plus HTTP 429 and 503 responses.
+`Retry-After` is honored when it fits inside the total call deadline. `add` and
+`writeEvent` may retry because their required idempotency key and exact request
+body are reused. Other mutations are attempted once.
+
+## Supported operations
+
+The client covers conversational writes, search and advanced retrieval, state
+and context hydration, lifecycle operations, feedback, and profile.
+Event-producing writes require a caller-owned idempotency key. Server-local
+liveness, readiness, provider status, and probes are intentionally not client
+methods.
+
+If you need server-side Memongo gateway helpers, use [`@mdbrain/memory-bridge`](../memory-bridge/README.md).

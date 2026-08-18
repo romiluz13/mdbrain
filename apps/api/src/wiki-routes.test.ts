@@ -19,18 +19,20 @@ const wikiMocks = vi.hoisted(() => ({
 	deleteWikiPage: vi.fn(),
 	renderMarkdown: vi.fn(),
 	renderHtml: vi.fn(),
-	getWikiDbHandle: vi.fn(),
 	importOkfBundle: vi.fn(),
 	exportOkfBundle: vi.fn(),
 	searchWikiPages: vi.fn(),
 	listUnresolvedContradictions: vi.fn(),
 	listWikiPageRevisions: vi.fn(),
+	listMemoryDeliveryIntents: vi.fn(),
 	getWikiPageRevision: vi.fn(),
 	resolveTransclusions: vi.fn(),
+	recordWikiMutationIntent: vi.fn(),
 }))
 
-const bridgeMocks = vi.hoisted(() => ({
-	mdbrainBridgeGetManager: vi.fn(),
+const wikiStoreMocks = vi.hoisted(() => ({
+	getWikiStoreHandle: vi.fn(),
+	withWikiTransaction: vi.fn(),
 }))
 
 vi.mock("@mdbrain/wiki-engine", () => ({
@@ -49,8 +51,8 @@ vi.mock("@mdbrain/wiki-engine", () => ({
 	},
 }))
 
-vi.mock("@mdbrain/memory-bridge", () => ({
-	...bridgeMocks,
+vi.mock("./wiki-store-runtime.js", () => ({
+	...wikiStoreMocks,
 }))
 
 import { createApp } from "./app.js"
@@ -116,12 +118,55 @@ describe("wiki routes", () => {
 		for (const k of Object.keys(wikiMocks)) {
 			;(wikiMocks as Record<string, ReturnType<typeof vi.fn>>)[k].mockReset()
 		}
-		bridgeMocks.mdbrainBridgeGetManager.mockReset()
-		bridgeMocks.mdbrainBridgeGetManager.mockResolvedValue({
+		wikiStoreMocks.getWikiStoreHandle.mockReset()
+		wikiStoreMocks.withWikiTransaction.mockReset()
+		wikiStoreMocks.getWikiStoreHandle.mockResolvedValue({
 			db: {},
 			prefix: "test_",
 		})
-		wikiMocks.getWikiDbHandle.mockReturnValue({ db: {}, prefix: "test_" })
+		wikiStoreMocks.withWikiTransaction.mockImplementation(
+			async (
+				operation: (
+					handle: { db: object; prefix: string },
+					session: object,
+				) => Promise<unknown>,
+			) => operation({ db: {}, prefix: "test_" }, {}),
+		)
+		wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+		wikiMocks.recordWikiMutationIntent.mockResolvedValue({
+			operationId: "op-1",
+			state: "recorded",
+		})
+	})
+
+	it("lists delivery failures without exposing stored payloads", async () => {
+		wikiMocks.listMemoryDeliveryIntents.mockResolvedValue([
+			{
+				operationId: "write-event:key-1",
+				state: "outcome-unknown",
+				payload: { body: "sensitive" },
+				idempotencyKey: "caller-value",
+				payloadFingerprint: "fingerprint",
+				principalSubjectId: "tenant:t1:user:u1",
+				updatedAt: new Date("2026-08-17T00:00:00.000Z"),
+			},
+		])
+
+		const res = await createApp().request(
+			"/v1/admin/deliveries?state=outcome-unknown",
+		)
+		expect(res.status).toBe(200)
+		const json = (await res.json()) as {
+			deliveries: Array<Record<string, unknown>>
+		}
+		expect(json.deliveries[0]).toMatchObject({
+			operationId: "write-event:key-1",
+			state: "outcome-unknown",
+		})
+		expect(json.deliveries[0]).not.toHaveProperty("payload")
+		expect(json.deliveries[0]).not.toHaveProperty("idempotencyKey")
+		expect(json.deliveries[0]).not.toHaveProperty("payloadFingerprint")
+		expect(json.deliveries[0]).not.toHaveProperty("principalSubjectId")
 	})
 
 	afterEach(() => {
@@ -144,6 +189,16 @@ describe("wiki routes", () => {
 			expect(handle).toEqual({ db: {}, prefix: "test_" })
 			expect(input.slug).toBe("tables/accounts")
 			expect(input.scope).toBe("workspace")
+			const session = wikiMocks.createWikiPage.mock.calls[0][2].session
+			expect(wikiMocks.recordWikiMutationIntent).toHaveBeenCalledWith(
+				handle,
+				expect.objectContaining({
+					kind: "create",
+					pageSlug: "tables/accounts",
+					principalSubjectId: "development:anonymous",
+				}),
+				session,
+			)
 		})
 
 		it("rejects missing title", async () => {
@@ -206,7 +261,52 @@ describe("wiki routes", () => {
 				"tables/accounts",
 				"workspace",
 				"ws-1",
-				{ scope: "workspace", scopeRef: "ws-1", trustTier: "standard" },
+				expect.objectContaining({
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "standard",
+					subjectId: "development:anonymous",
+				}),
+			)
+		})
+
+		it("uses server-derived identity even when request trust is wider", async () => {
+			process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+				{
+					token: "reader-secret",
+					subjectId: "user:alice",
+					groups: ["idp:engineering"],
+					roles: ["reader"],
+					departments: ["engineering"],
+					trustTier: "restricted",
+					scopes: ["workspace"],
+					scopeRefs: ["ws-1"],
+					capabilities: ["read"],
+				},
+			])
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1&trustTier=admin",
+				{ headers: { Authorization: "Bearer reader-secret" } },
+			)
+
+			expect(res.status).toBe(200)
+			expect(wikiMocks.getWikiPage).toHaveBeenCalledWith(
+				{ db: {}, prefix: "test_" },
+				"tables/accounts",
+				"workspace",
+				"ws-1",
+				{
+					scope: "workspace",
+					scopeRef: "ws-1",
+					subjectId: "user:alice",
+					groups: ["idp:engineering"],
+					roles: ["reader"],
+					departments: ["engineering"],
+					trustTier: "restricted",
+					capabilities: ["read"],
+				},
 			)
 		})
 
@@ -263,7 +363,12 @@ describe("wiki routes", () => {
 			expect(wikiMocks.resolveTransclusions).toHaveBeenCalledWith(
 				{ db: {}, prefix: "test_" },
 				"{{page:other}}",
-				{ scope: "workspace", scopeRef: "ws-1", trustTier: "standard" },
+				expect.objectContaining({
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "standard",
+					subjectId: "development:anonymous",
+				}),
 			)
 		})
 
@@ -306,11 +411,12 @@ describe("wiki routes", () => {
 					state: undefined,
 					limit: 10,
 					skip: undefined,
-					governance: {
+					governance: expect.objectContaining({
 						scope: "workspace",
 						scopeRef: "ws-1",
 						trustTier: "standard",
-					},
+						subjectId: "development:anonymous",
+					}),
 				},
 			)
 		})
@@ -348,6 +454,33 @@ describe("wiki routes", () => {
 				},
 			)
 			expect(res.status).toBe(404)
+		})
+
+		it("requires change-permissions capability for ACL or trust edits", async () => {
+			process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+				{
+					token: "writer-secret",
+					subjectId: "user:writer",
+					scopes: ["workspace"],
+					scopeRefs: ["ws-1"],
+					capabilities: ["write"],
+				},
+			])
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+				{
+					method: "PATCH",
+					headers: {
+						Authorization: "Bearer writer-secret",
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({ trustTier: "admin" }),
+				},
+			)
+
+			expect(res.status).toBe(403)
+			expect(wikiStoreMocks.withWikiTransaction).not.toHaveBeenCalled()
+			expect(wikiMocks.updateWikiPage).not.toHaveBeenCalled()
 		})
 	})
 
@@ -387,10 +520,43 @@ describe("wiki routes", () => {
 			)
 			expect(res.status).toBe(404)
 		})
+
+		it("requires hard-delete capability for permanent deletion", async () => {
+			process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+				{
+					token: "writer-secret",
+					subjectId: "user:writer",
+					scopes: ["workspace"],
+					scopeRefs: ["ws-1"],
+					capabilities: ["write"],
+				},
+			])
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1&hard=true",
+				{
+					method: "DELETE",
+					headers: { Authorization: "Bearer writer-secret" },
+				},
+			)
+
+			expect(res.status).toBe(403)
+			expect(wikiStoreMocks.withWikiTransaction).not.toHaveBeenCalled()
+			expect(wikiMocks.deleteWikiPage).not.toHaveBeenCalled()
+		})
 	})
 
 	describe("POST /v1/wiki/okf-import", () => {
-		it("imports a bundle and returns the result", async () => {
+		it("allows a permission-changing principal to import the requested trust tier", async () => {
+			process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+				{
+					token: "permission-editor-secret",
+					subjectId: "user:permission-editor",
+					scopes: ["workspace"],
+					scopeRefs: ["ws-1"],
+					trustTier: "restricted",
+					capabilities: ["write", "change-permissions"],
+				},
+			])
 			wikiMocks.importOkfBundle.mockResolvedValue({
 				imported: 2,
 				skipped: 0,
@@ -398,6 +564,116 @@ describe("wiki routes", () => {
 				errors: [],
 			})
 			const res = await createApp().request("/v1/wiki/okf-import", {
+				method: "POST",
+				headers: {
+					Authorization: "Bearer permission-editor-secret",
+					"Content-Type": "application/json",
+					"X-Request-ID": "okf-import-1",
+				},
+				body: JSON.stringify({
+					bundleDir: "/tmp/bundle",
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+					okfBundleId: "b1",
+				}),
+			})
+			expect(res.status).toBe(200)
+			const json = await asJson(res)
+			expect(json.imported).toBe(2)
+			expect(wikiMocks.importOkfBundle).toHaveBeenCalledTimes(1)
+			expect(wikiStoreMocks.withWikiTransaction).toHaveBeenCalledTimes(1)
+			expect(wikiMocks.importOkfBundle).toHaveBeenCalledWith(
+				expect.anything(),
+				"/tmp/bundle",
+				expect.objectContaining({
+					trustTier: "admin",
+					session: expect.anything(),
+				}),
+			)
+			expect(wikiMocks.recordWikiMutationIntent).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					operationId: "okf-import-1",
+					kind: "okf-import",
+					pageSlug: "b1",
+					scope: "workspace",
+					scopeRef: "ws-1",
+					principalSubjectId: "user:permission-editor",
+				}),
+				expect.anything(),
+			)
+		})
+
+		it("rejects a write-only principal before starting the import transaction", async () => {
+			process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+				{
+					token: "writer-secret",
+					subjectId: "user:writer",
+					scopes: ["workspace"],
+					scopeRefs: ["ws-1"],
+					trustTier: "standard",
+					capabilities: ["write"],
+				},
+			])
+
+			const res = await createApp().request("/v1/wiki/okf-import", {
+				method: "POST",
+				headers: {
+					Authorization: "Bearer writer-secret",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					bundleDir: "/tmp/bundle",
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "standard",
+					okfBundleId: "b1",
+				}),
+			})
+
+			expect(res.status).toBe(403)
+			expect((await asJson(res)).error?.message).toMatch(/change-permissions/)
+			expect(wikiStoreMocks.withWikiTransaction).not.toHaveBeenCalled()
+			expect(wikiMocks.importOkfBundle).not.toHaveBeenCalled()
+		})
+
+		it("rolls back imported pages when mutation-intent audit recording fails", async () => {
+			let pageVisible = false
+			wikiMocks.importOkfBundle.mockImplementation(async () => {
+				pageVisible = true
+				return {
+					imported: 1,
+					skipped: 0,
+					conceptIds: ["accounts"],
+					errors: [],
+				}
+			})
+			wikiMocks.recordWikiMutationIntent.mockRejectedValue(
+				new Error("injected mutation-intent audit failure"),
+			)
+			wikiMocks.getWikiPage.mockImplementation(async () =>
+				pageVisible ? SAMPLE_PAGE : undefined,
+			)
+			wikiStoreMocks.withWikiTransaction.mockImplementation(
+				async (
+					operation: (
+						handle: { db: object; prefix: string },
+						session: object,
+					) => Promise<unknown>,
+				) => {
+					const wasVisible = pageVisible
+					try {
+						return await operation({ db: {}, prefix: "test_" }, {})
+					} catch (error) {
+						pageVisible = wasVisible
+						throw error
+					}
+				},
+			)
+
+			const app = createApp()
+			const importResponse = await app.request("/v1/wiki/okf-import", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -408,10 +684,15 @@ describe("wiki routes", () => {
 					okfBundleId: "b1",
 				}),
 			})
-			expect(res.status).toBe(200)
-			const json = await asJson(res)
-			expect(json.imported).toBe(2)
-			expect(wikiMocks.importOkfBundle).toHaveBeenCalledTimes(1)
+
+			expect(importResponse.status).toBe(500)
+			expect((await asJson(importResponse)).error?.message).toContain(
+				"injected mutation-intent audit failure",
+			)
+			const pageResponse = await app.request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+			)
+			expect(pageResponse.status).toBe(404)
 		})
 
 		it("rejects missing bundleDir", async () => {
@@ -461,7 +742,7 @@ describe("wiki routes", () => {
 			expect(params.governance).toBeDefined()
 			expect(params.governance.scope).toBe("workspace")
 			expect(params.governance.scopeRef).toBe("ws-1")
-			expect(params.governance.trustTier).toBe("admin")
+			expect(params.governance.trustTier).toBe("standard")
 		})
 
 		it("rejects missing outDir", async () => {

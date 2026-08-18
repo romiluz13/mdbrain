@@ -400,9 +400,9 @@ export const openApiSpec = {
 	openapi: "3.0.3",
 	info: {
 		title: "Mdbrain API",
-		version: "1.0.0",
+		version: "2.0.0",
 		description:
-			"HTTP API for the Mdbrain memory platform. Configure it with MDBRAIN_MONGODB_URI and, optionally, ~/.mdbrain/mdbrain.json.",
+			"HTTP API for the Mdbrain wiki and the versioned Memongo memory gateway.",
 	},
 	servers: [{ url: "/", description: "Default" }],
 	paths: {
@@ -410,6 +410,19 @@ export const openApiSpec = {
 			get: {
 				summary: "Health check",
 				responses: { "200": { description: "OK" } },
+			},
+		},
+		"/ready": {
+			get: {
+				summary:
+					"Memongo contract and transactional wiki-store dependency readiness",
+				responses: {
+					"200": { description: "All required dependencies are ready" },
+					"503": {
+						description:
+							"Memongo is unavailable or incompatible, or wiki transactions are unavailable",
+					},
+				},
 			},
 		},
 		"/openapi.json": {
@@ -1426,75 +1439,6 @@ export const openApiSpec = {
 				},
 			},
 		},
-		"/v1/import/conversations": {
-			post: {
-				summary:
-					"Import conversation history through the canonical writeConversationEvent() pipeline",
-				requestBody: {
-					content: {
-						"application/json": {
-							schema: {
-								type: "object",
-								required: ["datasetPath"],
-								properties: {
-									agentId: { type: "string" },
-									datasetPath: { type: "string", minLength: 1 },
-									scope: {
-										type: "string",
-										enum: [
-											"session",
-											"user",
-											"agent",
-											"workspace",
-											"tenant",
-											"global",
-										],
-									},
-									limitConversations: { type: "integer", minimum: 1 },
-									limitTurnsPerConversation: {
-										type: "integer",
-										minimum: 1,
-									},
-								},
-							},
-						},
-					},
-				},
-				responses: {
-					"200": {
-						description: "Conversation import summary",
-						content: {
-							"application/json": {
-								schema: {
-									type: "object",
-									properties: {
-										datasetPath: { type: "string" },
-										datasetName: { type: "string" },
-										datasetKind: {
-											type: "string",
-											enum: ["generic", "longmemeval", "locomo"],
-										},
-										conversationsImported: { type: "integer" },
-										turnsImported: { type: "integer" },
-										skippedConversations: { type: "integer" },
-										failedLines: { type: "integer" },
-										failedTurns: { type: "integer" },
-										startedAt: {
-											type: "string",
-											format: "date-time",
-										},
-										completedAt: {
-											type: "string",
-											format: "date-time",
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
 		"/v1/lifecycle/get": {
 			post: {
 				summary: "Fetch the current lifecycle item for a stable handle",
@@ -1768,15 +1712,22 @@ export const openApiSpec = {
 				responses: { "200": { description: "KB results" } },
 			},
 		},
-		"/v1/read-file": {
-			post: {
-				summary: "Read memory file or structured path",
-				responses: { "200": { description: "File read result" } },
-			},
-		},
 		"/v1/add": {
 			post: {
 				summary: "Append a user message to conversational memory",
+				parameters: [
+					{
+						in: "header",
+						name: "Idempotency-Key",
+						required: true,
+						schema: { type: "string", minLength: 1 },
+					},
+					{
+						in: "header",
+						name: "X-Request-ID",
+						schema: { type: "string", minLength: 1 },
+					},
+				],
 				requestBody: {
 					content: {
 						"application/json": {
@@ -1791,6 +1742,29 @@ export const openApiSpec = {
 										description:
 											"Optional session identifier for this memory write.",
 									},
+									scope: {
+										type: "string",
+										enum: [
+											"session",
+											"user",
+											"agent",
+											"workspace",
+											"tenant",
+											"global",
+										],
+									},
+									scopeRef: { type: "string" },
+									promotionPolicy: {
+										type: "string",
+										enum: ["none", "wiki"],
+										description:
+											"Explicitly request receipt-gated wiki promotion.",
+									},
+									wikiPromotion: {
+										type: "object",
+										description:
+											"Required with promotionPolicy=wiki. Contains a stable wiki page with at least one claim.",
+									},
 									containerTag: {
 										type: "string",
 										deprecated: true,
@@ -1802,13 +1776,79 @@ export const openApiSpec = {
 						},
 					},
 				},
-				responses: { "200": { description: "Event id" } },
+				responses: {
+					"200": { description: "Event id" },
+					"409": { description: "Idempotency key payload conflict" },
+					"503": { description: "Delivery pending reconciliation" },
+				},
 			},
 		},
 		"/v1/write-event": {
 			post: {
 				summary: "Write conversation event (any role)",
-				responses: { "200": { description: "Event id" } },
+				parameters: [
+					{
+						in: "header",
+						name: "Idempotency-Key",
+						required: true,
+						schema: { type: "string", minLength: 1 },
+					},
+					{
+						in: "header",
+						name: "X-Request-ID",
+						schema: { type: "string", minLength: 1 },
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								required: ["role", "body"],
+								properties: {
+									role: {
+										type: "string",
+										enum: ["user", "assistant", "system", "tool"],
+									},
+									body: { type: "string", minLength: 1 },
+									agentId: { type: "string" },
+									sessionId: { type: "string" },
+									timestamp: { type: "string", format: "date-time" },
+									metadata: { type: "object" },
+									scope: {
+										type: "string",
+										enum: [
+											"session",
+											"user",
+											"agent",
+											"workspace",
+											"tenant",
+											"global",
+										],
+									},
+									scopeRef: { type: "string" },
+									promotionPolicy: {
+										type: "string",
+										enum: ["none", "wiki"],
+										description:
+											"Explicitly request receipt-gated wiki promotion.",
+									},
+									wikiPromotion: {
+										type: "object",
+										description:
+											"Required with promotionPolicy=wiki. Contains a stable wiki page with at least one claim.",
+									},
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"200": { description: "Event id" },
+					"409": { description: "Idempotency key payload conflict" },
+					"503": { description: "Delivery pending reconciliation" },
+				},
 			},
 		},
 		"/v1/extract": {
@@ -1889,629 +1929,39 @@ export const openApiSpec = {
 				responses: { "200": { description: "Profile" } },
 			},
 		},
-		"/v1/status": {
+		"/v1/admin/deliveries": {
 			get: {
-				summary: "Memory provider status",
-				responses: { "200": { description: "Status" } },
-			},
-		},
-		"/v1/status/detailed": {
-			get: {
-				summary: "Detailed v2 status",
-				responses: { "200": { description: "V2 status" } },
-			},
-		},
-		"/v1/stats": {
-			get: {
-				summary: "Collection stats",
-				responses: { "200": { description: "Stats" } },
-			},
-		},
-		"/v1/sync": {
-			post: {
-				summary: "Sync workspace files to MongoDB",
-				responses: { "200": { description: "Ok" } },
-			},
-		},
-		"/v1/probes/embedding": {
-			get: {
-				summary: "Probe embedding availability",
-				responses: { "200": { description: "Probe result" } },
-			},
-		},
-		"/v1/probes/vector": {
-			get: {
-				summary: "Probe vector search availability",
-				responses: { "200": { description: "{ ok: boolean }" } },
-			},
-		},
-		"/v1/admin/relevance/explain": {
-			post: {
-				summary: "Relevance explain (diagnostic)",
-				responses: { "200": { description: "Explain payload" } },
-			},
-		},
-		"/v1/admin/relevance/benchmark": {
-			post: {
-				summary: "Relevance benchmark",
-				requestBody: {
-					content: {
-						"application/json": {
-							schema: {
-								type: "object",
-								properties: {
-									agentId: { type: "string" },
-									datasetPath: { type: "string", minLength: 1 },
-									maxResults: { type: "integer", minimum: 1 },
-									minScore: { type: "number", minimum: 0 },
-								},
-							},
-						},
-					},
-				},
-				responses: {
-					"200": {
-						description: "Benchmark metrics",
-						content: {
-							"application/json": {
-								schema: {
-									type: "object",
-									required: [
-										"datasetVersion",
-										"cases",
-										"hitRate",
-										"emptyRate",
-										"avgTopScore",
-										"p95LatencyMs",
-										"regressions",
-									],
-									properties: {
-										datasetVersion: { type: "string" },
-										datasetName: { type: "string" },
-										datasetKind: {
-											type: "string",
-											enum: [
-												"generic",
-												"longmemeval",
-												"locomo",
-												"legacy-query",
-											],
-										},
-										scenarios: { type: "integer" },
-										cases: { type: "integer" },
-										scoredCases: { type: "integer" },
-										skippedCases: { type: "integer" },
-										hitRate: { type: "number" },
-										emptyRate: { type: "number" },
-										avgTopScore: { type: "number" },
-										p95LatencyMs: { type: "number" },
-										rAt5: { type: "number" },
-										rAt10: { type: "number" },
-										ndcgAt10: { type: "number" },
-										questionTypeBreakdown: {
-											type: "array",
-											items: {
-												type: "object",
-												required: [
-													"questionType",
-													"cases",
-													"scoredCases",
-													"hitRate",
-													"rAt5",
-													"rAt10",
-													"ndcgAt10",
-												],
-												properties: {
-													questionType: { type: "string" },
-													cases: { type: "integer" },
-													scoredCases: { type: "integer" },
-													hitRate: { type: "number" },
-													rAt5: { type: "number" },
-													rAt10: { type: "number" },
-													ndcgAt10: { type: "number" },
-												},
-											},
-										},
-										officialMetrics: benchmarkOfficialMetricsSchema,
-										ingest: {
-											type: "object",
-											properties: {
-												conversationsIngested: { type: "integer" },
-												turnsIngested: { type: "integer" },
-												skippedConversations: { type: "integer" },
-												failedLines: { type: "integer" },
-												failedTurns: { type: "integer" },
-											},
-										},
-										regressions: {
-											type: "array",
-											items: {
-												type: "object",
-												required: [
-													"metricName",
-													"baseline",
-													"current",
-													"delta",
-													"severity",
-												],
-												properties: {
-													metricName: { type: "string" },
-													baseline: { type: "number" },
-													current: { type: "number" },
-													delta: { type: "number" },
-													severity: {
-														type: "string",
-														enum: ["low", "medium", "high"],
-													},
-												},
-											},
-										},
-										queryGovernance: {
-											type: "object",
-											properties: {
-												status: {
-													type: "string",
-													enum: ["advisory-only"],
-												},
-												generatedAt: {
-													type: "string",
-													format: "date-time",
-												},
-												candidates: {
-													type: "array",
-													items: {
-														type: "object",
-														required: [
-															"candidateId",
-															"source",
-															"queryShapeFamily",
-															"scope",
-															"reason",
-															"evidence",
-															"recommendedAction",
-															"rollbackNote",
-														],
-														properties: {
-															candidateId: { type: "string" },
-															source: {
-																type: "string",
-																enum: ["benchmark", "operator-trace"],
-															},
-															queryShapeFamily: {
-																type: "string",
-																enum: ["search-detailed"],
-															},
-															recipe: { type: "string" },
-															scope: {
-																type: "string",
-																enum: ["cluster"],
-															},
-															reason: { type: "string" },
-															evidence: {
-																type: "object",
-																required: ["cases", "hitRate", "p95LatencyMs"],
-																properties: {
-																	datasetName: { type: "string" },
-																	datasetKind: { type: "string" },
-																	cases: { type: "integer" },
-																	hitRate: { type: "number" },
-																	p95LatencyMs: { type: "number" },
-																	rAt5: { type: "number" },
-																	ndcgAt10: { type: "number" },
-																},
-															},
-															recommendedAction: {
-																type: "string",
-																enum: [
-																	"inspect-query-stats",
-																	"consider-setQuerySettings",
-																],
-															},
-															rollbackNote: { type: "string" },
-														},
-													},
-												},
-												notes: {
-													type: "array",
-													items: { type: "string" },
-												},
-											},
-										},
-										benchmarkReport: benchmarkRunReportSchema,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		"/v1/admin/benchmarks/ingest": {
-			post: {
-				summary:
-					"Replay a benchmark conversation dataset through writeConversationEvent()",
-				requestBody: {
-					content: {
-						"application/json": {
-							schema: {
-								type: "object",
-								required: ["datasetPath"],
-								properties: {
-									agentId: { type: "string" },
-									datasetPath: { type: "string", minLength: 1 },
-									scope: {
-										type: "string",
-										enum: [
-											"session",
-											"user",
-											"agent",
-											"workspace",
-											"tenant",
-											"global",
-										],
-									},
-									limitConversations: { type: "integer", minimum: 1 },
-									limitTurnsPerConversation: {
-										type: "integer",
-										minimum: 1,
-									},
-								},
-							},
-						},
-					},
-				},
-				responses: {
-					"200": {
-						description: "Benchmark ingest summary",
-						content: {
-							"application/json": {
-								schema: {
-									type: "object",
-									properties: {
-										datasetPath: { type: "string" },
-										datasetName: { type: "string" },
-										conversationsIngested: { type: "integer" },
-										turnsIngested: { type: "integer" },
-										skippedConversations: { type: "integer" },
-										failedLines: { type: "integer" },
-										failedTurns: { type: "integer" },
-										startedAt: { type: "string", format: "date-time" },
-										completedAt: { type: "string", format: "date-time" },
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		"/v1/admin/relevance/report": {
-			get: {
-				summary: "Relevance report",
-				responses: { "200": { description: "Report" } },
-			},
-		},
-		"/v1/admin/relevance/sample-rate": {
-			get: {
-				summary: "Relevance sampling state",
-				responses: { "200": { description: "Sample rate" } },
-			},
-		},
-		"/v1/admin/access-trends": {
-			get: {
-				summary:
-					"Rolling 7-day access trends from the access_events time series collection",
+				summary: "List durable memory delivery state without stored payloads",
 				parameters: [
-					{ name: "agentId", in: "query", schema: { type: "string" } },
 					{
-						name: "collection",
 						in: "query",
+						name: "state",
 						schema: {
 							type: "string",
 							enum: [
-								"events",
-								"structured_mem",
-								"procedures",
-								"episodes",
-								"entities",
-								"relations",
+								"recorded",
+								"delivering",
+								"retryable",
+								"outcome-unknown",
+								"confirmed",
+								"promotion-pending",
+								"promoted",
+								"dead-letter",
+								"conflict",
 							],
 						},
 					},
+					{ in: "query", name: "scope", schema: { type: "string" } },
+					{ in: "query", name: "scopeRef", schema: { type: "string" } },
 					{
-						name: "memoryIds",
 						in: "query",
-						schema: {
-							type: "string",
-							description: "Comma-separated canonical memory ids",
-						},
-					},
-					{
-						name: "windowDays",
-						in: "query",
-						schema: { type: "integer", minimum: 1 },
-					},
-					{
 						name: "limit",
-						in: "query",
 						schema: { type: "integer", minimum: 1, maximum: 100 },
 					},
 				],
-				responses: { "200": { description: "Access trend points" } },
-			},
-		},
-		"/v1/admin/traces": {
-			get: {
-				summary: "List recent recall traces",
-				parameters: [
-					{ name: "agentId", in: "query", schema: { type: "string" } },
-					{
-						name: "limit",
-						in: "query",
-						schema: { type: "integer", minimum: 1, maximum: 100 },
-					},
-				],
-				responses: { "200": { description: "Recall trace list" } },
-			},
-		},
-		"/v1/admin/traces/{traceId}": {
-			get: {
-				summary: "Get one recall trace by traceId",
-				parameters: [
-					{
-						name: "traceId",
-						in: "path",
-						required: true,
-						schema: { type: "string", minLength: 1 },
-					},
-					{ name: "agentId", in: "query", schema: { type: "string" } },
-				],
 				responses: {
-					"200": { description: "Recall trace" },
-					"404": { description: "Trace not found" },
-				},
-			},
-		},
-		"/v1/admin/access-summaries": {
-			get: {
-				summary:
-					"Aggregate access counts and last-access timestamps from the access_events time series collection",
-				parameters: [
-					{ name: "agentId", in: "query", schema: { type: "string" } },
-					{
-						name: "collection",
-						in: "query",
-						required: true,
-						schema: {
-							type: "string",
-							enum: [
-								"events",
-								"structured_mem",
-								"procedures",
-								"episodes",
-								"entities",
-								"relations",
-							],
-						},
-					},
-					{
-						name: "memoryIds",
-						in: "query",
-						required: true,
-						schema: { type: "string" },
-					},
-					{
-						name: "windowDays",
-						in: "query",
-						schema: { type: "integer", minimum: 1 },
-					},
-				],
-				responses: {
-					"200": {
-						description: "Access summaries",
-						content: {
-							"application/json": {
-								schema: {
-									type: "array",
-									items: {
-										type: "object",
-										properties: {
-											collection: { type: "string" },
-											memoryId: { type: "string" },
-											accessCount: { type: "integer" },
-											lastAccessedAt: {
-												type: "string",
-												format: "date-time",
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		"/v1/jobs": {
-			get: {
-				summary: "List background memory jobs",
-				parameters: [
-					{ name: "agentId", in: "query", schema: { type: "string" } },
-					{
-						name: "status",
-						in: "query",
-						schema: {
-							type: "string",
-							enum: ["pending", "running", "completed", "failed", "cancelled"],
-						},
-					},
-					{
-						name: "jobType",
-						in: "query",
-						schema: {
-							type: "string",
-							enum: [
-								"consolidation",
-								"extraction",
-								"import",
-								"materialization",
-								"enrichment",
-							],
-						},
-					},
-					{
-						name: "limit",
-						in: "query",
-						schema: { type: "integer", minimum: 1, maximum: 100 },
-					},
-				],
-				responses: { "200": { description: "Memory job list" } },
-			},
-		},
-		"/v1/jobs/{jobId}": {
-			get: {
-				summary: "Get one background memory job by jobId",
-				parameters: [
-					{
-						name: "jobId",
-						in: "path",
-						required: true,
-						schema: { type: "string", minLength: 1 },
-					},
-					{ name: "agentId", in: "query", schema: { type: "string" } },
-				],
-				responses: {
-					"200": { description: "Memory job" },
-					"404": { description: "Job not found" },
-				},
-			},
-		},
-		"/v1/chain-trace": {
-			post: {
-				summary: "Trace reasoning chain for a fact",
-				requestBody: {
-					content: {
-						"application/json": {
-							schema: {
-								type: "object",
-								required: ["factId", "collection"],
-								properties: {
-									factId: {
-										type: "string",
-										description: "ID of the fact to trace.",
-									},
-									collection: {
-										type: "string",
-										description: "Collection containing the fact.",
-									},
-									agentId: { type: "string" },
-									maxDepth: {
-										type: "number",
-										description: "Max graph traversal depth.",
-									},
-								},
-							},
-						},
-					},
-				},
-				responses: {
-					"200": { description: "Chain trace result" },
-					"400": { description: "Validation error" },
-					"500": { description: "Chain trace failed" },
-				},
-			},
-		},
-		"/v1/novelty-scan": {
-			post: {
-				summary: "Scan for novel/surprising observations",
-				requestBody: {
-					content: {
-						"application/json": {
-							schema: {
-								type: "object",
-								properties: {
-									agentId: { type: "string" },
-									limit: {
-										type: "number",
-										description: "Max items to scan.",
-									},
-									scope: {
-										type: "string",
-										description: "Scope filter.",
-									},
-								},
-							},
-						},
-					},
-				},
-				responses: {
-					"200": { description: "Novelty report" },
-					"500": { description: "Novelty scan failed" },
-				},
-			},
-		},
-		"/v1/consolidate": {
-			post: {
-				summary: "Run Dreamer consolidation — extract facts from events",
-				requestBody: {
-					content: {
-						"application/json": {
-							schema: {
-								type: "object",
-								properties: {
-									agentId: { type: "string" },
-									maxEvents: {
-										type: "number",
-										description: "Max events to process.",
-									},
-									minCombinedScore: {
-										type: "number",
-										description: "Minimum combined score threshold.",
-									},
-									scope: {
-										type: "string",
-										description: "Scope filter.",
-									},
-								},
-							},
-						},
-					},
-				},
-				responses: {
-					"200": { description: "Consolidation result" },
-					"500": { description: "Consolidation failed" },
-				},
-			},
-		},
-		"/v1/self-edit": {
-			post: {
-				summary: "Edit an agent self-edit block (user, persona, instructions)",
-				requestBody: {
-					content: {
-						"application/json": {
-							schema: {
-								type: "object",
-								required: ["block", "content"],
-								properties: {
-									block: {
-										type: "string",
-										enum: ["user", "persona", "instructions"],
-									},
-									action: {
-										type: "string",
-										enum: ["append", "replace", "prepend"],
-									},
-									content: { type: "string" },
-									agentId: { type: "string" },
-								},
-							},
-						},
-					},
-				},
-				responses: {
-					"200": { description: "Self-edit result" },
-					"400": { description: "Validation error" },
-					"500": { description: "Self-edit failed" },
+					"200": { description: "Redacted memory delivery intents" },
+					"400": { description: "Invalid delivery filter" },
 				},
 			},
 		},
@@ -2673,6 +2123,71 @@ export const openApiSpec = {
 				},
 			},
 		},
+		"/v1/wiki/revisions": {
+			get: {
+				summary: "List governed revision history for a wiki page",
+				parameters: [
+					{
+						name: "slug",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scope",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scopeRef",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{ name: "limit", in: "query", schema: { type: "integer" } },
+				],
+				responses: {
+					"200": { description: "Wiki page revisions" },
+					"404": { description: "Wiki page not found" },
+				},
+			},
+		},
+		"/v1/wiki/revisions/{revision}": {
+			get: {
+				summary: "Get one governed wiki page revision",
+				parameters: [
+					{
+						name: "revision",
+						in: "path",
+						required: true,
+						schema: { type: "integer", minimum: 1 },
+					},
+					{
+						name: "slug",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scope",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scopeRef",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+				],
+				responses: {
+					"200": { description: "Wiki page revision" },
+					"404": { description: "Wiki page or revision not found" },
+				},
+			},
+		},
 		"/v1/wiki/okf-import": {
 			post: {
 				summary: "Import an OKF bundle into wiki pages",
@@ -2797,31 +2312,6 @@ export const openApiSpec = {
 				},
 			},
 		},
-		"/v1/wiki/maintain": {
-			post: {
-				summary: "Trigger wiki maintenance (git-diff + Dreamer)",
-				requestBody: {
-					content: {
-						"application/json": {
-							schema: {
-								type: "object",
-								required: ["scope", "scopeRef"],
-								properties: {
-									scope: { type: "string" },
-									scopeRef: { type: "string" },
-									agentId: { type: "string" },
-								},
-							},
-						},
-					},
-				},
-				responses: {
-					"200": { description: "Maintenance accepted" },
-					"400": { description: "Validation error" },
-					"500": { description: "Wiki maintain failed" },
-				},
-			},
-		},
 	},
 	components: {
 		schemas: {
@@ -2835,6 +2325,9 @@ export const openApiSpec = {
 						properties: {
 							code: { type: "string" },
 							message: { type: "string" },
+							retryable: { type: "boolean" },
+							outcome: { type: "string" },
+							retryAfterMs: { type: "number" },
 						},
 					},
 				},

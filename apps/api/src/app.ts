@@ -1,125 +1,65 @@
-import { createHash, timingSafeEqual } from "node:crypto"
 import { Hono, type Context } from "hono"
 import { cors } from "hono/cors"
+import type { MemoryScope } from "@mdbrain/lib"
+import { mdbrainBridgeCheckReadiness } from "@mdbrain/memory-bridge"
+import type { ApiEnvironment, AuthorizedRequestScope } from "./api-context.js"
 import { openApiSpec } from "./openapi-spec.js"
+import {
+	authorizePrincipalRequest,
+	createDevelopmentPrincipal,
+	parseScopedApiKeyPolicies,
+	resolveBearerPrincipal,
+	timingSafeBearerEquals,
+	type ApiPrincipal,
+	type PrincipalCapability,
+} from "./principal.js"
 import { createV1Router } from "./routes/v1.js"
+import { checkWikiStoreReadiness } from "./wiki-store-runtime.js"
 
-/**
- * Constant-time bearer comparison. Using `===` would short-circuit on the
- * first mismatched byte and leak the token prefix via response timing.
- * Hash both inputs before `timingSafeEqual` so different raw lengths do not
- * bypass the constant-time comparison. Empty bearers are always rejected so
- * the caller never matches by accident.
- */
-export function timingSafeBearerEquals(a: string, b: string): boolean {
-	if (!a || !b) {
-		return false
-	}
-	const aDigest = createHash("sha256").update(a, "utf8").digest()
-	const bDigest = createHash("sha256").update(b, "utf8").digest()
-	return timingSafeEqual(aDigest, bDigest) && a.length === b.length
-}
-
-type ScopedApiKeyPolicy = {
-	token: string
-	agentIds?: string[]
-	scopes?: string[]
-	scopeRefs?: string[]
-}
-
-const WILDCARD = "*"
 let unauthenticatedApiWarningEmitted = false
+const MEMORY_SCOPES = new Set<MemoryScope>([
+	"session",
+	"user",
+	"agent",
+	"workspace",
+	"tenant",
+	"global",
+])
+const SCOPE_VALIDATION_MESSAGE =
+	"scope must be session|user|agent|workspace|tenant|global"
+const READINESS_CACHE_MS = 1_000
+const MEMONGO_READINESS_DEPENDENCIES = new Set([
+	"contract",
+	"retrieval",
+	"control",
+	"embedding",
+	"vector",
+])
+
+export { parseScopedApiKeyPolicies, timingSafeBearerEquals }
 
 export function resetUnauthenticatedApiWarningForTests(): void {
 	unauthenticatedApiWarningEmitted = false
 }
 
-function asStringList(value: unknown): string[] | undefined {
-	if (value === undefined) {
-		return undefined
-	}
-	if (!Array.isArray(value)) {
-		return undefined
-	}
-	const values = value
-		.filter((item): item is string => typeof item === "string")
-		.map((item) => item.trim())
-		.filter(Boolean)
-	return values.length > 0 ? values : undefined
+function memongoReadinessDependency(error: unknown): string {
+	if (!error || typeof error !== "object") return "memongo"
+	const dependency = Reflect.get(error, "dependency")
+	return typeof dependency === "string" &&
+		MEMONGO_READINESS_DEPENDENCIES.has(dependency)
+		? `memongo.${dependency}`
+		: "memongo"
 }
 
-function normalizePolicy(raw: unknown): ScopedApiKeyPolicy | null {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-		return null
-	}
-	const item = raw as Record<string, unknown>
-	const token = typeof item.token === "string" ? item.token.trim() : ""
-	if (!token) {
-		return null
-	}
-	return {
-		token,
-		agentIds: asStringList(item.agentIds),
-		scopes: asStringList(item.scopes),
-		scopeRefs: asStringList(item.scopeRefs),
-	}
-}
-
-function requireValidScopedPolicies(
-	policies: ScopedApiKeyPolicy[],
-): ScopedApiKeyPolicy[] {
-	if (policies.length === 0) {
-		throw new Error(
-			"MDBRAIN_API_SCOPED_KEYS must define at least one scoped API key policy",
-		)
-	}
-	const unconstrained = policies.find(
-		(policy) => !policy.agentIds && !policy.scopes && !policy.scopeRefs,
-	)
-	if (unconstrained) {
-		throw new Error(
-			`MDBRAIN_API_SCOPED_KEYS policy for token ${unconstrained.token} must constrain agentIds, scopes, or scopeRefs`,
-		)
-	}
-	return policies
-}
-
-export function parseScopedApiKeyPolicies(
-	raw = process.env.MDBRAIN_API_SCOPED_KEYS,
-): ScopedApiKeyPolicy[] {
-	const trimmed = raw?.trim()
-	if (!trimmed) {
-		return []
-	}
-	let parsed: unknown
-	try {
-		parsed = JSON.parse(trimmed) as unknown
-	} catch {
-		throw new Error("MDBRAIN_API_SCOPED_KEYS must be valid JSON")
-	}
-	if (Array.isArray(parsed)) {
-		const policies = parsed
-			.map((item) => normalizePolicy(item))
-			.filter((item): item is ScopedApiKeyPolicy => item !== null)
-		return requireValidScopedPolicies(policies)
-	}
-	if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-		const policies = Object.entries(parsed as Record<string, unknown>)
-			.map(([token, policy]) =>
-				normalizePolicy(
-					policy && typeof policy === "object" && !Array.isArray(policy)
-						? { token, ...(policy as Record<string, unknown>) }
-						: { token },
-				),
-			)
-			.filter((item): item is ScopedApiKeyPolicy => item !== null)
-		return requireValidScopedPolicies(policies)
-	}
-	throw new Error("MDBRAIN_API_SCOPED_KEYS must be a JSON array or object")
+async function checkReadinessDependencies() {
+	return Promise.allSettled([
+		mdbrainBridgeCheckReadiness(),
+		checkWikiStoreReadiness(),
+	])
 }
 
 async function readRequestScopeInput(
-	c: Context,
+	c: Context<ApiEnvironment>,
 ): Promise<Record<string, unknown>> {
 	const query = c.req.query() as Record<string, unknown>
 	if (c.req.method === "GET" || c.req.method === "HEAD") {
@@ -136,61 +76,131 @@ async function readRequestScopeInput(
 	if (!body || typeof body !== "object" || Array.isArray(body)) {
 		return query
 	}
-	return { ...query, ...(body as Record<string, unknown>) }
+	return {
+		...(body as Record<string, unknown>),
+		requestQuery: query,
+	}
 }
 
-function firstStringField(input: Record<string, unknown>, field: string) {
+function stringFieldValues(
+	input: Record<string, unknown>,
+	field: string,
+	includeEmpty = false,
+): string[] {
 	const containers = [
 		input,
 		input.handle,
 		input.entry,
 		input.memory,
 		input.params,
+		input.requestQuery,
 	].filter(
 		(item): item is Record<string, unknown> =>
 			!!item && typeof item === "object" && !Array.isArray(item),
 	)
+	const values = new Set<string>()
 	for (const container of containers) {
 		const value = container[field]
-		if (typeof value === "string" && value.trim()) {
-			return value.trim()
+		if (typeof value === "string" && (includeEmpty || value.trim())) {
+			values.add(value.trim())
 		}
 	}
-	return undefined
+	return [...values]
 }
 
-function allowedByPolicy(
-	label: string,
-	actual: string | undefined,
-	allowed: string[] | undefined,
-): string | null {
-	if (!allowed || allowed.includes(WILDCARD)) {
-		return null
-	}
-	if (!actual) {
-		return `${label} is required for this API key`
-	}
-	if (!allowed.includes(actual)) {
-		return `${label} is not allowed for this API key`
-	}
-	return null
+function isMemoryScope(value: string): value is MemoryScope {
+	return MEMORY_SCOPES.has(value as MemoryScope)
 }
 
 async function authorizeScopedApiKey(
-	c: Context,
-	policy: ScopedApiKeyPolicy,
-): Promise<string | null> {
+	c: Context<ApiEnvironment>,
+	principal: ApiPrincipal,
+): Promise<{
+	forbidden: string | null
+	validationError: string | null
+	requestScope: AuthorizedRequestScope
+}> {
 	const input = await readRequestScopeInput(c)
-	const agentId = firstStringField(input, "agentId")
-	const scope = firstStringField(input, "scope")
-	const scopeRef =
-		firstStringField(input, "scopeRef") ??
-		firstStringField(input, "containerTag")
-	return (
-		allowedByPolicy("agentId", agentId, policy.agentIds) ??
-		allowedByPolicy("scope", scope, policy.scopes) ??
-		allowedByPolicy("scopeRef", scopeRef, policy.scopeRefs)
-	)
+	const agentIds = stringFieldValues(input, "agentId")
+	const scopes = stringFieldValues(input, "scope", true)
+	const explicitScopeRefs = stringFieldValues(input, "scopeRef")
+	const scopeRefs =
+		explicitScopeRefs.length > 0
+			? explicitScopeRefs
+			: stringFieldValues(input, "containerTag")
+	const scope = scopes[0]
+	const requestScope: AuthorizedRequestScope = {
+		...(agentIds[0] ? { agentId: agentIds[0] } : {}),
+		...(scope && isMemoryScope(scope) ? { scope } : {}),
+		...(scopeRefs[0] ? { scopeRef: scopeRefs[0] } : {}),
+	}
+	const conflict =
+		agentIds.length > 1
+			? "conflicting agentId values are not allowed"
+			: scopes.length > 1
+				? "conflicting scope values are not allowed"
+				: scopeRefs.length > 1
+					? "conflicting scopeRef values are not allowed"
+					: null
+	return {
+		requestScope,
+		validationError:
+			scope !== undefined && !isMemoryScope(scope)
+				? SCOPE_VALIDATION_MESSAGE
+				: null,
+		forbidden:
+			conflict ??
+			authorizePrincipalRequest(principal, {
+				...requestScope,
+				capability: requiredCapability(c),
+			}),
+	}
+}
+
+const READ_POST_PATHS = new Set([
+	"/v1/search",
+	"/v1/search-kb",
+	"/v1/recall-conversation",
+	"/v1/lifecycle/get",
+	"/v1/lifecycle/history",
+	"/v1/search-detailed",
+	"/v1/hydrate-active-slate",
+	"/v1/discovery-projection",
+	"/v1/context-bundle",
+	"/v1/profile",
+	"/v1/wiki/search",
+])
+
+const WRITE_POST_PATHS = new Set([
+	"/v1/lifecycle/update",
+	"/v1/procedures/outcome",
+	"/v1/memory/feedback",
+	"/v1/add",
+	"/v1/write-event",
+	"/v1/extract",
+	"/v1/write-structured",
+	"/v1/write-procedure",
+	"/v1/wiki",
+	"/v1/wiki/okf-import",
+])
+
+function requiredCapability(c: Context<ApiEnvironment>): PrincipalCapability {
+	const path = c.req.path
+	if (path.startsWith("/v1/admin/")) {
+		return "administer"
+	}
+	if (path === "/v1/wiki/okf-export") return "export"
+	if (
+		path === "/v1/lifecycle/delete" ||
+		(c.req.method === "DELETE" && c.req.query("hard") === "true")
+	) {
+		return "hard-delete"
+	}
+	if (c.req.method === "GET" || c.req.method === "HEAD") return "read"
+	if (c.req.method === "PATCH" || c.req.method === "DELETE") return "write"
+	if (READ_POST_PATHS.has(path)) return "read"
+	if (WRITE_POST_PATHS.has(path)) return "write"
+	return "administer"
 }
 
 /**
@@ -198,8 +208,7 @@ async function authorizeScopedApiKey(
  *
  * Registers listeners for SIGTERM / SIGINT that:
  *  1. Stop accepting new HTTP connections (`closeServer`).
- *  2. Close the memory bridge (flush access tracker, close Mongo clients via
- *     `closeAllMemorySearchManagers`).
+ *  2. Close the remote memory gateway and independent wiki store.
  *  3. Call `exit(0)` when both succeed, or `exit(1)` if the timeout elapses
  *     first — never block the container runtime's kill window indefinitely.
  *
@@ -286,8 +295,37 @@ export function registerGracefulShutdown(
 	}
 }
 
-export function createApp(): Hono {
-	const app = new Hono()
+export function createApp(): Hono<ApiEnvironment> {
+	const app = new Hono<ApiEnvironment>()
+	let readinessCache:
+		| {
+				expiresAt: number
+				result: Awaited<ReturnType<typeof checkReadinessDependencies>>
+		  }
+		| undefined
+	let readinessInFlight:
+		| ReturnType<typeof checkReadinessDependencies>
+		| undefined
+	const loadReadiness = () => {
+		const now = Date.now()
+		if (readinessCache && readinessCache.expiresAt > now) {
+			return Promise.resolve(readinessCache.result)
+		}
+		if (!readinessInFlight) {
+			readinessInFlight = checkReadinessDependencies()
+				.then((result) => {
+					readinessCache = {
+						expiresAt: Date.now() + READINESS_CACHE_MS,
+						result,
+					}
+					return result
+				})
+				.finally(() => {
+					readinessInFlight = undefined
+				})
+		}
+		return readinessInFlight
+	}
 
 	const corsOrigins = process.env.MDBRAIN_API_CORS_ORIGINS?.trim()
 	app.use(
@@ -298,6 +336,26 @@ export function createApp(): Hono {
 				: {},
 		),
 	)
+
+	app.use("/v1/*", async (c, next) => {
+		if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+			const contentType = c.req.header("Content-Type")
+			const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase()
+			const hasBody = c.req.raw.body !== null
+			if ((hasBody || mediaType) && mediaType !== "application/json") {
+				return c.json(
+					{
+						error: {
+							code: "UNSUPPORTED_MEDIA_TYPE",
+							message: "Content-Type must be application/json",
+						},
+					},
+					415,
+				)
+			}
+		}
+		await next()
+	})
 
 	// Simple in-memory rate limiter (per-IP, sliding window).
 	// No external deps — sufficient for single-instance dev/small-scale deploy.
@@ -348,28 +406,42 @@ export function createApp(): Hono {
 	})
 
 	const token = process.env.MDBRAIN_API_KEY?.trim()
-	const scopedPolicies = parseScopedApiKeyPolicies()
-	if (token || scopedPolicies.length > 0) {
+	const scopedCredentials = parseScopedApiKeyPolicies()
+	if (token || scopedCredentials.length > 0) {
 		app.use("/v1/*", async (c, next) => {
 			const auth = c.req.header("Authorization") ?? ""
 			const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : ""
-			if (token && timingSafeBearerEquals(bearer, token)) {
-				await next()
-				return
-			}
-			const scopedPolicy = scopedPolicies.find((policy) =>
-				timingSafeBearerEquals(policy.token, bearer),
-			)
-			if (!scopedPolicy) {
+			const principal = resolveBearerPrincipal({
+				bearer,
+				adminToken: token,
+				adminSubjectId:
+					process.env.MDBRAIN_API_ADMIN_SUBJECT_ID?.trim() || undefined,
+				scopedCredentials,
+			})
+			if (!principal) {
 				return c.json(
 					{ error: { code: "UNAUTHORIZED", message: "unauthorized" } },
 					401,
 				)
 			}
-			const forbidden = await authorizeScopedApiKey(c, scopedPolicy)
+			const { forbidden, validationError, requestScope } =
+				await authorizeScopedApiKey(c, principal)
+			if (validationError) {
+				return c.json(
+					{
+						error: {
+							code: "VALIDATION_ERROR",
+							message: validationError,
+						},
+					},
+					400,
+				)
+			}
 			if (forbidden) {
 				return c.json({ error: { code: "FORBIDDEN", message: forbidden } }, 403)
 			}
+			c.set("principal", principal)
+			c.set("authorizedRequestScope", requestScope)
 			await next()
 		})
 	} else if (!unauthenticatedApiWarningEmitted) {
@@ -386,8 +458,61 @@ export function createApp(): Hono {
 			"WARNING: MDBRAIN_API_KEY is not set and MDBRAIN_API_SCOPED_KEYS is empty; /v1 routes are unauthenticated. Use only for trusted local development.",
 		)
 	}
+	if (!token && scopedCredentials.length === 0) {
+		app.use("/v1/*", async (c, next) => {
+			const principal = createDevelopmentPrincipal()
+			const { forbidden, validationError, requestScope } =
+				await authorizeScopedApiKey(c, principal)
+			if (validationError) {
+				return c.json(
+					{
+						error: {
+							code: "VALIDATION_ERROR",
+							message: validationError,
+						},
+					},
+					400,
+				)
+			}
+			if (forbidden) {
+				return c.json({ error: { code: "FORBIDDEN", message: forbidden } }, 403)
+			}
+			c.set("principal", principal)
+			c.set("authorizedRequestScope", requestScope)
+			await next()
+		})
+	}
 
 	app.get("/health", (c) => c.json({ ok: true, service: "mdbrain-api" }))
+	app.get("/ready", async (c) => {
+		const [memongo, wiki] = await loadReadiness()
+		const dependencies = [
+			...(memongo.status === "rejected"
+				? [memongoReadinessDependency(memongo.reason)]
+				: []),
+			...(wiki.status === "rejected" ? ["wiki"] : []),
+		]
+		if (memongo.status === "rejected" || wiki.status === "rejected") {
+			return c.json(
+				{
+					ok: false,
+					service: "mdbrain-api",
+					error: {
+						code: "DEPENDENCY_NOT_READY",
+						message: "Memongo or the wiki store is not ready",
+						dependencies,
+					},
+				},
+				503,
+			)
+		}
+		return c.json({
+			ok: true,
+			service: "mdbrain-api",
+			memongo: memongo.value,
+			wiki: wiki.value,
+		})
+	})
 	app.get("/openapi.json", (c) => c.json(openApiSpec))
 	app.route("/v1", createV1Router())
 

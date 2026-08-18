@@ -1,9 +1,8 @@
 // @mdbrain/wiki-engine — wiki CRUD bridge.
 //
 // Wiki page create/read/list/update/delete over MongoDB, plus page rendering
-// (markdown for agents, HTML for humans). Obtains a MongoDB Db + prefix via
-// the existing @mdbrain/memory-engine manager (reuses connection + config +
-// collection-prefix conventions) — no separate connection management.
+// (markdown for agents, HTML for humans). WikiStore supplies the MongoDB
+// handle and owns connection, schema, and transaction lifecycle.
 //
 // T3 (this commit): CRUD + rendering. Later tickets add OKF interchange,
 // maintenance, contradictions, governance, connectors.
@@ -82,6 +81,8 @@ export interface WikiPageInput {
 	scopeRef: string
 	trustTier: (typeof WIKI_TRUST_TIER_VALUES)[number]
 	permissions?: {
+		allowedSubjects?: string[]
+		allowedGroups?: string[]
 		allowedRoles?: string[]
 		allowedDepartments?: string[]
 		privacyTier?: "public" | "internal" | "confidential" | "restricted"
@@ -205,43 +206,14 @@ export interface WikiPageView {
 }
 
 // ---------------------------------------------------------------------------
-// Db accessor — obtains a raw Db + collection prefix via the memory engine.
-// The manager exposes its db + prefix through a narrow interface so the wiki
-// engine never duplicates connection management.
+// Db accessor owned by WikiStore.
 // ---------------------------------------------------------------------------
 
 export interface WikiDbHandle {
 	db: Db
 	prefix: string
-	// Optional: only present when the manager exposes its underlying
-	// MongoClient. Lets callers (e.g. OKF import) start a session and use
-	// session.withTransaction() for atomicity — see mongodb-kb.ts/
-	// mongodb-sync.ts in memory-engine for the established pattern this
-	// mirrors. Absent for callers/tests that only have a bare Db.
+	// Optional for bare test handles. Production WikiStore handles include it.
 	client?: MongoClient
-}
-
-/** Extracts a Db + prefix (+ optional client) handle from a memory-engine
- *  manager. The manager is expected to expose `db` and `prefix`
- *  (MongoDBMemoryManager does); `client` is picked up opportunistically when
- *  present. We keep this loosely typed to avoid importing the concrete
- *  manager type. */
-export function getWikiDbHandle(manager: unknown): WikiDbHandle {
-	const m = manager as {
-		db?: Db
-		prefix?: string
-		getDb?: () => Db
-		getPrefix?: () => string
-		client?: MongoClient
-		getClient?: () => MongoClient
-	}
-	const db = m.db ?? (m.getDb?.() as Db | undefined)
-	const prefix = m.prefix ?? (m.getPrefix?.() as string | undefined)
-	const client = m.client ?? (m.getClient?.() as MongoClient | undefined)
-	if (!db || prefix === undefined) {
-		throw new Error("wiki bridge: manager does not expose db + prefix")
-	}
-	return { db, prefix, ...(client ? { client } : {}) }
 }
 
 // ---------------------------------------------------------------------------
@@ -334,8 +306,7 @@ function normalizeInput(input: WikiPageInput): OptionalId<WikiPage> {
 		backlinks: [],
 		transcludes: extractTransclusionTargets(input.body),
 		// Auto-embed text field: MongoDB Atlas generates embeddings via Voyage
-		// AI from this field. Concatenation of title + summary + body (mirrors
-		// memory-engine autoEmbedVectorField("text") pattern).
+		// AI from this field.
 		text: `${input.title} ${input.summary} ${input.body}`,
 		createdAt: now,
 		updatedAt: now,
@@ -386,6 +357,7 @@ export async function createWikiPage(
 			input.scopeRef,
 			{
 				newRelationshipTargets: newTargets,
+				session: opts.session,
 			},
 		)
 		// Run contradiction detection for each claim (BEFORE dedup — for a new
@@ -405,18 +377,26 @@ export async function createWikiPage(
 					[], // no existing claims on a new page
 					input.scope,
 					input.scopeRef,
+					opts.session,
 				)
 			}
 		}
-		await recordWikiPageRevision(handle, {
-			pageSlug: input.slug,
-			scope: input.scope,
-			scopeRef: input.scopeRef,
-			revision: 1,
-			editKind: "create",
-			editor: input.sourceAgent,
-			snapshot: inserted,
-		})
+		await recordWikiPageRevision(
+			handle,
+			{
+				pageSlug: input.slug,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				revision: 1,
+				editKind: "create",
+				editor: input.sourceAgent,
+				snapshot: inserted,
+			},
+			{
+				session: opts.session,
+				strict: Boolean(opts.session),
+			},
+		)
 		return toView(inserted)
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err)
@@ -582,12 +562,7 @@ export async function updateWikiPage(
 		opts.session ? { session: opts.session } : undefined,
 	)) as {
 		relationships?: Array<{ targetPageSlug: string }>
-		claims?: Array<{
-			id: string
-			text: string
-			status?: string
-			confidence?: number
-		}>
+		claims?: WikiClaimInput[]
 	} | null
 	const oldTargets = oldPage?.relationships?.map((r) => r.targetPageSlug) ?? []
 
@@ -601,14 +576,13 @@ export async function updateWikiPage(
 			// Clear all claims (empty array = clear).
 			setFields.claims = []
 		} else {
-			const existingClaimRecords: ClaimRecord[] = (oldPage?.claims ?? []).map(
-				(c) => ({
-					id: c.id,
-					text: c.text,
-					status: c.status,
-					confidence: c.confidence,
-				}),
-			)
+			const existingClaims = oldPage?.claims ?? []
+			const existingClaimRecords: ClaimRecord[] = existingClaims.map((c) => ({
+				id: c.id,
+				text: c.text,
+				status: c.status,
+				confidence: c.confidence,
+			}))
 			const acceptedNewClaims = [] as typeof patch.claims
 			for (const newClaim of patch.claims) {
 				const gate = await runWritePipelineGate(
@@ -623,42 +597,31 @@ export async function updateWikiPage(
 					existingClaimRecords,
 					scope,
 					scopeRef,
+					opts.session,
 				)
 				if (!gate.rejected) {
 					acceptedNewClaims.push(newClaim)
 				}
 			}
 			// Final claims = existing claims (preserved) + accepted new claims.
-			const existingClaimsNormalized = existingClaimRecords.map((c) => ({
-				id: c.id,
-				text: c.text,
-				status: c.status ?? "active",
-				confidence: c.confidence ?? 0,
-				evidence: [],
-				writerAgent: undefined,
-				derivedFrom: [],
-				supersedesClaimId: undefined,
-				sourceMemId: undefined,
-				validFrom: now,
-				validTo: undefined,
-				updatedAt: now,
-			}))
 			const newClaimsNormalized = acceptedNewClaims.map((c) => ({
 				id: c.id,
 				text: c.text,
 				status: c.status ?? "active",
 				confidence: c.confidence ?? 0,
 				evidence: c.evidence ?? [],
-				writerAgent: c.writerAgent,
 				derivedFrom: c.derivedFrom ?? [],
-				supersedesClaimId: c.supersedesClaimId,
-				sourceMemId: c.sourceMemId,
 				validFrom: c.validFrom ?? now,
-				validTo: c.validTo,
 				updatedAt: now,
+				...(c.writerAgent ? { writerAgent: c.writerAgent } : {}),
+				...(c.supersedesClaimId
+					? { supersedesClaimId: c.supersedesClaimId }
+					: {}),
+				...(c.sourceMemId ? { sourceMemId: c.sourceMemId } : {}),
+				...(c.validTo ? { validTo: c.validTo } : {}),
 			}))
 			setFields.claims = [
-				...existingClaimsNormalized,
+				...existingClaims,
 				...newClaimsNormalized,
 			] as unknown as typeof setFields.claims
 		}
@@ -669,26 +632,34 @@ export async function updateWikiPage(
 		{ $set: setFields, $inc: { revision: 1 } },
 		{ returnDocument: "after", session: opts.session },
 	)
-	const value = result?.value ?? null
+	const value = result ?? null
 	if (!value) return undefined
 	// Recompute backlinks for gained/lost relationship targets.
 	const newTargets = (patch.relationships ?? []).map((r) => r.targetPageSlug)
 	await recomputeBacklinksAfterChange(handle, slug, scope, scopeRef, {
 		oldRelationshipTargets: oldTargets,
 		newRelationshipTargets: newTargets,
+		session: opts.session,
 	})
 	const valueRecord = value as unknown as Record<string, unknown>
-	await recordWikiPageRevision(handle, {
-		pageSlug: slug,
-		scope,
-		scopeRef,
-		revision: valueRecord.revision as number,
-		editKind: "update",
-		editor: valueRecord.sourceAgent as
-			| { id: string; name: string; runId?: string }
-			| undefined,
-		snapshot: valueRecord,
-	})
+	await recordWikiPageRevision(
+		handle,
+		{
+			pageSlug: slug,
+			scope,
+			scopeRef,
+			revision: valueRecord.revision as number,
+			editKind: "update",
+			editor: valueRecord.sourceAgent as
+				| { id: string; name: string; runId?: string }
+				| undefined,
+			snapshot: valueRecord,
+		},
+		{
+			session: opts.session,
+			strict: Boolean(opts.session),
+		},
+	)
 	return toView(valueRecord)
 }
 
@@ -701,16 +672,39 @@ export async function deleteWikiPage(
 	slug: string,
 	scope: string,
 	scopeRef: string,
-	opts: { hard?: boolean } = {},
+	opts: { hard?: boolean; session?: ClientSession } = {},
 ): Promise<boolean> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	let deleted = false
 	if (opts.hard) {
-		const result = await coll.deleteOne({ slug, scope, scopeRef })
+		const beforeDelete = (await coll.findOne(
+			{ slug, scope, scopeRef },
+			opts.session ? { session: opts.session } : undefined,
+		)) as Record<string, unknown> | null
+		const result = opts.session
+			? await coll.deleteOne(
+					{ slug, scope, scopeRef },
+					{ session: opts.session },
+				)
+			: await coll.deleteOne({ slug, scope, scopeRef })
 		deleted = result.deletedCount > 0
-		// No revision entry on hard delete — there is no living page to
-		// snapshot, and prior revisions in wiki_revisions already survive it
-		// (a separate collection, not cascade-deleted) for audit purposes.
+		if (deleted && beforeDelete) {
+			await recordWikiPageRevision(
+				handle,
+				{
+					pageSlug: slug,
+					scope,
+					scopeRef,
+					revision: Number(beforeDelete.revision ?? 0) + 1,
+					editKind: "delete",
+					snapshot: beforeDelete,
+				},
+				{
+					session: opts.session,
+					strict: Boolean(opts.session),
+				},
+			)
+		}
 	} else {
 		const now = new Date()
 		const result = await coll.findOneAndUpdate(
@@ -719,26 +713,34 @@ export async function deleteWikiPage(
 				$set: { state: "superseded", updatedAt: now, validTo: now },
 				$inc: { revision: 1 },
 			},
-			{ returnDocument: "after" },
+			{ returnDocument: "after", session: opts.session },
 		)
-		const value = result?.value ?? null
+		const value = result ?? null
 		deleted = value !== null
 		if (value) {
 			const valueRecord = value as unknown as Record<string, unknown>
-			await recordWikiPageRevision(handle, {
-				pageSlug: slug,
-				scope,
-				scopeRef,
-				revision: valueRecord.revision as number,
-				editKind: "delete",
-				snapshot: valueRecord,
-			})
+			await recordWikiPageRevision(
+				handle,
+				{
+					pageSlug: slug,
+					scope,
+					scopeRef,
+					revision: valueRecord.revision as number,
+					editKind: "delete",
+					snapshot: valueRecord,
+				},
+				{
+					session: opts.session,
+					strict: Boolean(opts.session),
+				},
+			)
 		}
 	}
 	if (deleted) {
 		// Recompute backlinks: pages that referenced this slug lose a backlink.
 		await recomputeBacklinksAfterChange(handle, slug, scope, scopeRef, {
 			deleted: true,
+			session: opts.session,
 		})
 	}
 	return deleted

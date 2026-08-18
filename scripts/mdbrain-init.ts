@@ -8,11 +8,11 @@
 // and writes a "## MDBrain Wiki Map" block to the target files (default:
 // AGENTS.md + CLAUDE.md). Idempotent — re-run to refresh.
 
-import { mdbrainBridgeGetManager } from "@mdbrain/memory-bridge"
 import {
 	generateAndWriteWikiMap,
-	getWikiDbHandle,
 	type MapPointerOptions,
+	WikiStore,
+	resolveWikiStoreConfig,
 } from "@mdbrain/wiki-engine"
 
 function parseArgs(argv: string[]): {
@@ -80,13 +80,16 @@ function parseArgs(argv: string[]): {
 
 async function main() {
 	const { files, opts } = parseArgs(process.argv)
-	const agentId = process.env.MDBRAIN_AGENT_ID ?? "default"
-	const manager = await mdbrainBridgeGetManager(agentId)
-	const handle = getWikiDbHandle(manager)
-	const result = await generateAndWriteWikiMap(handle, files, opts)
-	console.log(`MDBrain Wiki Map written to ${result.files.length} file(s):`)
-	for (const f of result.files) {
-		console.log(`  ${f}`)
+	const store = new WikiStore(resolveWikiStoreConfig())
+	try {
+		await store.initialize()
+		const result = await generateAndWriteWikiMap(store.handle(), files, opts)
+		console.log(`MDBrain Wiki Map written to ${result.files.length} file(s):`)
+		for (const f of result.files) {
+			console.log(`  ${f}`)
+		}
+	} finally {
+		await store.close()
 	}
 }
 

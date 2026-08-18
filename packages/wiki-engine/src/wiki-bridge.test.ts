@@ -38,7 +38,7 @@ function mockCollection(): Collection {
 			})),
 		})),
 		countDocuments: vi.fn(async () => 0),
-		findOneAndUpdate: vi.fn(async () => ({ value: null })),
+		findOneAndUpdate: vi.fn(async () => null),
 		updateOne: vi.fn(async () => ({ matchedCount: 0, modifiedCount: 0 })),
 		deleteOne: vi.fn(async () => ({ deletedCount: 0 })),
 		aggregate: vi.fn(() => ({ toArray: async () => [] })),
@@ -209,14 +209,12 @@ describe("updateWikiPage", () => {
 		;(
 			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
 		).mockResolvedValueOnce({
-			value: {
-				_id: { toString: () => "id-x" },
-				slug: "x",
-				scope: "workspace",
-				scopeRef: "ws-1",
-				revision: 3,
-				summary: "new",
-			},
+			_id: { toString: () => "id-x" },
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 3,
+			summary: "new",
 		})
 		const revisionsColl = mockCollection()
 		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -286,7 +284,18 @@ describe("updateWikiPage", () => {
 			slug: "x",
 			scope: "workspace",
 			scopeRef: "ws-1",
-			claims: [{ id: "c-existing", text: "Existing claim", status: "active" }],
+			claims: [
+				{
+					id: "c-existing",
+					text: "Existing claim",
+					status: "active",
+					evidence: [{ kind: "event", ref: "event-1", capturedAt: new Date() }],
+					writerAgent: { id: "agent-1", name: "Agent" },
+					derivedFrom: ["source-1"],
+					supersedesClaimId: "claim-0",
+					sourceMemId: "memory-1",
+				},
+			],
 			relationships: [],
 		})
 		await updateWikiPage(h, "x", "workspace", "ws-1", {
@@ -299,6 +308,13 @@ describe("updateWikiPage", () => {
 		const claimIds = update.$set.claims.map((c: { id: string }) => c.id)
 		expect(claimIds).toContain("c-existing")
 		expect(claimIds).toContain("c-new")
+		expect(update.$set.claims[0]).toMatchObject({
+			evidence: [expect.objectContaining({ ref: "event-1" })],
+			writerAgent: { id: "agent-1", name: "Agent" },
+			derivedFrom: ["source-1"],
+			supersedesClaimId: "claim-0",
+			sourceMemId: "memory-1",
+		})
 	})
 
 	it("updateWikiPage with empty claims array clears all claims", async () => {
@@ -341,13 +357,11 @@ describe("deleteWikiPage", () => {
 		;(
 			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
 		).mockResolvedValueOnce({
-			value: {
-				slug: "x",
-				scope: "workspace",
-				scopeRef: "ws-1",
-				revision: 2,
-				state: "superseded",
-			},
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 2,
+			state: "superseded",
 		})
 		const revisionsColl = mockCollection()
 		const collectionCalls: string[] = []

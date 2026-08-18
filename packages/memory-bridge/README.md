@@ -1,6 +1,6 @@
 # @mdbrain/memory-bridge
 
-Stable facade over the Mdbrain engine. Use this package when you want one supported entry point for config resolution and engine operations without binding to the HTTP API.
+Version-pinned Memongo HTTP gateway used by MDBrain server applications. It validates Memongo contract compatibility and exposes only supported remote operations.
 
 ## Install
 
@@ -10,9 +10,9 @@ npm install @mdbrain/memory-bridge
 
 ## When to use this package
 
-- You are implementing an HTTP API, MCP server, or custom server around Mdbrain.
-- You want one stable layer between app code and the engine.
-- You need bridge helpers such as search, write, status, sync, relevance, chain-trace, novelty-scan, and consolidation operations.
+- You are implementing the MDBrain HTTP API or another trusted server.
+- You need compatibility-checked access to a Memongo 2.0.1 deployment.
+- You do not need direct access to Memongo storage internals.
 
 ## Example
 
@@ -26,11 +26,5 @@ const results = await mdbrainBridgeSearch({
 	maxResults: 10,
 })
 ```
-
-## Memory intelligence bridge functions
-
-- `mdbrainBridgeTraceChain()` -- reasoning chain traversal (provenance via `$lookup`)
-- `mdbrainBridgeScanNovelty()` -- surprisal novelty detection (Atlas Vector Search centroid)
-- `mdbrainBridgeConsolidate()` -- trigger offline consolidation (Dreamer pipeline)
 
 If you are building against the public HTTP surface, prefer [`@mdbrain/client`](../client/README.md).

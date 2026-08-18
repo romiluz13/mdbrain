@@ -11,6 +11,12 @@
 // module without creating an import cycle.
 
 import { createSubsystemLogger } from "@mdbrain/lib"
+import type { ClientSession, Document } from "mongodb"
+import {
+	filterPagesByGovernance,
+	getWikiPageGoverned,
+	type GovernanceContext,
+} from "./wiki-governance.js"
 import { wikiRevisionsCollection } from "./wiki-schema.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 
@@ -46,22 +52,27 @@ export async function recordWikiPageRevision(
 		// (large, not meaningful for content history/diffing).
 		snapshot: Record<string, unknown>
 	},
+	options: { session?: ClientSession; strict?: boolean } = {},
 ): Promise<void> {
 	try {
 		const coll = wikiRevisionsCollection(handle.db, handle.prefix)
 		const { embedding, ...snapshot } = params.snapshot
 		void embedding
-		await coll.insertOne({
-			pageSlug: params.pageSlug,
-			scope: params.scope,
-			scopeRef: params.scopeRef,
-			revision: params.revision,
-			editKind: params.editKind,
-			...(params.editor ? { editor: params.editor } : {}),
-			snapshot,
-			createdAt: new Date(),
-		})
+		await coll.insertOne(
+			{
+				pageSlug: params.pageSlug,
+				scope: params.scope,
+				scopeRef: params.scopeRef,
+				revision: params.revision,
+				editKind: params.editKind,
+				...(params.editor ? { editor: params.editor } : {}),
+				snapshot,
+				createdAt: new Date(),
+			},
+			options.session ? { session: options.session } : undefined,
+		)
 	} catch (err) {
+		if (options.strict) throw err
 		const msg = err instanceof Error ? err.message : String(err)
 		log.warn(
 			`failed to record revision ${params.revision} for ${params.pageSlug}: ${msg}`,
@@ -74,8 +85,20 @@ export async function recordWikiPageRevision(
  *  a specific revision, keeping the list cheap to fetch/render. */
 export async function listWikiPageRevisions(
 	handle: WikiDbHandle,
-	params: { pageSlug: string; scope: string; scopeRef: string; limit?: number },
+	params: {
+		pageSlug: string
+		scope: string
+		scopeRef: string
+		limit?: number
+		governance?: GovernanceContext
+	},
 ): Promise<Array<Omit<WikiPageRevisionRecord, "snapshot">>> {
+	if (
+		params.governance &&
+		!(await getWikiPageGoverned(handle, params.pageSlug, params.governance))
+	) {
+		return []
+	}
 	const coll = wikiRevisionsCollection(handle.db, handle.prefix)
 	const limit = Math.min(Math.max(params.limit ?? 50, 1), 200)
 	const docs = await coll
@@ -101,8 +124,15 @@ export async function getWikiPageRevision(
 		scope: string
 		scopeRef: string
 		revision: number
+		governance?: GovernanceContext
 	},
 ): Promise<WikiPageRevisionRecord | undefined> {
+	if (
+		params.governance &&
+		!(await getWikiPageGoverned(handle, params.pageSlug, params.governance))
+	) {
+		return undefined
+	}
 	const coll = wikiRevisionsCollection(handle.db, handle.prefix)
 	const doc = await coll.findOne({
 		pageSlug: params.pageSlug,
@@ -111,7 +141,15 @@ export async function getWikiPageRevision(
 		revision: params.revision,
 	})
 	if (!doc) return undefined
-	return toRevisionRecord(doc as Record<string, unknown>)
+	const record = toRevisionRecord(doc as Record<string, unknown>)
+	if (
+		params.governance &&
+		filterPagesByGovernance([record.snapshot as Document], params.governance)
+			.length === 0
+	) {
+		return undefined
+	}
+	return record
 }
 
 function toRevisionSummary(

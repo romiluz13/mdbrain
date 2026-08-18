@@ -22,4 +22,9 @@ describe("proof-pack-baseline", () => {
 			]),
 		)
 	})
+
+	it("does not require removed tenant control surfaces", () => {
+		expect(proofPackBaseline.requiredPaths).not.toContain("/v1/status")
+		expect(proofPackBaseline.requiredChecks).not.toContain("status")
+	})
 })

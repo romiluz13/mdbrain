@@ -3,6 +3,10 @@ import type {
 	LanguageModelV2CallOptions,
 } from "@ai-sdk/provider"
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai"
+import { fireWriteEvent } from "../write-event.js"
+import type { MdbrainWriteFailure } from "../write-event.js"
+
+export type { MdbrainWriteFailure } from "../write-event.js"
 
 export interface MdbrainCoreOptions {
 	apiUrl: string
@@ -10,6 +14,7 @@ export interface MdbrainCoreOptions {
 	userId: string
 	agentId?: string
 	mode?: "wake-up" | "full"
+	onWriteError?: (failure: MdbrainWriteFailure) => void | Promise<void>
 }
 
 /* ------------------------------------------------------------------ */
@@ -127,31 +132,6 @@ async function fetchContextBundle(
 	} catch {
 		return ""
 	}
-}
-
-/* ------------------------------------------------------------------ */
-/*  Fire-and-forget write-event                                       */
-/* ------------------------------------------------------------------ */
-
-function fireWriteEvent(
-	options: MdbrainCoreOptions,
-	role: "user" | "assistant",
-	body: string,
-): void {
-	fetch(`${options.apiUrl}/v1/write-event`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${options.apiKey}`,
-		},
-		body: JSON.stringify({
-			role,
-			body,
-			agentId: options.agentId ?? options.userId,
-		}),
-	}).catch((err) => {
-		console.warn("[mdbrain] write-event failed:", role, err)
-	})
 }
 
 /* ------------------------------------------------------------------ */

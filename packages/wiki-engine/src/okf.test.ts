@@ -11,7 +11,7 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { importOkfBundle, exportOkfBundle } from "./okf.js"
-import type { WikiDbHandle } from "./wiki-bridge.js"
+import { getWikiPage, type WikiDbHandle } from "./wiki-bridge.js"
 
 // In-memory wiki_pages store keyed by slug+scope+scopeRef.
 function makeStore() {
@@ -24,6 +24,7 @@ function makeStore() {
 function mockDb(store: ReturnType<typeof makeStore>): {
 	db: Db
 	coll: Collection
+	revisionsInsertOne: ReturnType<typeof vi.fn>
 } {
 	const coll = {
 		collectionName: "test_wiki_pages",
@@ -82,14 +83,14 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 		findOneAndUpdate: vi.fn(async (filter: Document, update: Document) => {
 			const k = store.key(filter.slug, filter.scope, filter.scopeRef)
 			const existing = store.docs.get(k)
-			if (!existing) return { value: null }
+			if (!existing) return null
 			const updated = {
 				...existing,
 				...update.$set,
 				revision: (existing.revision ?? 1) + (update.$inc?.revision ?? 0),
 			}
 			store.docs.set(k, updated)
-			return { value: updated }
+			return updated
 		}),
 		updateOne: vi.fn(async () => ({ matchedCount: 1, modifiedCount: 1 })),
 		deleteOne: vi.fn(async () => ({ deletedCount: 1 })),
@@ -99,18 +100,19 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 	// name to the same mock `coll` would make importOkfBundle's best-effort
 	// revision-history writes land in the wiki_pages store and corrupt
 	// document counts these tests assert on.
+	const revisionsInsertOne = vi.fn(async () => ({
+		acknowledged: true,
+		insertedId: { toString: () => "rev" },
+	}))
 	const revisionsColl = {
-		insertOne: vi.fn(async () => ({
-			acknowledged: true,
-			insertedId: { toString: () => "rev" },
-		})),
+		insertOne: revisionsInsertOne,
 	} as unknown as Collection
 	const db = {
 		collection: vi.fn((name: string) =>
 			name.endsWith("wiki_revisions") ? revisionsColl : coll,
 		),
 	} as unknown as Db
-	return { db, coll }
+	return { db, coll, revisionsInsertOne }
 }
 
 describe("OKF import + export round-trip", () => {
@@ -146,6 +148,244 @@ describe("OKF import + export round-trip", () => {
 			fs.writeFileSync(full, content, "utf-8")
 		}
 	}
+
+	function addExportPage(slug: string): void {
+		store.docs.set(store.key(slug, "workspace", "ws-1"), {
+			_id: { toString: () => `id-${slug}` },
+			kind: "concept",
+			title: "Unsafe path",
+			slug,
+			aliases: [],
+			summary: "Must not be written.",
+			body: "",
+			frontmatter: { type: "concept" },
+			claims: [],
+			contradictions: [],
+			questions: [],
+			relationships: [],
+			personCard: null,
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			permissions: {},
+			state: "active",
+			revision: 1,
+			validFrom: new Date(),
+			freshness: "fresh",
+			backlinks: [],
+			embedding: [],
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		})
+	}
+
+	it("rejects a parent-traversal page slug before writing the export", async () => {
+		const slug = "../escaped-parent"
+		addExportPage(slug)
+		const exportDir = path.join(tmpDir, "exported-traversal")
+		const escapedPath = path.join(tmpDir, "escaped-parent.md")
+
+		await expect(
+			exportOkfBundle(handle, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: exportDir,
+				governance: {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+				},
+			}),
+		).rejects.toThrow(/slug|path|traversal/i)
+		expect(fs.existsSync(exportDir)).toBe(false)
+		expect(fs.existsSync(escapedPath)).toBe(false)
+	})
+
+	it("rejects a Windows-separator traversal slug on every platform", async () => {
+		const slug = String.raw`..\escaped-windows`
+		addExportPage(slug)
+		const exportDir = path.join(tmpDir, "exported-windows-traversal")
+
+		await expect(
+			exportOkfBundle(handle, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: exportDir,
+				governance: {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+				},
+			}),
+		).rejects.toThrow(/slug|path|traversal/i)
+		expect(fs.existsSync(exportDir)).toBe(false)
+	})
+
+	it("rejects a non-traversal backslash slug before writing the export", async () => {
+		const slug = String.raw`tables\users`
+		addExportPage(slug)
+		const exportDir = path.join(tmpDir, "exported-backslash")
+
+		await expect(
+			exportOkfBundle(handle, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: exportDir,
+				governance: {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+				},
+			}),
+		).rejects.toThrow(/platform separator|slug|path/i)
+		expect(fs.existsSync(exportDir)).toBe(false)
+	})
+
+	it("rejects an absolute page slug before writing the export", async () => {
+		const slug = "/absolute-page"
+		addExportPage(slug)
+		const exportDir = path.join(tmpDir, "exported-absolute")
+
+		await expect(
+			exportOkfBundle(handle, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: exportDir,
+				governance: {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+				},
+			}),
+		).rejects.toThrow(/absolute|slug|path/i)
+		expect(fs.existsSync(exportDir)).toBe(false)
+	})
+
+	it("rejects a Windows drive path slug on every platform", async () => {
+		const slug = "C:/absolute-page"
+		addExportPage(slug)
+		const exportDir = path.join(tmpDir, "exported-windows-absolute")
+
+		await expect(
+			exportOkfBundle(handle, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: exportDir,
+				governance: {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+				},
+			}),
+		).rejects.toThrow(/absolute|slug|path/i)
+		expect(fs.existsSync(exportDir)).toBe(false)
+	})
+
+	it("rejects a Windows drive-relative slug on every platform", async () => {
+		const slug = "C:relative-page"
+		addExportPage(slug)
+		const exportDir = path.join(tmpDir, "exported-windows-drive-relative")
+
+		await expect(
+			exportOkfBundle(handle, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: exportDir,
+				governance: {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+				},
+			}),
+		).rejects.toThrow(/drive|slug|path/i)
+		expect(fs.existsSync(exportDir)).toBe(false)
+	})
+
+	it("rejects a symlinked namespace that redirects an export outside its root", async () => {
+		const srcDir = path.join(tmpDir, "src-symlink")
+		writeBundle(srcDir, {
+			"tables/users.md": `---
+type: table
+title: Users
+---
+
+User records.
+`,
+		})
+		await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+		})
+
+		const exportDir = path.join(tmpDir, "exported-symlink")
+		const outsideDir = path.join(tmpDir, "outside")
+		fs.mkdirSync(exportDir)
+		fs.mkdirSync(outsideDir)
+		fs.symlinkSync(
+			outsideDir,
+			path.join(exportDir, "tables"),
+			process.platform === "win32" ? "junction" : "dir",
+		)
+
+		await expect(
+			exportOkfBundle(handle, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: exportDir,
+				governance: {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+				},
+			}),
+		).rejects.toThrow(/outside|symlink|root|path/i)
+		expect(fs.existsSync(path.join(outsideDir, "users.md"))).toBe(false)
+	})
+
+	it("rejects a new export directory reached through an allowed-root symlink", async () => {
+		const srcDir = path.join(tmpDir, "src-new-symlink")
+		writeBundle(srcDir, {
+			"users.md": `---
+type: concept
+title: Users
+---
+
+User records.
+`,
+		})
+		await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+		})
+
+		const allowedRoot = path.join(tmpDir, "allowed")
+		const outsideDir = path.join(tmpDir, "outside-new")
+		fs.mkdirSync(allowedRoot)
+		fs.mkdirSync(outsideDir)
+		fs.symlinkSync(
+			outsideDir,
+			path.join(allowedRoot, "linked"),
+			process.platform === "win32" ? "junction" : "dir",
+		)
+		process.env.MDBRAIN_OKF_ALLOWED_ROOTS = allowedRoot
+		const exportDir = path.join(allowedRoot, "linked", "new-export")
+
+		await expect(
+			exportOkfBundle(handle, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				outDir: exportDir,
+				governance: {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "admin",
+				},
+			}),
+		).rejects.toThrow(/outside|symlink|root|path/i)
+		expect(fs.existsSync(path.join(outsideDir, "new-export"))).toBe(false)
+	})
 
 	it("imports a bundle, exports it, re-imports, and preserves structure", async () => {
 		// 1. Write a source bundle.
@@ -1024,6 +1264,134 @@ Body.
 	})
 
 	describe("transactional import (fix 5)", () => {
+		it("reports pre-mutation validation errors and imports valid concepts", async () => {
+			const transactionalStore = makeStore()
+			const { db } = mockDb(transactionalStore)
+			const withTransaction = vi.fn(async (operation: () => Promise<void>) =>
+				operation(),
+			)
+			const endSession = vi.fn(async () => {})
+			const session = { withTransaction, endSession }
+			const client = {
+				startSession: vi.fn(() => session),
+			} as unknown as WikiDbHandle["client"]
+			const transactionalHandle: WikiDbHandle = {
+				db,
+				prefix: "test_",
+				client,
+			}
+			const srcDir = path.join(tmpDir, "transactional-validation")
+			writeBundle(srcDir, {
+				"bad.md": `---
+type: concept
+title: Bad
+$where: "invalid extension"
+---
+
+Invalid concept.
+`,
+				"good.md": `---
+type: concept
+title: Good
+---
+
+Valid concept.
+`,
+			})
+
+			const result = await importOkfBundle(transactionalHandle, srcDir, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				okfBundleId: "bundle-1",
+			})
+
+			expect(result.imported).toBe(1)
+			expect(result.skipped).toBe(1)
+			expect(result.errors).toEqual([
+				expect.objectContaining({
+					conceptId: "bad",
+					error: expect.stringContaining("$where"),
+				}),
+			])
+			await expect(
+				getWikiPage(transactionalHandle, "bad", "workspace", "ws-1"),
+			).resolves.toBeUndefined()
+			await expect(
+				getWikiPage(transactionalHandle, "good", "workspace", "ws-1"),
+			).resolves.toEqual(expect.objectContaining({ slug: "good" }))
+			expect(withTransaction).toHaveBeenCalledTimes(1)
+			expect(endSession).toHaveBeenCalledTimes(1)
+		})
+
+		it("rolls back the complete bundle when a later strict revision recording fails", async () => {
+			const transactionalStore = makeStore()
+			const { db, revisionsInsertOne } = mockDb(transactionalStore)
+			revisionsInsertOne
+				.mockResolvedValueOnce({
+					acknowledged: true,
+					insertedId: { toString: () => "first-revision" },
+				})
+				.mockRejectedValueOnce(new Error("injected revision recording failure"))
+			const withTransaction = vi.fn(async (operation: () => Promise<void>) => {
+				const snapshot = new Map(transactionalStore.docs)
+				try {
+					await operation()
+				} catch (error) {
+					transactionalStore.docs.clear()
+					for (const [key, value] of snapshot) {
+						transactionalStore.docs.set(key, value)
+					}
+					throw error
+				}
+			})
+			const endSession = vi.fn(async () => {})
+			const session = { withTransaction, endSession }
+			const client = {
+				startSession: vi.fn(() => session),
+			} as unknown as WikiDbHandle["client"]
+			const transactionalHandle: WikiDbHandle = {
+				db,
+				prefix: "test_",
+				client,
+			}
+			const srcDir = path.join(tmpDir, "strict-revision-failure")
+			writeBundle(srcDir, {
+				"01-accounts.md": `---
+type: concept
+title: Accounts
+---
+
+Account records.
+`,
+				"02-users.md": `---
+type: concept
+title: Users
+---
+
+User records.
+`,
+			})
+
+			await expect(
+				importOkfBundle(transactionalHandle, srcDir, {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "standard",
+					okfBundleId: "bundle-1",
+				}),
+			).rejects.toThrow("injected revision recording failure")
+			await expect(
+				getWikiPage(transactionalHandle, "01-accounts", "workspace", "ws-1"),
+			).resolves.toBeUndefined()
+			await expect(
+				getWikiPage(transactionalHandle, "02-users", "workspace", "ws-1"),
+			).resolves.toBeUndefined()
+			expect(revisionsInsertOne).toHaveBeenCalledTimes(2)
+			expect(withTransaction).toHaveBeenCalledTimes(1)
+			expect(endSession).toHaveBeenCalledTimes(1)
+		})
+
 		it("detects the MongoDB standalone-server transaction-unsupported error", async () => {
 			const { isTransactionNotSupported } = await import("./okf.js")
 			const codeErr = Object.assign(new Error("some msg"), { code: 20 })
@@ -1035,7 +1403,7 @@ Body.
 			expect(isTransactionNotSupported(new Error("unrelated"))).toBe(false)
 		})
 
-		it("falls back to non-transactional per-concept import when the client reports transactions unsupported (regression: import still completes)", async () => {
+		it("fails closed when the deployment does not support transactions", async () => {
 			const withTransaction = vi.fn(async (fn: () => Promise<void>) => {
 				const err = Object.assign(
 					new Error(
@@ -1057,19 +1425,18 @@ Body.
 				"a.md": `---\ntype: concept\ntitle: A\n---\n\nBody.\n`,
 				"b.md": `---\ntype: concept\ntitle: B\n---\n\nBody.\n`,
 			})
-			const result = await importOkfBundle(handleWithClient, srcDir, {
-				scope: "workspace",
-				scopeRef: "ws-1",
-				trustTier: "standard",
-				okfBundleId: "b",
-			})
+			await expect(
+				importOkfBundle(handleWithClient, srcDir, {
+					scope: "workspace",
+					scopeRef: "ws-1",
+					trustTier: "standard",
+					okfBundleId: "b",
+				}),
+			).rejects.toThrow(/replica set member/)
 			expect(client.startSession).toHaveBeenCalledTimes(1)
 			expect(withTransaction).toHaveBeenCalledTimes(1)
 			expect(endSession).toHaveBeenCalledTimes(1)
-			// Fallback must still complete the import per-concept, same as today.
-			expect(result.imported).toBe(2)
-			expect(result.errors).toEqual([])
-			expect(store.docs.size).toBe(2)
+			expect(store.docs.size).toBe(0)
 		})
 	})
 

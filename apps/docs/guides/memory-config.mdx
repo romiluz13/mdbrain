@@ -1,47 +1,32 @@
 ---
 title: Configuration
-description: Configure Mdbrain via environment variables or config file.
+description: Configure the MDBrain wiki store, Memongo gateway, and API.
 icon: "settings"
 ---
 
-Mdbrain reads configuration from environment variables and an optional JSON config file at `~/.mdbrain/mdbrain.json`.
-
-## Environment variables
+## Required runtime variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MDBRAIN_MONGODB_URI` | MongoDB connection string for managed Atlas cloud or Atlas Local Preview | `mongodb://localhost:27017` |
-| `MDBRAIN_AGENT_ID` | Agent identifier for memory isolation | `default` |
-| `MDBRAIN_API_KEY` | Bearer token for the HTTP server; recommended outside trusted local dev | (none) |
+| `MDBRAIN_WIKI_MONGODB_URI` | Transaction-capable MongoDB URI for MDBrain-owned wiki collections | required |
+| `MEMONGO_API_URL` | Compatible Memongo HTTP base URL | required |
+| `MEMONGO_API_KEY` | Memongo tenant API key | required |
+| `MDBRAIN_API_KEY` | Bearer token for MDBrain clients | none |
+
+## Optional variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MDBRAIN_WIKI_DATABASE` | Wiki database name | `mdbrain_wiki` |
+| `MDBRAIN_WIKI_COLLECTION_PREFIX` | Wiki collection prefix | `mdbrain_` |
+| `MDBRAIN_DELIVERY_RECONCILE_MS` | Durable delivery reconciliation interval | `5000` |
+| `MEMONGO_CONTROL_API_KEY` | Separate Memongo control-plane key | none |
+| `MEMONGO_TIMEOUT_MS` | Upstream request timeout | `10000` |
+| `MEMONGO_COMPATIBILITY_TTL_MS` | Compatibility-check cache duration | `60000` |
+| `MEMONGO_ALLOW_INSECURE_LOCAL` | Allow local HTTP when set to `1` | disabled |
 | `MDBRAIN_API_PORT` | API listen port | `3847` |
 | `MDBRAIN_API_HOST` | API bind address | `127.0.0.1` |
-| `MDBRAIN_CONFIG_PATH` | Alternate JSON config file path | `~/.mdbrain/mdbrain.json` |
-| `MDBRAIN_WORKSPACE_DIR` | Workspace directory used by the bridge | `~/.mdbrain/workspace` |
-| `VOYAGE_API_KEY` | Atlas Model API key for MongoDB auto-embed lanes | (none) |
-| `MDBRAIN_ENRICHMENT_BASE_URL` | Optional OpenAI-compatible or Anthropic endpoint for LLM enrichment | (none) |
-| `MDBRAIN_ENRICHMENT_API_KEY` | API key for LLM enrichment | (none) |
-| `MDBRAIN_ENRICHMENT_MODEL` | Model used by LLM enrichment when enabled | (none) |
 
-## Config file
-
-Create `~/.mdbrain/mdbrain.json`:
-
-```json
-{
-  "memory": {
-    "backend": "mongodb",
-    "mongodb": {
-      "uri": "mongodb://localhost:27017",
-      "database": "mdbrain"
-    }
-  }
-}
-```
-
-## Notes
-
-- `MDBRAIN_MONGODB_URI` is the quickest way to point the API at MongoDB during development.
-- When `MDBRAIN_API_KEY` and scoped keys are unset, `/v1` routes are unauthenticated and the API logs a startup warning.
-- Managed Atlas cloud and Atlas Local Preview both use `embeddingMode: "automated"` with MongoDB auto-embed.
-- The engine infers `deploymentProfile: "atlas-managed"` for `mongodb+srv://...mongodb.net` URIs and `deploymentProfile: "atlas-local-preview"` for local preview URIs unless you set it explicitly.
-- The supported runtime backend is MongoDB.
+MDBrain fails readiness when Memongo is unavailable or its contract version or
+SHA-256 differs from the pinned contract. The wiki store fails closed when
+transactions are unavailable.

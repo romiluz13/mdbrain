@@ -1,13 +1,23 @@
-# MongoDB only — run `apps/api` on the host with e.g.
-# MDBRAIN_MONGODB_URI=mongodb://127.0.0.1:27017
-# (or `mongodb://mongodb:27017/...` when the API runs in another container on the same network).
+# Wiki MongoDB only. Run `apps/api` on the host with
+# MDBRAIN_WIKI_MONGODB_URI pointing at a transaction-capable replica set.
+# Memongo is a separate HTTP dependency configured with MEMONGO_API_URL.
 services:
   mongodb:
     image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "27017:27017"
     volumes:
       - mdbrain_mongo_data:/data/db
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --eval 'try { rs.status().ok } catch (e) { rs.initiate().ok }' | grep 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
 volumes:
   mdbrain_mongo_data: {}

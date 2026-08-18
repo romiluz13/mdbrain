@@ -6,25 +6,10 @@
 //
 // T15 (Obsidian) + T16 (GitHub repo-as-source).
 
-import {
-	existsSync,
-	readFileSync,
-	watch,
-	writeFileSync,
-	readdirSync,
-	statSync,
-	mkdirSync,
-} from "node:fs"
-import { join, dirname, basename, extname, relative } from "node:path"
-import { importOkfBundle } from "./okf.js"
-import type { WikiDbHandle, WikiPersonCard } from "./wiki-bridge.js"
-import {
-	runGitDiffMaintenance,
-	runDreamerPromotion,
-	type LlmGenerateFn,
-	type ChangedSource,
-	type EventInput,
-} from "./wiki-maintenance.js"
+import { existsSync, readFileSync, watch, readdirSync, statSync } from "node:fs"
+import { join, extname, relative } from "node:path"
+import { writeContainedFiles } from "./filesystem-containment.js"
+import type { WikiDbHandle } from "./wiki-bridge.js"
 
 // ---------------------------------------------------------------------------
 // Connector ABC
@@ -103,11 +88,9 @@ export interface ObsidianConnectorConfig {
 export class ObsidianConnector implements SourceConnector {
 	name = "obsidian"
 	private config: ObsidianConnectorConfig
-	private handle: WikiDbHandle
 	private watcher?: ReturnType<typeof watch>
 
-	constructor(handle: WikiDbHandle, config: ObsidianConnectorConfig) {
-		this.handle = handle
+	constructor(_handle: WikiDbHandle, config: ObsidianConnectorConfig) {
 		this.config = config
 	}
 
@@ -122,7 +105,7 @@ export class ObsidianConnector implements SourceConnector {
 		}
 		return {
 			authenticated: true,
-			context: { vaultPath: this.config.vaultPath },
+			context: { source: "local-vault" },
 		}
 	}
 
@@ -153,46 +136,14 @@ export class ObsidianConnector implements SourceConnector {
 
 	async ingest(
 		sources: DiscoveredSource[],
-		opts: IngestOpts,
+		_opts: IngestOpts,
 	): Promise<ConnectorIngestResult> {
-		const result: ConnectorIngestResult = {
-			pagesProcessed: 0,
+		return {
+			pagesProcessed: sources.length,
 			pagesCreated: 0,
 			pagesUpdated: 0,
 			errors: [],
 		}
-
-		for (const source of sources) {
-			try {
-				result.pagesProcessed++
-				// Obsidian .md files are in OKF format → import via OKF bundle.
-				// Each file is a single "bundle" of one concept.
-				const slug = source.id.replace(/\.md$/, "").replace(/[/\\]/g, "/")
-				const okfBundleDir = join(this.config.vaultPath, dirname(source.id))
-				await importOkfBundle(this.handle, okfBundleDir, {
-					scope: opts.scope as
-						| "workspace"
-						| "session"
-						| "user"
-						| "agent"
-						| "tenant"
-						| "global",
-					scopeRef: opts.scopeRef,
-					trustTier: (opts.trustTier ?? "standard") as
-						| "restricted"
-						| "standard"
-						| "admin",
-					okfBundleId: `obsidian-${slug}`,
-				})
-				result.pagesCreated++
-			} catch (err) {
-				result.errors.push(
-					`${source.id}: ${err instanceof Error ? err.message : String(err)}`,
-				)
-			}
-		}
-
-		return result
 	}
 
 	mapPermissions(_source: DiscoveredSource): ConnectorMapPermissionsResult {
@@ -237,17 +188,20 @@ export class ObsidianConnector implements SourceConnector {
 			body: string
 		}>,
 	): Promise<number> {
-		let count = 0
-		for (const page of pages) {
-			const filePath = join(this.config.vaultPath, `${page.slug}.md`)
-			const dir = dirname(filePath)
-			if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+		const files = pages.map((page) => {
 			const frontmatter = `---\ntype: concept\ntitle: ${page.title}\n---\n\n`
 			const content = `${frontmatter}# ${page.title}\n\n${page.summary}\n\n${page.body}\n`
-			writeFileSync(filePath, content, "utf-8")
-			count++
+			return { path: `${page.slug}.md`, content }
+		})
+		try {
+			writeContainedFiles(this.config.vaultPath, files)
+		} catch (error) {
+			const detail = error instanceof Error ? `: ${error.message}` : ""
+			throw new Error(
+				`page export path resolves outside the configured vault${detail}`,
+			)
 		}
-		return count
+		return pages.length
 	}
 
 	private walkVault(dir: string, callback: (filePath: string) => void): void {
@@ -285,10 +239,8 @@ export interface GitHubConnectorConfig {
 export class GitHubConnector implements SourceConnector {
 	name = "github"
 	private config: GitHubConnectorConfig
-	private handle: WikiDbHandle
 
-	constructor(handle: WikiDbHandle, config: GitHubConnectorConfig) {
-		this.handle = handle
+	constructor(_handle: WikiDbHandle, config: GitHubConnectorConfig) {
 		this.config = config
 	}
 
@@ -301,7 +253,10 @@ export class GitHubConnector implements SourceConnector {
 		}
 		return {
 			authenticated: true,
-			context: { token: this.config.token, repo: this.config.repo },
+			context: {
+				repo: this.config.repo,
+				branch: this.config.branch ?? "main",
+			},
 		}
 	}
 
@@ -318,47 +273,14 @@ export class GitHubConnector implements SourceConnector {
 
 	async ingest(
 		sources: DiscoveredSource[],
-		opts: IngestOpts,
+		_opts: IngestOpts,
 	): Promise<ConnectorIngestResult> {
-		const result: ConnectorIngestResult = {
-			pagesProcessed: 0,
+		return {
+			pagesProcessed: sources.length,
 			pagesCreated: 0,
 			pagesUpdated: 0,
 			errors: [],
 		}
-
-		// Convert discovered sources to ChangedSource format for git-diff maintenance.
-		const changedSources: ChangedSource[] = sources.map((s) => ({
-			path: s.path,
-			content: s.content,
-		}))
-
-		// Use a simple LLM that extracts a summary from the file content.
-		const llmGenerate: LlmGenerateFn = async (input) => ({
-			title: basename(input.sourceFile),
-			summary: input.changedSnippet.slice(0, 100),
-			body: input.changedSnippet,
-			claims: [],
-		})
-
-		const maintenanceResult = await runGitDiffMaintenance(
-			this.handle,
-			changedSources,
-			llmGenerate,
-			{
-				scope: opts.scope,
-				scopeRef: opts.scopeRef,
-				trustTier: opts.trustTier,
-				agentId: opts.agentId,
-			},
-		)
-
-		result.pagesProcessed = maintenanceResult.pagesProcessed
-		result.pagesCreated = maintenanceResult.pagesRegenerated
-		result.pagesUpdated = maintenanceResult.pagesRegenerated
-		result.errors = maintenanceResult.errors
-
-		return result
 	}
 
 	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
@@ -386,10 +308,8 @@ export interface ConfluenceConnectorConfig {
 export class ConfluenceConnector implements SourceConnector {
 	name = "confluence"
 	private config: ConfluenceConnectorConfig
-	private handle: WikiDbHandle
 
-	constructor(handle: WikiDbHandle, config: ConfluenceConnectorConfig) {
-		this.handle = handle
+	constructor(_handle: WikiDbHandle, config: ConfluenceConnectorConfig) {
 		this.config = config
 	}
 
@@ -402,7 +322,10 @@ export class ConfluenceConnector implements SourceConnector {
 		}
 		return {
 			authenticated: true,
-			context: { host: this.config.host, email: this.config.email },
+			context: {
+				host: this.config.host,
+				spaceKey: this.config.spaceKey,
+			},
 		}
 	}
 
@@ -415,57 +338,14 @@ export class ConfluenceConnector implements SourceConnector {
 
 	async ingest(
 		sources: DiscoveredSource[],
-		opts: IngestOpts,
+		_opts: IngestOpts,
 	): Promise<ConnectorIngestResult> {
-		const { createWikiPage } = await import("./wiki-bridge.js")
-		const result: ConnectorIngestResult = {
-			pagesProcessed: 0,
+		return {
+			pagesProcessed: sources.length,
 			pagesCreated: 0,
 			pagesUpdated: 0,
 			errors: [],
 		}
-		for (const source of sources) {
-			try {
-				result.pagesProcessed++
-				const meta = source.metadata ?? {}
-				const slug = `confluence/${source.id}`
-				const perms = this.mapPermissions(source)
-				await createWikiPage(this.handle, {
-					kind: "source",
-					title: String(meta.title ?? source.id),
-					slug,
-					summary: String(meta.summary ?? source.content.slice(0, 100)),
-					body: source.content,
-					frontmatter: {
-						type: "source",
-						resource: String(meta.url ?? source.path),
-					},
-					scope: opts.scope as
-						| "workspace"
-						| "session"
-						| "user"
-						| "agent"
-						| "tenant"
-						| "global",
-					scopeRef: opts.scopeRef,
-					trustTier: (opts.trustTier ?? "standard") as
-						| "restricted"
-						| "standard"
-						| "admin",
-					permissions: {
-						privacyTier: perms.privacyTier,
-						allowedRoles: meta.spaceAdmins as string[] | undefined,
-						allowedDepartments: meta.spaceTeams as string[] | undefined,
-					},
-				})
-				result.pagesCreated++
-			} catch (err) {
-				result.errors.push(
-					`${source.id}: ${err instanceof Error ? err.message : String(err)}`,
-				)
-			}
-		}
-		return result
 	}
 
 	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
@@ -488,10 +368,8 @@ export interface NotionConnectorConfig {
 export class NotionConnector implements SourceConnector {
 	name = "notion"
 	private config: NotionConnectorConfig
-	private handle: WikiDbHandle
 
-	constructor(handle: WikiDbHandle, config: NotionConnectorConfig) {
-		this.handle = handle
+	constructor(_handle: WikiDbHandle, config: NotionConnectorConfig) {
 		this.config = config
 	}
 
@@ -504,7 +382,7 @@ export class NotionConnector implements SourceConnector {
 		}
 		return {
 			authenticated: true,
-			context: { token: this.config.integrationToken },
+			context: { databaseId: this.config.databaseId },
 		}
 	}
 
@@ -516,54 +394,14 @@ export class NotionConnector implements SourceConnector {
 
 	async ingest(
 		sources: DiscoveredSource[],
-		opts: IngestOpts,
+		_opts: IngestOpts,
 	): Promise<ConnectorIngestResult> {
-		const { createWikiPage } = await import("./wiki-bridge.js")
-		const result: ConnectorIngestResult = {
-			pagesProcessed: 0,
+		return {
+			pagesProcessed: sources.length,
 			pagesCreated: 0,
 			pagesUpdated: 0,
 			errors: [],
 		}
-		for (const source of sources) {
-			try {
-				result.pagesProcessed++
-				const meta = source.metadata ?? {}
-				const slug = `notion/${source.id}`
-				const perms = this.mapPermissions(source)
-				// Notion block tree is converted to markdown by the caller.
-				await createWikiPage(this.handle, {
-					kind: "source",
-					title: String(meta.title ?? source.id),
-					slug,
-					summary: String(meta.summary ?? source.content.slice(0, 100)),
-					body: source.content,
-					frontmatter: {
-						type: "source",
-						resource: String(meta.url ?? source.path),
-					},
-					scope: opts.scope as
-						| "workspace"
-						| "session"
-						| "user"
-						| "agent"
-						| "tenant"
-						| "global",
-					scopeRef: opts.scopeRef,
-					trustTier: (opts.trustTier ?? "standard") as
-						| "restricted"
-						| "standard"
-						| "admin",
-					permissions: { privacyTier: perms.privacyTier },
-				})
-				result.pagesCreated++
-			} catch (err) {
-				result.errors.push(
-					`${source.id}: ${err instanceof Error ? err.message : String(err)}`,
-				)
-			}
-		}
-		return result
 	}
 
 	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
@@ -585,10 +423,8 @@ export interface SlackConnectorConfig {
 export class SlackConnector implements SourceConnector {
 	name = "slack"
 	private config: SlackConnectorConfig
-	private handle: WikiDbHandle
 
-	constructor(handle: WikiDbHandle, config: SlackConnectorConfig) {
-		this.handle = handle
+	constructor(_handle: WikiDbHandle, config: SlackConnectorConfig) {
 		this.config = config
 	}
 
@@ -599,7 +435,10 @@ export class SlackConnector implements SourceConnector {
 				error: "Slack bot token (xoxb-...) is required",
 			}
 		}
-		return { authenticated: true, context: { token: this.config.botToken } }
+		return {
+			authenticated: true,
+			context: { channelIds: this.config.channelIds },
+		}
 	}
 
 	async discover(cursor?: string): Promise<ConnectorDiscoverResult> {
@@ -613,33 +452,14 @@ export class SlackConnector implements SourceConnector {
 
 	async ingest(
 		sources: DiscoveredSource[],
-		opts: IngestOpts,
+		_opts: IngestOpts,
 	): Promise<ConnectorIngestResult> {
-		const result: ConnectorIngestResult = {
-			pagesProcessed: 0,
+		return {
+			pagesProcessed: sources.length,
 			pagesCreated: 0,
 			pagesUpdated: 0,
 			errors: [],
 		}
-		const events: EventInput[] = sources.map((s) => ({
-			id: s.id,
-			text: s.content,
-			agentId: String(s.metadata?.user ?? opts.agentId),
-			timestamp: s.metadata?.ts
-				? new Date(Number(s.metadata.ts) * 1000)
-				: undefined,
-		}))
-		const dreamerResult = await runDreamerPromotion(this.handle, events, {
-			scope: opts.scope,
-			scopeRef: opts.scopeRef,
-			trustTier: opts.trustTier,
-			agentId: opts.agentId,
-		})
-		result.pagesProcessed = dreamerResult.pagesProcessed
-		result.pagesCreated = dreamerResult.pagesRegenerated
-		result.pagesUpdated = dreamerResult.pagesRegenerated
-		result.errors = dreamerResult.errors
-		return result
 	}
 
 	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
@@ -659,10 +479,8 @@ export interface CrmConnectorConfig {
 export class CrmConnector implements SourceConnector {
 	name = "crm"
 	private config: CrmConnectorConfig
-	private handle: WikiDbHandle
 
-	constructor(handle: WikiDbHandle, config: CrmConnectorConfig) {
-		this.handle = handle
+	constructor(_handle: WikiDbHandle, config: CrmConnectorConfig) {
 		this.config = config
 	}
 
@@ -675,7 +493,10 @@ export class CrmConnector implements SourceConnector {
 		}
 		return {
 			authenticated: true,
-			context: { provider: this.config.provider, apiKey: this.config.apiKey },
+			context: {
+				provider: this.config.provider,
+				instanceUrl: this.config.instanceUrl,
+			},
 		}
 	}
 
@@ -688,63 +509,14 @@ export class CrmConnector implements SourceConnector {
 
 	async ingest(
 		sources: DiscoveredSource[],
-		opts: IngestOpts,
+		_opts: IngestOpts,
 	): Promise<ConnectorIngestResult> {
-		const { createWikiPage } = await import("./wiki-bridge.js")
-		const result: ConnectorIngestResult = {
-			pagesProcessed: 0,
+		return {
+			pagesProcessed: sources.length,
 			pagesCreated: 0,
 			pagesUpdated: 0,
 			errors: [],
 		}
-		for (const source of sources) {
-			try {
-				result.pagesProcessed++
-				const meta = source.metadata ?? {}
-				const recordType = String(meta.recordType ?? "contact")
-				const slug = `crm/${recordType}/${source.id}`
-				const perms = this.mapPermissions(source)
-				const kind = recordType === "contact" ? "entity" : "concept"
-				const personCard: WikiPersonCard | null =
-					recordType === "contact"
-						? {
-								canonicalId: source.id,
-								emails: meta.email ? [String(meta.email)] : undefined,
-								handles: meta.handle ? [String(meta.handle)] : undefined,
-							}
-						: null
-				await createWikiPage(this.handle, {
-					kind: kind as "entity" | "concept",
-					title: String(meta.name ?? source.id),
-					slug,
-					summary: `${recordType}: ${String(meta.name ?? source.id)}`,
-					body: source.content,
-					frontmatter: {
-						type: recordType === "contact" ? "person" : "organization",
-					},
-					scope: opts.scope as
-						| "workspace"
-						| "session"
-						| "user"
-						| "agent"
-						| "tenant"
-						| "global",
-					scopeRef: opts.scopeRef,
-					trustTier: (opts.trustTier ?? "standard") as
-						| "restricted"
-						| "standard"
-						| "admin",
-					personCard,
-					permissions: { privacyTier: perms.privacyTier },
-				})
-				result.pagesCreated++
-			} catch (err) {
-				result.errors.push(
-					`${source.id}: ${err instanceof Error ? err.message : String(err)}`,
-				)
-			}
-		}
-		return result
 	}
 
 	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {

@@ -11,7 +11,11 @@
 //
 // T12.
 
-import type { Document } from "mongodb"
+import type { ClientSession, Document } from "mongodb"
+import {
+	buildGovernanceFilter,
+	type GovernanceContext,
+} from "./wiki-governance.js"
 import { wikiPagesCollection } from "./wiki-schema.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 
@@ -167,15 +171,19 @@ export async function detectContradictions(
 	newClaim: ClaimRecord,
 	scope: string,
 	scopeRef: string,
+	session?: ClientSession,
 ): Promise<Array<{ pageSlug: string; contradiction: Contradiction }>> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 
 	// Get the source page to find its relationships.
-	const sourcePage = (await coll.findOne({
-		slug: pageSlug,
-		scope,
-		scopeRef,
-	})) as unknown as {
+	const sourcePage = (await coll.findOne(
+		{
+			slug: pageSlug,
+			scope,
+			scopeRef,
+		},
+		session ? { session } : undefined,
+	)) as unknown as {
 		relationships?: Array<{ targetPageSlug?: string }>
 	} | null
 	if (!sourcePage?.relationships) return []
@@ -186,11 +194,14 @@ export async function detectContradictions(
 		const targetSlug = rel.targetPageSlug
 		if (!targetSlug || targetSlug === pageSlug) continue
 
-		const targetPage = (await coll.findOne({
-			slug: targetSlug,
-			scope,
-			scopeRef,
-		})) as unknown as {
+		const targetPage = (await coll.findOne(
+			{
+				slug: targetSlug,
+				scope,
+				scopeRef,
+			},
+			session ? { session } : undefined,
+		)) as unknown as {
 			claims?: Array<{
 				id: string
 				text: string
@@ -244,6 +255,7 @@ export async function recordContradictions(
 	contradictions: Array<{ pageSlug: string; contradiction: Contradiction }>,
 	scope: string,
 	scopeRef: string,
+	session?: ClientSession,
 ): Promise<number> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	let count = 0
@@ -251,6 +263,7 @@ export async function recordContradictions(
 		const result = await coll.updateOne(
 			{ slug: pageSlug, scope, scopeRef },
 			{ $push: { contradictions: contradiction } as Document },
+			session ? { session } : undefined,
 		)
 		if (result.modifiedCount > 0) count++
 	}
@@ -272,16 +285,20 @@ export async function listUnresolvedContradictions(
 	handle: WikiDbHandle,
 	scope: string,
 	scopeRef: string,
+	governance?: GovernanceContext,
 ): Promise<UnresolvedContradiction[]> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
+	const match: Document = {
+		scope,
+		scopeRef,
+		"contradictions.resolution": "unresolved",
+	}
 	const pages = (await coll
 		.aggregate([
 			{
-				$match: {
-					scope,
-					scopeRef,
-					"contradictions.resolution": "unresolved",
-				},
+				$match: governance
+					? { $and: [match, buildGovernanceFilter(governance)] }
+					: match,
 			},
 			{ $project: { slug: 1, title: 1, contradictions: 1 } },
 		])
@@ -369,6 +386,7 @@ export async function runWritePipelineGate(
 	existingClaims: ClaimRecord[],
 	scope: string,
 	scopeRef: string,
+	session?: ClientSession,
 ): Promise<PipelineGateResult> {
 	// STEP 1: Contradiction detection — ALWAYS runs, even if the claim is a
 	// near-duplicate. This is the arXiv fix: contradictions are detected
@@ -379,10 +397,11 @@ export async function runWritePipelineGate(
 		newClaim,
 		scope,
 		scopeRef,
+		session,
 	)
 	// Record any detected contradictions immediately.
 	if (contradictions.length > 0) {
-		await recordContradictions(handle, contradictions, scope, scopeRef)
+		await recordContradictions(handle, contradictions, scope, scopeRef, session)
 	}
 
 	// STEP 2: Near-duplicate gate — runs AFTER contradiction detection.

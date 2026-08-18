@@ -1,49 +1,28 @@
-import { Hono } from "hono"
+import { randomUUID } from "node:crypto"
+import { Hono, type Context } from "hono"
+import type { ApiEnvironment } from "../api-context.js"
+import { getApiPrincipal, getAuthorizedRequestScope } from "../api-context.js"
 import {
 	mdbrainBridgeAdd,
-	mdbrainBridgeAccessSummaries,
 	mdbrainBridgeBuildContextBundle,
 	mdbrainBridgeBuildDiscoveryProjection,
-	mdbrainBridgeBenchmarkIngest,
-	mdbrainBridgeImportConversations,
-	mdbrainBridgeAccessTrends,
-	mdbrainBridgeGetDetailedStatus,
-	mdbrainBridgeGetMemoryJob,
-	mdbrainBridgeGetRecallTrace,
 	mdbrainBridgeHydrateActiveSlate,
-	mdbrainBridgeListMemoryJobs,
-	mdbrainBridgeListRecallTraces,
-	mdbrainBridgeProbeEmbedding,
-	mdbrainBridgeProbeVector,
 	mdbrainBridgeProfile,
 	mdbrainBridgeRecallConversation,
-	mdbrainBridgeReadFile,
-	mdbrainBridgeRelevanceBenchmark,
-	mdbrainBridgeRelevanceExplain,
-	mdbrainBridgeRelevanceReport,
-	mdbrainBridgeRelevanceSampleRate,
-	mdbrainBridgeTraceChain,
-	mdbrainBridgeScanNovelty,
-	mdbrainBridgeConsolidate,
 	mdbrainBridgeApplyMemoryFeedback,
 	mdbrainBridgeDeleteLifecycleItem,
 	mdbrainBridgeExtractEvent,
 	mdbrainBridgeGetLifecycleHistory,
 	mdbrainBridgeGetLifecycleItem,
-	mdbrainBridgeSelfEdit,
 	mdbrainBridgeGetState,
 	mdbrainBridgeSearch,
 	mdbrainBridgeSearchDetailed,
 	mdbrainBridgeSearchKB,
-	mdbrainBridgeStats,
-	mdbrainBridgeStatus,
-	mdbrainBridgeSync,
 	mdbrainBridgeUpdateLifecycleItem,
 	mdbrainBridgeReportProcedureOutcome,
 	mdbrainBridgeWriteConversationEvent,
 	mdbrainBridgeWriteProcedure,
 	mdbrainBridgeWriteStructuredMemory,
-	mdbrainBridgeGetManager,
 	type MemoryStableHandle,
 	type ProcedureEntry,
 	type StructuredMemoryEntry,
@@ -56,19 +35,31 @@ import {
 	deleteWikiPage,
 	renderMarkdown,
 	renderHtml,
-	getWikiDbHandle,
 	importOkfBundle,
 	exportOkfBundle,
 	searchWikiPages,
 	listUnresolvedContradictions,
 	listWikiPageRevisions,
+	listMemoryDeliveryIntents,
 	getWikiPageRevision,
 	resolveTransclusions,
+	recordWikiMutationIntent,
 	WikiDuplicateSlugError,
+	type WikiDbHandle,
 	type WikiPageInput,
 	type GovernanceContext,
 } from "@mdbrain/wiki-engine"
 import { jsonError } from "../lib/errors.js"
+import {
+	buildMemoryDeliveryOperationId,
+	buildMemoryWikiPromotion,
+	deliverMemoryWrite,
+	MemoryDeliveryDispatchError,
+} from "../memory-delivery-runtime.js"
+import {
+	getWikiStoreHandle,
+	withWikiTransaction,
+} from "../wiki-store-runtime.js"
 
 const MAX_LIST_LIMIT = 100
 const MAX_HISTORY_LIMIT = 200
@@ -81,18 +72,107 @@ const VALID_SCOPE_VALUES = [
 	"global",
 ] as const
 type ApiScope = (typeof VALID_SCOPE_VALUES)[number]
+const WIKI_VALID_KINDS = [
+	"entity",
+	"concept",
+	"synthesis",
+	"source",
+	"report",
+	"procedure",
+]
+const WIKI_VALID_TRUST_TIERS = ["restricted", "standard", "admin"]
+type MemongoFailure = {
+	code: string
+	message: string
+	retryable: boolean
+	outcome: string
+	status?: number
+	retryAfterMs?: number
+}
+
+function asMemongoFailure(error: unknown): MemongoFailure | undefined {
+	if (!error || typeof error !== "object") return undefined
+	const value = error as Record<string, unknown>
+	if (
+		typeof value.code !== "string" ||
+		typeof value.message !== "string" ||
+		typeof value.retryable !== "boolean" ||
+		typeof value.outcome !== "string"
+	) {
+		return undefined
+	}
+	return {
+		code: value.code,
+		message: value.message,
+		retryable: value.retryable,
+		outcome: value.outcome,
+		...(typeof value.status === "number" ? { status: value.status } : {}),
+		...(typeof value.retryAfterMs === "number"
+			? { retryAfterMs: value.retryAfterMs }
+			: {}),
+	}
+}
+
+function memongoResponseStatus(status?: number) {
+	switch (status) {
+		case 400:
+		case 401:
+		case 403:
+		case 404:
+		case 409:
+		case 429:
+		case 500:
+		case 502:
+		case 503:
+		case 504:
+			return status
+		default:
+			return 502
+	}
+}
+
+function bridgeJsonError(
+	c: Context<ApiEnvironment>,
+	fallbackCode: string,
+	error: unknown,
+) {
+	const failure = asMemongoFailure(error)
+	if (!failure) {
+		const message = error instanceof Error ? error.message : String(error)
+		return jsonError(c, 500, fallbackCode, message)
+	}
+	if (failure.retryAfterMs !== undefined) {
+		c.header(
+			"Retry-After",
+			String(Math.max(1, Math.ceil(failure.retryAfterMs / 1000))),
+		)
+	}
+	return jsonError(
+		c,
+		memongoResponseStatus(failure.status),
+		failure.code,
+		failure.message,
+		{
+			retryable: failure.retryable,
+			outcome: failure.outcome,
+			...(failure.retryAfterMs !== undefined
+				? { retryAfterMs: failure.retryAfterMs }
+				: {}),
+		},
+	)
+}
 
 function readAgentId(body: Record<string, unknown>): string | undefined {
 	return typeof body.agentId === "string" ? body.agentId : undefined
 }
 
-function parseListLimit(raw?: string): number | undefined {
+function parseListLimit(raw?: string): number | null | undefined {
 	if (raw === undefined) {
 		return undefined
 	}
 	const parsed = Number(raw)
 	if (!Number.isFinite(parsed)) {
-		return undefined
+		return null
 	}
 	return Math.max(1, Math.min(MAX_LIST_LIMIT, Math.floor(parsed)))
 }
@@ -675,14 +755,15 @@ function readProcedureLifecyclePatch(
 	return Object.keys(patch).length > 0 ? patch : null
 }
 
-export function createV1Router(): Hono {
-	const v1 = new Hono()
+export function createV1Router(): Hono<ApiEnvironment> {
+	const v1 = new Hono<ApiEnvironment>()
 
 	v1.post("/search", async (c) => {
 		const body = (await c.req.json().catch(() => ({}))) as Record<
 			string,
 			unknown
 		>
+		const authorizedScope = getAuthorizedRequestScope(c)
 		const query = readQuery(body)
 		if (!query.trim()) {
 			return jsonError(c, 400, "VALIDATION_ERROR", "query is required")
@@ -694,17 +775,16 @@ export function createV1Router(): Hono {
 		try {
 			const results = await mdbrainBridgeSearch({
 				query,
-				agentId: readAgentId(body),
+				agentId: authorizedScope.agentId,
 				maxResults: readLimit(body),
 				minScore: typeof body.minScore === "number" ? body.minScore : undefined,
 				sessionKey: readSessionKey(body),
-				scope: readScope(body),
-				scopeRef: readScopeRef(body),
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 			})
 			return c.json({ results })
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "SEARCH_FAILED", message)
+			return bridgeJsonError(c, "SEARCH_FAILED", err)
 		}
 	})
 
@@ -713,9 +793,14 @@ export function createV1Router(): Hono {
 			string,
 			unknown
 		>
+		const authorizedScope = getAuthorizedRequestScope(c)
 		const query = readQuery(body)
 		if (!query.trim()) {
 			return jsonError(c, 400, "VALIDATION_ERROR", "query is required")
+		}
+		const scopeError = readScopeInputError(body)
+		if (scopeError) {
+			return jsonError(c, 400, "VALIDATION_ERROR", scopeError)
 		}
 		try {
 			const filter =
@@ -730,15 +815,16 @@ export function createV1Router(): Hono {
 					: undefined
 			const results = await mdbrainBridgeSearchKB({
 				query,
-				agentId: readAgentId(body),
+				agentId: authorizedScope.agentId,
 				maxResults: readLimit(body),
 				minScore: typeof body.minScore === "number" ? body.minScore : undefined,
 				filter,
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 			})
 			return c.json({ results })
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "SEARCH_KB_FAILED", message)
+			return bridgeJsonError(c, "SEARCH_KB_FAILED", err)
 		}
 	})
 
@@ -747,6 +833,7 @@ export function createV1Router(): Hono {
 			string,
 			unknown
 		>
+		const authorizedScope = getAuthorizedRequestScope(c)
 		const roles = readConversationRoles(body)
 		if (roles === null) {
 			return jsonError(
@@ -756,10 +843,16 @@ export function createV1Router(): Hono {
 				"roles must contain only user|assistant|system|tool",
 			)
 		}
+		const scopeError = readScopeInputError(body)
+		if (scopeError) {
+			return jsonError(c, 400, "VALIDATION_ERROR", scopeError)
+		}
 		try {
 			const result = await mdbrainBridgeRecallConversation({
-				agentId: readAgentId(body),
+				agentId: authorizedScope.agentId,
 				query: typeof body.query === "string" ? body.query : undefined,
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 				sessionId:
 					typeof body.sessionId === "string" ? body.sessionId : undefined,
 				roles,
@@ -775,43 +868,11 @@ export function createV1Router(): Hono {
 			})
 			return c.json(result)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
 			if (isRecallConversationValidationError(err)) {
+				const message = err instanceof Error ? err.message : String(err)
 				return jsonError(c, 400, "VALIDATION_ERROR", message)
 			}
-			return jsonError(c, 500, "RECALL_CONVERSATION_FAILED", message)
-		}
-	})
-
-	v1.post("/import/conversations", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		if (
-			typeof body.datasetPath !== "string" ||
-			body.datasetPath.trim() === ""
-		) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "datasetPath is required")
-		}
-		try {
-			const result = await mdbrainBridgeImportConversations({
-				agentId: readAgentId(body),
-				datasetPath: body.datasetPath,
-				scope: readScope(body),
-				limitConversations:
-					typeof body.limitConversations === "number"
-						? body.limitConversations
-						: undefined,
-				limitTurnsPerConversation:
-					typeof body.limitTurnsPerConversation === "number"
-						? body.limitTurnsPerConversation
-						: undefined,
-			})
-			return c.json(result)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "CONVERSATION_IMPORT_FAILED", message)
+			return bridgeJsonError(c, "RECALL_CONVERSATION_FAILED", err)
 		}
 	})
 
@@ -836,8 +897,7 @@ export function createV1Router(): Hono {
 			}
 			return c.json(item)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "LIFECYCLE_GET_FAILED", message)
+			return bridgeJsonError(c, "LIFECYCLE_GET_FAILED", err)
 		}
 	})
 
@@ -874,8 +934,7 @@ export function createV1Router(): Hono {
 			}
 			return c.json(item)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "LIFECYCLE_UPDATE_FAILED", message)
+			return bridgeJsonError(c, "LIFECYCLE_UPDATE_FAILED", err)
 		}
 	})
 
@@ -913,8 +972,7 @@ export function createV1Router(): Hono {
 			}
 			return c.json(item)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "LIFECYCLE_DELETE_FAILED", message)
+			return bridgeJsonError(c, "LIFECYCLE_DELETE_FAILED", err)
 		}
 	})
 
@@ -952,8 +1010,7 @@ export function createV1Router(): Hono {
 			}
 			return c.json(history)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "LIFECYCLE_HISTORY_FAILED", message)
+			return bridgeJsonError(c, "LIFECYCLE_HISTORY_FAILED", err)
 		}
 	})
 
@@ -998,8 +1055,7 @@ export function createV1Router(): Hono {
 			}
 			return c.json(item)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "PROCEDURE_OUTCOME_FAILED", message)
+			return bridgeJsonError(c, "PROCEDURE_OUTCOME_FAILED", err)
 		}
 	})
 
@@ -1079,8 +1135,7 @@ export function createV1Router(): Hono {
 			}
 			return c.json(item)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "MEMORY_FEEDBACK_FAILED", message)
+			return bridgeJsonError(c, "MEMORY_FEEDBACK_FAILED", err)
 		}
 	})
 
@@ -1201,8 +1256,7 @@ export function createV1Router(): Hono {
 			})
 			return c.json(result)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "SEARCH_DETAILED_FAILED", message)
+			return bridgeJsonError(c, "SEARCH_DETAILED_FAILED", err)
 		}
 	})
 
@@ -1224,8 +1278,7 @@ export function createV1Router(): Hono {
 			})
 			return c.json(slate)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "ACTIVE_SLATE_FAILED", message)
+			return bridgeJsonError(c, "ACTIVE_SLATE_FAILED", err)
 		}
 	})
 
@@ -1268,8 +1321,7 @@ export function createV1Router(): Hono {
 			})
 			return c.json(projection)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "DISCOVERY_PROJECTION_FAILED", message)
+			return bridgeJsonError(c, "DISCOVERY_PROJECTION_FAILED", err)
 		}
 	})
 
@@ -1337,35 +1389,20 @@ export function createV1Router(): Hono {
 			})
 			return c.json(bundle)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "CONTEXT_BUNDLE_FAILED", message)
-		}
-	})
-
-	v1.post("/read-file", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		const relPath = typeof body.relPath === "string" ? body.relPath : ""
-		if (!relPath.trim()) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "relPath is required")
-		}
-		try {
-			const out = await mdbrainBridgeReadFile({
-				relPath,
-				from: typeof body.from === "number" ? body.from : undefined,
-				lines: typeof body.lines === "number" ? body.lines : undefined,
-				agentId: readAgentId(body),
-			})
-			return c.json(out)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "READ_FILE_FAILED", message)
+			return bridgeJsonError(c, "CONTEXT_BUNDLE_FAILED", err)
 		}
 	})
 
 	v1.post("/add", async (c) => {
+		const idempotencyKey = c.req.header("Idempotency-Key")?.trim()
+		if (!idempotencyKey) {
+			return jsonError(
+				c,
+				400,
+				"IDEMPOTENCY_KEY_REQUIRED",
+				"Idempotency-Key header is required",
+			)
+		}
 		const body = (await c.req.json().catch(() => ({}))) as Record<
 			string,
 			unknown
@@ -1385,13 +1422,58 @@ export function createV1Router(): Hono {
 				? (body.metadata as Record<string, unknown>)
 				: undefined
 		try {
-			const out = await mdbrainBridgeAdd({
+			const agentId = readAgentId(body) ?? "default"
+			const scope = readScope(body) ?? "agent"
+			const scopeRef = readScopeRef(body) ?? agentId
+			const requestId = c.req.header("X-Request-ID")?.trim()
+			const principal = getApiPrincipal(c)
+			const promotionResult = buildMemoryWikiPromotion({
+				body,
+				operationId: buildMemoryDeliveryOperationId({
+					operation: "add",
+					idempotencyKey,
+					principalSubjectId: principal.subjectId,
+					scope,
+					scopeRef,
+				}),
+				scope,
+				scopeRef,
+				principal,
+			})
+			if (promotionResult.error) {
+				return jsonError(c, 400, "VALIDATION_ERROR", promotionResult.error)
+			}
+			const bridgePayload = {
 				content,
 				agentId: readAgentId(body),
 				sessionId: readSessionId(body),
 				metadata,
 				scope: readScope(body),
 				scopeRef: readScopeRef(body),
+			}
+			const payload = {
+				...bridgePayload,
+				agentId,
+				scope,
+				scopeRef,
+				promotionPolicy: body.promotionPolicy ?? "none",
+				...(body.wikiPromotion ? { wikiPromotion: body.wikiPromotion } : {}),
+			}
+			const out = await deliverMemoryWrite({
+				operation: "add",
+				idempotencyKey,
+				payload,
+				principalSubjectId: principal.subjectId,
+				agentId,
+				scope,
+				scopeRef,
+				promotion: promotionResult.promotion,
+				dispatch: () =>
+					mdbrainBridgeAdd({
+						...bridgePayload,
+						idempotencyKey,
+						requestId,
+					}),
 			})
 			return c.json({
 				ok: true,
@@ -1399,12 +1481,31 @@ export function createV1Router(): Hono {
 				chunkCreated: out.chunkCreated,
 			})
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "ADD_FAILED", message)
+			if (err instanceof MemoryDeliveryDispatchError) {
+				const status = err.state === "conflict" ? 409 : 503
+				return jsonError(
+					c,
+					status,
+					err.state === "conflict"
+						? "IDEMPOTENCY_CONFLICT"
+						: "MEMORY_DELIVERY_PENDING",
+					`Memory delivery is ${err.state}`,
+				)
+			}
+			return bridgeJsonError(c, "ADD_FAILED", err)
 		}
 	})
 
 	v1.post("/write-event", async (c) => {
+		const idempotencyKey = c.req.header("Idempotency-Key")?.trim()
+		if (!idempotencyKey) {
+			return jsonError(
+				c,
+				400,
+				"IDEMPOTENCY_KEY_REQUIRED",
+				"Idempotency-Key header is required",
+			)
+		}
 		const body = (await c.req.json().catch(() => ({}))) as Record<
 			string,
 			unknown
@@ -1439,9 +1540,30 @@ export function createV1Router(): Hono {
 				: undefined
 		const scope = readScope(body)
 		try {
-			const out = await mdbrainBridgeWriteConversationEvent({
+			const agentId = readAgentId(body) ?? "default"
+			const resolvedScope = scope ?? "agent"
+			const scopeRef = readScopeRef(body) ?? agentId
+			const requestId = c.req.header("X-Request-ID")?.trim()
+			const principal = getApiPrincipal(c)
+			const promotionResult = buildMemoryWikiPromotion({
+				body,
+				operationId: buildMemoryDeliveryOperationId({
+					operation: "write-event",
+					idempotencyKey,
+					principalSubjectId: principal.subjectId,
+					scope: resolvedScope,
+					scopeRef,
+				}),
+				scope: resolvedScope,
+				scopeRef,
+				principal,
+			})
+			if (promotionResult.error) {
+				return jsonError(c, 400, "VALIDATION_ERROR", promotionResult.error)
+			}
+			const bridgePayload = {
 				agentId: readAgentId(body),
-				role,
+				role: role as "user" | "assistant" | "system" | "tool",
 				body: bodyText,
 				sessionId: readSessionId(body),
 				timestamp:
@@ -1449,6 +1571,30 @@ export function createV1Router(): Hono {
 				metadata,
 				scope,
 				scopeRef: readScopeRef(body),
+			}
+			const payload = {
+				...bridgePayload,
+				agentId,
+				scope: resolvedScope,
+				scopeRef,
+				promotionPolicy: body.promotionPolicy ?? "none",
+				...(body.wikiPromotion ? { wikiPromotion: body.wikiPromotion } : {}),
+			}
+			const out = await deliverMemoryWrite({
+				operation: "write-event",
+				idempotencyKey,
+				payload,
+				principalSubjectId: principal.subjectId,
+				agentId,
+				scope: resolvedScope,
+				scopeRef,
+				promotion: promotionResult.promotion,
+				dispatch: () =>
+					mdbrainBridgeWriteConversationEvent({
+						...bridgePayload,
+						idempotencyKey,
+						requestId,
+					}),
 			})
 			return c.json({
 				ok: true,
@@ -1456,8 +1602,18 @@ export function createV1Router(): Hono {
 				chunkCreated: out.chunkCreated,
 			})
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "WRITE_EVENT_FAILED", message)
+			if (err instanceof MemoryDeliveryDispatchError) {
+				const status = err.state === "conflict" ? 409 : 503
+				return jsonError(
+					c,
+					status,
+					err.state === "conflict"
+						? "IDEMPOTENCY_CONFLICT"
+						: "MEMORY_DELIVERY_PENDING",
+					`Memory delivery is ${err.state}`,
+				)
+			}
+			return bridgeJsonError(c, "WRITE_EVENT_FAILED", err)
 		}
 	})
 
@@ -1477,8 +1633,7 @@ export function createV1Router(): Hono {
 			})
 			return c.json({ ok: true, ...out }, 202)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "EXTRACT_FAILED", message)
+			return bridgeJsonError(c, "EXTRACT_FAILED", err)
 		}
 	})
 
@@ -1498,8 +1653,7 @@ export function createV1Router(): Hono {
 			})
 			return c.json(out)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "WRITE_STRUCTURED_FAILED", message)
+			return bridgeJsonError(c, "WRITE_STRUCTURED_FAILED", err)
 		}
 	})
 
@@ -1519,8 +1673,7 @@ export function createV1Router(): Hono {
 			})
 			return c.json(out)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "WRITE_PROCEDURE_FAILED", message)
+			return bridgeJsonError(c, "WRITE_PROCEDURE_FAILED", err)
 		}
 	})
 
@@ -1551,8 +1704,7 @@ export function createV1Router(): Hono {
 			})
 			return c.json(profile)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "PROFILE_FAILED", message)
+			return bridgeJsonError(c, "PROFILE_FAILED", err)
 		}
 	})
 
@@ -1569,516 +1721,65 @@ export function createV1Router(): Hono {
 			const state = await mdbrainBridgeGetState({ agentId, scope, scopeRef })
 			return c.json(state)
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "STATE_FAILED", message)
+			return bridgeJsonError(c, "STATE_FAILED", err)
 		}
 	})
 
-	v1.get("/status", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		try {
-			const status = await mdbrainBridgeStatus({ agentId })
-			return c.json(status)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "STATUS_FAILED", message)
+	v1.get("/admin/deliveries", async (c) => {
+		const state = c.req.query("state")
+		const deliveryStates = [
+			"recorded",
+			"delivering",
+			"retryable",
+			"outcome-unknown",
+			"confirmed",
+			"promotion-pending",
+			"promoted",
+			"dead-letter",
+			"conflict",
+		] as const
+		if (
+			state &&
+			!deliveryStates.includes(state as (typeof deliveryStates)[number])
+		) {
+			return jsonError(c, 400, "VALIDATION_ERROR", "invalid delivery state")
 		}
-	})
-
-	v1.get("/status/detailed", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		try {
-			const status = await mdbrainBridgeGetDetailedStatus({ agentId })
-			return c.json(status)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "DETAILED_STATUS_FAILED", message)
-		}
-	})
-
-	v1.get("/stats", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		try {
-			const stats = await mdbrainBridgeStats({ agentId })
-			return c.json(stats)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "STATS_FAILED", message)
-		}
-	})
-
-	v1.post("/sync", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		try {
-			await mdbrainBridgeSync({
-				agentId: readAgentId(body),
-				reason: typeof body.reason === "string" ? body.reason : undefined,
-				force: typeof body.force === "boolean" ? body.force : undefined,
-			})
-			return c.json({ ok: true })
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "SYNC_FAILED", message)
-		}
-	})
-
-	v1.get("/probes/embedding", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		try {
-			const result = await mdbrainBridgeProbeEmbedding({ agentId })
-			return c.json(result)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "PROBE_EMBEDDING_FAILED", message)
-		}
-	})
-
-	v1.get("/probes/vector", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		try {
-			const ok = await mdbrainBridgeProbeVector({ agentId })
-			return c.json({ ok })
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "PROBE_VECTOR_FAILED", message)
-		}
-	})
-
-	v1.post("/admin/relevance/explain", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		const query = typeof body.query === "string" ? body.query : ""
-		if (!query.trim()) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "query is required")
-		}
-		const sourceScope =
-			body.sourceScope === "all" ||
-			body.sourceScope === "memory" ||
-			body.sourceScope === "kb" ||
-			body.sourceScope === "structured"
-				? body.sourceScope
-				: undefined
-		try {
-			const out = await mdbrainBridgeRelevanceExplain({
-				agentId: readAgentId(body),
-				query,
-				sourceScope,
-				sessionKey:
-					typeof body.sessionKey === "string" ? body.sessionKey : undefined,
-				maxResults:
-					typeof body.maxResults === "number" ? body.maxResults : undefined,
-				minScore: typeof body.minScore === "number" ? body.minScore : undefined,
-				deep: typeof body.deep === "boolean" ? body.deep : undefined,
-			})
-			return c.json(out)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "RELEVANCE_EXPLAIN_FAILED", message)
-		}
-	})
-
-	v1.post("/admin/relevance/benchmark", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		try {
-			// Task 1.A parity envelope inputs (all optional at Phase 1).
-			const datasetSha256 =
-				typeof body.datasetSha256 === "string" &&
-				/^[0-9a-f]{64}$/.test(body.datasetSha256)
-					? body.datasetSha256
-					: undefined
-			const embeddingConfig = parseEmbeddingConfig(body.embeddingConfig)
-			const rerankerConfig = parseRerankerConfig(body.rerankerConfig)
-			const retrievalLane = parseBenchmarkRetrievalLane(body.retrievalLane)
-
-			const out = await mdbrainBridgeRelevanceBenchmark({
-				agentId: readAgentId(body),
-				datasetPath:
-					typeof body.datasetPath === "string" ? body.datasetPath : undefined,
-				maxResults:
-					typeof body.maxResults === "number" ? body.maxResults : undefined,
-				minScore: typeof body.minScore === "number" ? body.minScore : undefined,
-				...(datasetSha256 ? { datasetSha256 } : {}),
-				...(embeddingConfig ? { embeddingConfig } : {}),
-				...(rerankerConfig ? { rerankerConfig } : {}),
-				...(retrievalLane ? { retrievalLane } : {}),
-			})
-			try {
-				return c.json(out)
-			} catch (serializeErr) {
-				const serializeMsg =
-					serializeErr instanceof Error
-						? serializeErr.message
-						: String(serializeErr)
-				if (!serializeMsg.includes("Invalid string length")) {
-					throw serializeErr
-				}
-				// V8 cannot stringify the full result — return only the compact
-				// summary without benchmarkReport and queryGovernance to stay
-				// under the ~512 MB JSON.stringify limit.
-				const {
-					benchmarkReport: _br,
-					queryGovernance: _qg,
-					questionTypeBreakdown: _qtb,
-					...compact
-				} = out as Record<string, unknown>
-				try {
-					return c.json({
-						...compact,
-						_compacted: true,
-						_compactReason: "Invalid string length",
-					})
-				} catch {
-					// Even the compact version is too large — return metrics only.
-					return c.json({
-						datasetVersion: out.datasetVersion,
-						cases: out.cases,
-						scoredCases: out.scoredCases,
-						hitRate: out.hitRate,
-						emptyRate: out.emptyRate,
-						avgTopScore: out.avgTopScore,
-						p95LatencyMs: out.p95LatencyMs,
-						rAt5: out.rAt5,
-						rAt10: out.rAt10,
-						ndcgAt10: out.ndcgAt10,
-						officialMetrics: out.officialMetrics,
-						_compacted: true,
-						_compactReason: "Invalid string length (metrics-only fallback)",
-					})
-				}
-			}
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "RELEVANCE_BENCHMARK_FAILED", message)
-		}
-	})
-
-	v1.post("/admin/benchmarks/ingest", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		const datasetPath =
-			typeof body.datasetPath === "string" ? body.datasetPath.trim() : ""
-		if (!datasetPath) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "datasetPath is required")
-		}
-		try {
-			const out = await mdbrainBridgeBenchmarkIngest({
-				agentId: readAgentId(body),
-				datasetPath,
-				scope: readScope(body),
-				limitConversations:
-					typeof body.limitConversations === "number"
-						? body.limitConversations
-						: undefined,
-				limitTurnsPerConversation:
-					typeof body.limitTurnsPerConversation === "number"
-						? body.limitTurnsPerConversation
-						: undefined,
-			})
-			return c.json(out)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "BENCHMARK_INGEST_FAILED", message)
-		}
-	})
-
-	v1.get("/admin/relevance/report", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		const windowMsRaw = c.req.query("windowMs")
-		const windowMs = windowMsRaw ? Number(windowMsRaw) : undefined
-		try {
-			const out = await mdbrainBridgeRelevanceReport({
-				agentId,
-				windowMs: Number.isFinite(windowMs) ? windowMs : undefined,
-			})
-			return c.json(out)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "RELEVANCE_REPORT_FAILED", message)
-		}
-	})
-
-	v1.get("/admin/relevance/sample-rate", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		try {
-			const out = await mdbrainBridgeRelevanceSampleRate({ agentId })
-			return c.json(out)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "RELEVANCE_SAMPLE_RATE_FAILED", message)
-		}
-	})
-
-	v1.get("/admin/access-trends", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		const collection = readAccessCollection(
-			c.req.query("collection") ?? undefined,
-		)
-		const memoryIdsRaw = c.req.query("memoryIds")
-		const memoryIds = memoryIdsRaw
-			? memoryIdsRaw
-					.split(",")
-					.map((memoryId) => memoryId.trim())
-					.filter((memoryId) => memoryId.length > 0)
-			: undefined
-		const windowDaysRaw = c.req.query("windowDays")
-		const windowDays = windowDaysRaw ? Number(windowDaysRaw) : undefined
 		const limit = parseListLimit(c.req.query("limit"))
+		if (limit === null) {
+			return jsonError(c, 400, "VALIDATION_ERROR", "limit must be 1..100")
+		}
 		try {
-			const out = await mdbrainBridgeAccessTrends({
-				agentId,
-				collection,
-				memoryIds,
-				windowDays: Number.isFinite(windowDays) ? windowDays : undefined,
+			const handle = await getWikiStoreHandle()
+			const deliveries = await listMemoryDeliveryIntents(handle, {
+				state: state as (typeof deliveryStates)[number] | undefined,
+				scope: c.req.query("scope"),
+				scopeRef: c.req.query("scopeRef"),
 				limit,
 			})
-			return c.json(out)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "ACCESS_TRENDS_FAILED", message)
-		}
-	})
-
-	v1.get("/admin/access-summaries", async (c) => {
-		const agentId = c.req.query("agentId") ?? undefined
-		const collection = readAccessCollection(
-			c.req.query("collection") ?? undefined,
-		)
-		const memoryIdsRaw = c.req.query("memoryIds")
-		const memoryIds = memoryIdsRaw
-			? memoryIdsRaw
-					.split(",")
-					.map((memoryId) => memoryId.trim())
-					.filter((memoryId) => memoryId.length > 0)
-			: []
-		if (!collection) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "collection is required")
-		}
-		if (memoryIds.length === 0) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "memoryIds is required")
-		}
-		const windowDaysRaw = c.req.query("windowDays")
-		const windowDays = windowDaysRaw ? Number(windowDaysRaw) : undefined
-		try {
-			const out = await mdbrainBridgeAccessSummaries({
-				agentId,
-				collection,
-				memoryIds,
-				windowDays: Number.isFinite(windowDays) ? windowDays : undefined,
+			return c.json({
+				deliveries: deliveries.map(
+					({
+						payload: _payload,
+						idempotencyKey: _idempotencyKey,
+						payloadFingerprint: _payloadFingerprint,
+						principalSubjectId: _principalSubjectId,
+						...delivery
+					}) => {
+						void _payload
+						void _idempotencyKey
+						void _payloadFingerprint
+						void _principalSubjectId
+						return delivery
+					},
+				),
 			})
-			return c.json(out)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "ACCESS_SUMMARIES_FAILED", message)
-		}
-	})
-
-	v1.get("/admin/traces", async (c) => {
-		const agentId = c.req.query("agentId")
-		const limit = parseListLimit(c.req.query("limit"))
-		try {
-			const traces = await mdbrainBridgeListRecallTraces({
-				agentId: agentId || undefined,
-				limit,
-			})
-			return c.json(traces)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "TRACE_LIST_FAILED", message)
-		}
-	})
-
-	v1.get("/admin/traces/:traceId", async (c) => {
-		const traceId = c.req.param("traceId")
-		if (!traceId.trim()) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "traceId is required")
-		}
-		try {
-			const trace = await mdbrainBridgeGetRecallTrace({
-				agentId: c.req.query("agentId") || undefined,
-				traceId,
-			})
-			if (!trace) {
-				return jsonError(c, 404, "NOT_FOUND", "trace not found")
-			}
-			return c.json(trace)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "TRACE_GET_FAILED", message)
-		}
-	})
-
-	v1.get("/jobs", async (c) => {
-		const agentId = c.req.query("agentId")
-		const status = c.req.query("status")
-		const jobType = c.req.query("jobType")
-		const limit = parseListLimit(c.req.query("limit"))
-		try {
-			const jobs = await mdbrainBridgeListMemoryJobs({
-				agentId: agentId || undefined,
-				status:
-					status === "pending" ||
-					status === "running" ||
-					status === "completed" ||
-					status === "failed" ||
-					status === "cancelled"
-						? status
-						: undefined,
-				limit,
-				jobType:
-					jobType === "consolidation" ||
-					jobType === "extraction" ||
-					jobType === "import" ||
-					jobType === "materialization" ||
-					jobType === "enrichment"
-						? jobType
-						: undefined,
-			})
-			return c.json(jobs)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "JOB_LIST_FAILED", message)
-		}
-	})
-
-	v1.get("/jobs/:jobId", async (c) => {
-		const jobId = c.req.param("jobId")
-		if (!jobId.trim()) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "jobId is required")
-		}
-		try {
-			const job = await mdbrainBridgeGetMemoryJob({
-				agentId: c.req.query("agentId") || undefined,
-				jobId,
-			})
-			if (!job) {
-				return jsonError(c, 404, "NOT_FOUND", "job not found")
-			}
-			return c.json(job)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "JOB_GET_FAILED", message)
-		}
-	})
-
-	v1.post("/chain-trace", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		const factId = typeof body.factId === "string" ? body.factId : ""
-		const collection =
-			typeof body.collection === "string" ? body.collection : ""
-		if (!factId.trim()) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "factId is required")
-		}
-		if (!collection.trim()) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "collection is required")
-		}
-		try {
-			const chain = await mdbrainBridgeTraceChain({
-				agentId: readAgentId(body),
-				factId,
-				collection,
-				maxDepth: typeof body.maxDepth === "number" ? body.maxDepth : undefined,
-			})
-			return c.json(chain)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "CHAIN_TRACE_FAILED", message)
-		}
-	})
-
-	v1.post("/novelty-scan", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		try {
-			const report = await mdbrainBridgeScanNovelty({
-				agentId: readAgentId(body),
-				limit: typeof body.limit === "number" ? body.limit : undefined,
-				scope: typeof body.scope === "string" ? body.scope : undefined,
-			})
-			return c.json(report)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "NOVELTY_SCAN_FAILED", message)
-		}
-	})
-
-	v1.post("/consolidate", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		try {
-			const result = await mdbrainBridgeConsolidate({
-				agentId: readAgentId(body),
-				maxEvents:
-					typeof body.maxEvents === "number" ? body.maxEvents : undefined,
-				minCombinedScore:
-					typeof body.minCombinedScore === "number"
-						? body.minCombinedScore
-						: undefined,
-				scope: typeof body.scope === "string" ? body.scope : undefined,
-			})
-			return c.json(result)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "CONSOLIDATE_FAILED", message)
-		}
-	})
-
-	v1.post("/self-edit", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		const block = typeof body.block === "string" ? body.block : ""
-		const action = typeof body.action === "string" ? body.action : "replace"
-		const content = typeof body.content === "string" ? body.content : ""
-		const validBlocks = ["user", "persona", "instructions"]
-		const validActions = ["append", "replace", "prepend"]
-		if (!block.trim() || !validBlocks.includes(block)) {
+		} catch {
 			return jsonError(
 				c,
-				400,
-				"VALIDATION_ERROR",
-				"block must be user|persona|instructions",
+				500,
+				"DELIVERY_LIST_FAILED",
+				"Unable to list memory deliveries",
 			)
-		}
-		if (!validActions.includes(action)) {
-			return jsonError(
-				c,
-				400,
-				"VALIDATION_ERROR",
-				"action must be append|replace|prepend",
-			)
-		}
-		if (!content.trim()) {
-			return jsonError(c, 400, "VALIDATION_ERROR", "content is required")
-		}
-		try {
-			const result = await mdbrainBridgeSelfEdit({
-				agentId: readAgentId(body),
-				block: block as "user" | "persona" | "instructions",
-				action: action as "append" | "replace" | "prepend",
-				content,
-			})
-			return c.json(result)
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "SELF_EDIT_FAILED", message)
 		}
 	})
 
@@ -2086,9 +1787,8 @@ export function createV1Router(): Hono {
 	// Wiki routes (/v1/wiki/*) — T3
 	// ---------------------------------------------------------------------------
 
-	async function readWikiDbHandle(agentId?: string) {
-		const manager = await mdbrainBridgeGetManager(agentId)
-		return getWikiDbHandle(manager)
+	async function readWikiDbHandle(_agentId?: string) {
+		return getWikiStoreHandle()
 	}
 
 	// Slug may contain slashes (OKF concept IDs are file paths like
@@ -2100,14 +1800,6 @@ export function createV1Router(): Hono {
 		return (afterWiki ?? "").replace(/\/$/, "")
 	}
 
-	const WIKI_VALID_KINDS = [
-		"entity",
-		"concept",
-		"synthesis",
-		"source",
-		"report",
-		"procedure",
-	]
 	const WIKI_VALID_SCOPES = [
 		"session",
 		"user",
@@ -2116,18 +1808,38 @@ export function createV1Router(): Hono {
 		"tenant",
 		"global",
 	]
-	const WIKI_VALID_TRUST_TIERS = ["restricted", "standard", "admin"]
-
 	function buildWikiGovContext(
+		c: Parameters<typeof getApiPrincipal>[0],
 		scope: string,
 		scopeRef: string,
-		trustTier?: string,
 	): GovernanceContext {
+		const principal = getApiPrincipal(c)
 		return {
 			scope,
 			scopeRef,
-			trustTier: (trustTier as GovernanceContext["trustTier"]) ?? "standard",
+			subjectId: principal.subjectId,
+			groups: principal.groups,
+			trustTier: principal.trustTier,
+			roles: principal.roles,
+			departments: principal.departments,
+			capabilities: principal.capabilities,
 		}
+	}
+
+	function readWikiOperationId(
+		c: Parameters<typeof getApiPrincipal>[0],
+	): string {
+		return (
+			c.req.header("Idempotency-Key")?.trim() ||
+			c.req.header("X-Request-ID")?.trim() ||
+			randomUUID()
+		)
+	}
+
+	function canChangeWikiPermissions(
+		c: Parameters<typeof getApiPrincipal>[0],
+	): boolean {
+		return getApiPrincipal(c).capabilities.includes("change-permissions")
 	}
 
 	v1.post("/wiki", async (c) => {
@@ -2184,9 +1896,43 @@ export function createV1Router(): Hono {
 				"frontmatter.type is required (OKF)",
 			)
 		try {
-			const handle = await readWikiDbHandle(String(body.agentId ?? ""))
+			const principal = getApiPrincipal(c)
+			const permissions =
+				body.permissions &&
+				typeof body.permissions === "object" &&
+				!Array.isArray(body.permissions)
+					? (body.permissions as Record<string, unknown>)
+					: {}
+			if (
+				(trustTier !== principal.trustTier ||
+					Object.keys(permissions).length > 0) &&
+				!canChangeWikiPermissions(c)
+			) {
+				return jsonError(
+					c,
+					403,
+					"FORBIDDEN",
+					"change-permissions capability is required",
+				)
+			}
 			const input = body as unknown as WikiPageInput
-			const page = await createWikiPage(handle, input)
+			const page = await withWikiTransaction(async (handle, session) => {
+				const created = await createWikiPage(handle, input, { session })
+				await recordWikiMutationIntent(
+					handle,
+					{
+						operationId: readWikiOperationId(c),
+						kind: "create",
+						pageSlug: slug,
+						scope,
+						scopeRef,
+						principalSubjectId: principal.subjectId,
+						payload: body,
+					},
+					session,
+				)
+				return created
+			})
 			return c.json(page, 201)
 		} catch (err) {
 			if (err instanceof WikiDuplicateSlugError) {
@@ -2226,11 +1972,7 @@ export function createV1Router(): Hono {
 				state: state ?? undefined,
 				limit: Number.isFinite(limit) ? limit : undefined,
 				skip: Number.isFinite(skip) ? skip : undefined,
-				governance: buildWikiGovContext(
-					scope,
-					scopeRef,
-					trustTier ?? undefined,
-				),
+				governance: buildWikiGovContext(c, scope, scopeRef),
 			})
 			return c.json(result)
 		} catch (err) {
@@ -2254,13 +1996,15 @@ export function createV1Router(): Hono {
 			const handle = await readWikiDbHandle(
 				String(c.req.query("agentId") ?? ""),
 			)
+			const governance = buildWikiGovContext(c, scope, scopeRef)
 			const [pagesResult, contradictions] = await Promise.all([
 				listWikiPages(handle, {
 					scope,
 					scopeRef,
 					limit: MAX_LIST_LIMIT,
+					governance,
 				}),
-				listUnresolvedContradictions(handle, scope, scopeRef),
+				listUnresolvedContradictions(handle, scope, scopeRef, governance),
 			])
 			return c.json({
 				pages: pagesResult.pages,
@@ -2294,14 +2038,8 @@ export function createV1Router(): Hono {
 			const handle = await readWikiDbHandle(
 				String(c.req.query("agentId") ?? ""),
 			)
-			const trustTier = c.req.query("trustTier")
-			const page = await getWikiPage(
-				handle,
-				slug,
-				scope,
-				scopeRef,
-				buildWikiGovContext(scope, scopeRef, trustTier ?? undefined),
-			)
+			const governance = buildWikiGovContext(c, scope, scopeRef)
+			const page = await getWikiPage(handle, slug, scope, scopeRef, governance)
 			if (!page)
 				return jsonError(
 					c,
@@ -2314,6 +2052,7 @@ export function createV1Router(): Hono {
 				scope,
 				scopeRef,
 				limit: Number.isFinite(limit) ? limit : undefined,
+				governance,
 			})
 			return c.json({ revisions })
 		} catch (err) {
@@ -2346,14 +2085,8 @@ export function createV1Router(): Hono {
 			const handle = await readWikiDbHandle(
 				String(c.req.query("agentId") ?? ""),
 			)
-			const trustTier = c.req.query("trustTier")
-			const page = await getWikiPage(
-				handle,
-				slug,
-				scope,
-				scopeRef,
-				buildWikiGovContext(scope, scopeRef, trustTier ?? undefined),
-			)
+			const governance = buildWikiGovContext(c, scope, scopeRef)
+			const page = await getWikiPage(handle, slug, scope, scopeRef, governance)
 			if (!page)
 				return jsonError(
 					c,
@@ -2366,6 +2099,7 @@ export function createV1Router(): Hono {
 				scope,
 				scopeRef,
 				revision,
+				governance,
 			})
 			if (!record)
 				return jsonError(
@@ -2399,7 +2133,7 @@ export function createV1Router(): Hono {
 			const handle = await readWikiDbHandle(
 				String(c.req.query("agentId") ?? ""),
 			)
-			const governance = buildWikiGovContext(scope, scopeRef)
+			const governance = buildWikiGovContext(c, scope, scopeRef)
 			const page = await getWikiPage(handle, slug, scope, scopeRef, governance)
 			if (!page)
 				return jsonError(
@@ -2450,10 +2184,21 @@ export function createV1Router(): Hono {
 				"VALIDATION_ERROR",
 				"scope and scopeRef are required",
 			)
-		try {
-			const handle = await readWikiDbHandle(
-				String(body.agentId ?? c.req.query("agentId") ?? ""),
+		if (
+			body.frontmatter !== undefined &&
+			(!body.frontmatter ||
+				typeof body.frontmatter !== "object" ||
+				Array.isArray(body.frontmatter) ||
+				typeof (body.frontmatter as Record<string, unknown>).type !== "string")
+		) {
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"frontmatter.type is required",
 			)
+		}
+		try {
 			const {
 				scope: _s,
 				scopeRef: _sr,
@@ -2463,13 +2208,52 @@ export function createV1Router(): Hono {
 			void _s
 			void _sr
 			void _sl
-			const updated = await updateWikiPage(
-				handle,
-				slug,
-				scope,
-				scopeRef,
-				patch as Partial<WikiPageInput>,
-			)
+			const principal = getApiPrincipal(c)
+			if (
+				(patch.trustTier !== undefined || patch.permissions !== undefined) &&
+				!canChangeWikiPermissions(c)
+			) {
+				return jsonError(
+					c,
+					403,
+					"FORBIDDEN",
+					"change-permissions capability is required",
+				)
+			}
+			const updated = await withWikiTransaction(async (handle, session) => {
+				const target = await getWikiPage(
+					handle,
+					slug,
+					scope,
+					scopeRef,
+					buildWikiGovContext(c, scope, scopeRef),
+					session,
+				)
+				if (!target) return undefined
+				const result = await updateWikiPage(
+					handle,
+					slug,
+					scope,
+					scopeRef,
+					patch as Partial<WikiPageInput>,
+					{ session },
+				)
+				if (!result) return undefined
+				await recordWikiMutationIntent(
+					handle,
+					{
+						operationId: readWikiOperationId(c),
+						kind: "update",
+						pageSlug: slug,
+						scope,
+						scopeRef,
+						principalSubjectId: principal.subjectId,
+						payload: patch,
+					},
+					session,
+				)
+				return result
+			})
 			if (!updated)
 				return jsonError(
 					c,
@@ -2497,11 +2281,36 @@ export function createV1Router(): Hono {
 				"scope and scopeRef query params are required",
 			)
 		try {
-			const handle = await readWikiDbHandle(
-				String(c.req.query("agentId") ?? ""),
-			)
-			const deleted = await deleteWikiPage(handle, slug, scope, scopeRef, {
-				hard,
+			const principal = getApiPrincipal(c)
+			const deleted = await withWikiTransaction(async (handle, session) => {
+				const target = await getWikiPage(
+					handle,
+					slug,
+					scope,
+					scopeRef,
+					buildWikiGovContext(c, scope, scopeRef),
+					session,
+				)
+				if (!target) return false
+				const result = await deleteWikiPage(handle, slug, scope, scopeRef, {
+					hard,
+					session,
+				})
+				if (!result) return false
+				await recordWikiMutationIntent(
+					handle,
+					{
+						operationId: readWikiOperationId(c),
+						kind: hard ? "hard-delete" : "soft-delete",
+						pageSlug: slug,
+						scope,
+						scopeRef,
+						principalSubjectId: principal.subjectId,
+						payload: { hard },
+					},
+					session,
+				)
+				return true
 			})
 			if (!deleted)
 				return jsonError(
@@ -2547,18 +2356,48 @@ export function createV1Router(): Hono {
 				"trustTier must be restricted|standard|admin",
 			)
 		try {
-			const handle = await readWikiDbHandle(String(body.agentId ?? ""))
-			const result = await importOkfBundle(handle, bundleDir, {
-				scope: scope as
-					| "session"
-					| "user"
-					| "agent"
-					| "workspace"
-					| "tenant"
-					| "global",
-				scopeRef,
-				trustTier: trustTier as "restricted" | "standard" | "admin",
-				okfBundleId,
+			const principal = getApiPrincipal(c)
+			if (!canChangeWikiPermissions(c)) {
+				return jsonError(
+					c,
+					403,
+					"FORBIDDEN",
+					"change-permissions capability is required",
+				)
+			}
+			const result = await withWikiTransaction(async (handle, session) => {
+				const imported = await importOkfBundle(handle, bundleDir, {
+					scope: scope as
+						| "session"
+						| "user"
+						| "agent"
+						| "workspace"
+						| "tenant"
+						| "global",
+					scopeRef,
+					trustTier: trustTier as "restricted" | "standard" | "admin",
+					okfBundleId,
+					session,
+				})
+				await recordWikiMutationIntent(
+					handle,
+					{
+						operationId: readWikiOperationId(c),
+						kind: "okf-import",
+						pageSlug: okfBundleId,
+						scope,
+						scopeRef,
+						principalSubjectId: principal.subjectId,
+						payload: {
+							bundleDir,
+							trustTier,
+							okfBundleId,
+							conceptIds: imported.conceptIds,
+						},
+					},
+					session,
+				)
+				return imported
 			})
 			return c.json(result)
 		} catch (err) {
@@ -2603,7 +2442,7 @@ export function createV1Router(): Hono {
 				outDir,
 				// Export must never surface a page the requester couldn't otherwise
 				// read via a governed GET — filtered exactly like /wiki (list).
-				governance: buildWikiGovContext(scope, scopeRef, trustTier),
+				governance: buildWikiGovContext(c, scope, scopeRef),
 				returnContent,
 			})
 			return c.json(result)
@@ -2650,49 +2489,12 @@ export function createV1Router(): Hono {
 				maxResults:
 					typeof body.maxResults === "number" ? body.maxResults : undefined,
 				minScore: typeof body.minScore === "number" ? body.minScore : undefined,
-				governance: buildWikiGovContext(
-					scope,
-					scopeRef,
-					body.trustTier ? String(body.trustTier) : undefined,
-				),
+				governance: buildWikiGovContext(c, scope, scopeRef),
 			})
 			return c.json(result)
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_SEARCH_FAILED", message)
-		}
-	})
-
-	// Wiki maintenance (/v1/wiki/maintain) — T13+T14: git-diff + Dreamer
-	v1.post("/wiki/maintain", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as Record<
-			string,
-			unknown
-		>
-		const scope = body.scope ? String(body.scope) : undefined
-		const scopeRef = body.scopeRef ? String(body.scopeRef) : undefined
-		if (!scope || !scopeRef)
-			return jsonError(
-				c,
-				400,
-				"VALIDATION_ERROR",
-				"scope and scopeRef are required",
-			)
-		try {
-			const _handle = await readWikiDbHandle(String(body.agentId ?? ""))
-			void _handle
-			// Delegates to the maintenance module. The actual LLM call is injected
-			// by the caller via a webhook or CLI — the API route is a thin trigger.
-			return c.json({
-				status: "accepted",
-				message:
-					"Maintenance triggered. Use the CLI or webhook for full execution.",
-				scope,
-				scopeRef,
-			})
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err)
-			return jsonError(c, 500, "WIKI_MAINTAIN_FAILED", message)
 		}
 	})
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import contractFixtures from "./__fixtures__/contract-fixtures.js"
 
 const bridgeMocks = vi.hoisted(() => ({
+	mdbrainBridgeCheckReadiness: vi.fn(),
 	mdbrainBridgeAdd: vi.fn(),
 	mdbrainBridgeAccessSummaries: vi.fn(),
 	mdbrainBridgeAccessTrends: vi.fn(),
@@ -49,6 +50,49 @@ const bridgeMocks = vi.hoisted(() => ({
 
 vi.mock("@mdbrain/memory-bridge", () => bridgeMocks)
 
+const deliveryMocks = vi.hoisted(() => ({
+	deliverMemoryWrite: vi.fn(),
+}))
+
+vi.mock("./memory-delivery-runtime.js", () => ({
+	deliverMemoryWrite: deliveryMocks.deliverMemoryWrite,
+	buildMemoryDeliveryOperationId: (params: { operation: string }) =>
+		`${params.operation}:${"a".repeat(64)}`,
+	buildMemoryWikiPromotion: (params: {
+		body: {
+			promotionPolicy?: string
+			wikiPromotion?: { page?: { slug?: string } }
+		}
+		operationId: string
+	}) =>
+		params.body.promotionPolicy === "wiki"
+			? {
+					promotion: {
+						key: `${params.operationId}:wiki:${params.body.wikiPromotion?.page?.slug}:v1`,
+						mutateWiki: vi.fn(),
+					},
+				}
+			: {},
+	MemoryDeliveryDispatchError: class MemoryDeliveryDispatchError extends Error {
+		constructor(
+			readonly operationId: string,
+			readonly state: string,
+			readonly code: string,
+		) {
+			super(`memory delivery ${operationId} entered ${state}`)
+		}
+	},
+}))
+
+const wikiStoreMocks = vi.hoisted(() => ({
+	checkWikiStoreReadiness: vi.fn(),
+	getWikiStoreHandle: vi.fn(),
+	withWikiTransaction: vi.fn(),
+	closeWikiStore: vi.fn(),
+}))
+
+vi.mock("./wiki-store-runtime.js", () => wikiStoreMocks)
+
 import { createApp } from "./app.js"
 
 describe("createApp", () => {
@@ -57,6 +101,21 @@ describe("createApp", () => {
 	beforeEach(() => {
 		process.env = { ...prevEnv }
 		bridgeMocks.mdbrainBridgeSearch.mockReset()
+		bridgeMocks.mdbrainBridgeSearchKB.mockReset()
+		deliveryMocks.deliverMemoryWrite.mockReset()
+		deliveryMocks.deliverMemoryWrite.mockImplementation(
+			async (params: { dispatch: () => Promise<unknown> }) => params.dispatch(),
+		)
+		bridgeMocks.mdbrainBridgeCheckReadiness.mockReset()
+		bridgeMocks.mdbrainBridgeCheckReadiness.mockResolvedValue({
+			contractVersion: "2.0.1",
+			contractSha256: "abc",
+			lanes: { retrieval: "ready" },
+		})
+		wikiStoreMocks.checkWikiStoreReadiness.mockReset()
+		wikiStoreMocks.checkWikiStoreReadiness.mockResolvedValue({
+			transactional: true,
+		})
 		bridgeMocks.mdbrainBridgeSearchDetailed.mockReset()
 		bridgeMocks.mdbrainBridgeAdd.mockReset()
 		bridgeMocks.mdbrainBridgeAccessSummaries.mockReset()
@@ -77,6 +136,8 @@ describe("createApp", () => {
 		bridgeMocks.mdbrainBridgeRecallConversation.mockReset()
 		bridgeMocks.mdbrainBridgeListMemoryJobs.mockReset()
 		bridgeMocks.mdbrainBridgeListRecallTraces.mockReset()
+		bridgeMocks.mdbrainBridgeProbeEmbedding.mockReset()
+		bridgeMocks.mdbrainBridgeProbeVector.mockReset()
 		bridgeMocks.mdbrainBridgeRelevanceBenchmark.mockReset()
 		bridgeMocks.mdbrainBridgeStatus.mockReset()
 		bridgeMocks.mdbrainBridgeTraceChain.mockReset()
@@ -448,6 +509,92 @@ describe("createApp", () => {
 		})
 	})
 
+	it("reports ready only after Memongo compatibility succeeds", async () => {
+		const res = await createApp().request("/ready")
+
+		expect(res.status).toBe(200)
+		await expect(res.json()).resolves.toEqual({
+			ok: true,
+			service: "mdbrain-api",
+			memongo: {
+				contractVersion: "2.0.1",
+				contractSha256: "abc",
+				lanes: { retrieval: "ready" },
+			},
+			wiki: { transactional: true },
+		})
+	})
+
+	it("coalesces and briefly caches readiness probes to protect dependencies", async () => {
+		const app = createApp()
+		const [first, second] = await Promise.all([
+			app.request("/ready"),
+			app.request("/ready"),
+		])
+		const third = await app.request("/ready")
+
+		expect(first.status).toBe(200)
+		expect(second.status).toBe(200)
+		expect(third.status).toBe(200)
+		expect(bridgeMocks.mdbrainBridgeCheckReadiness).toHaveBeenCalledTimes(1)
+		expect(wikiStoreMocks.checkWikiStoreReadiness).toHaveBeenCalledTimes(1)
+	})
+
+	it("fails readiness when the Memongo contract is unavailable or incompatible", async () => {
+		bridgeMocks.mdbrainBridgeCheckReadiness.mockRejectedValueOnce(
+			new Error("incompatible"),
+		)
+		const res = await createApp().request("/ready")
+
+		expect(res.status).toBe(503)
+		await expect(res.json()).resolves.toEqual({
+			ok: false,
+			service: "mdbrain-api",
+			error: {
+				code: "DEPENDENCY_NOT_READY",
+				message: "Memongo or the wiki store is not ready",
+				dependencies: ["memongo"],
+			},
+		})
+	})
+
+	it("identifies the unavailable Memongo lane without exposing probe routes", async () => {
+		bridgeMocks.mdbrainBridgeCheckReadiness.mockRejectedValueOnce(
+			Object.assign(new Error("not ready"), { dependency: "vector" }),
+		)
+		const res = await createApp().request("/ready")
+
+		expect(res.status).toBe(503)
+		await expect(res.json()).resolves.toEqual({
+			ok: false,
+			service: "mdbrain-api",
+			error: {
+				code: "DEPENDENCY_NOT_READY",
+				message: "Memongo or the wiki store is not ready",
+				dependencies: ["memongo.vector"],
+			},
+		})
+	})
+
+	it("fails readiness when the wiki store cannot run transactions", async () => {
+		wikiStoreMocks.checkWikiStoreReadiness.mockRejectedValueOnce(
+			new Error("transactions unavailable"),
+		)
+		const res = await createApp().request("/ready")
+
+		expect(res.status).toBe(503)
+		expect(bridgeMocks.mdbrainBridgeCheckReadiness).toHaveBeenCalled()
+		await expect(res.json()).resolves.toEqual({
+			ok: false,
+			service: "mdbrain-api",
+			error: {
+				code: "DEPENDENCY_NOT_READY",
+				message: "Memongo or the wiki store is not ready",
+				dependencies: ["wiki"],
+			},
+		})
+	})
+
 	it("serves the OpenAPI document without auth", async () => {
 		const res = await createApp().request("/openapi.json")
 		const json = (await res.json()) as { paths?: Record<string, unknown> }
@@ -456,28 +603,41 @@ describe("createApp", () => {
 		for (const path of contractFixtures.corePaths) {
 			expect(json.paths).toHaveProperty(path)
 		}
-		const benchmarkPath = json.paths?.["/v1/admin/relevance/benchmark"] as {
-			post?: {
-				responses?: Record<
-					string,
-					{
-						content?: {
-							"application/json"?: {
-								schema?: {
-									properties?: Record<string, { required?: string[] }>
-								}
-							}
-						}
-					}
-				>
-			}
+		for (const path of [
+			"/ready",
+			"/v1/admin/deliveries",
+			"/v1/wiki/revisions",
+			"/v1/wiki/revisions/{revision}",
+		]) {
+			expect(json.paths).toHaveProperty(path)
 		}
-		const benchmarkReport =
-			benchmarkPath.post?.responses?.["200"]?.content?.["application/json"]
-				?.schema?.properties?.benchmarkReport
-		expect(benchmarkReport?.required).toEqual(
-			expect.arrayContaining(["releaseGates", "warnings", "degradations"]),
-		)
+		for (const path of [
+			"/v1/import/conversations",
+			"/v1/read-file",
+			"/v1/status/detailed",
+			"/v1/stats",
+			"/v1/sync",
+			"/v1/admin/relevance/explain",
+			"/v1/admin/relevance/benchmark",
+			"/v1/admin/benchmarks/ingest",
+			"/v1/admin/relevance/report",
+			"/v1/admin/relevance/sample-rate",
+			"/v1/admin/access-trends",
+			"/v1/admin/traces",
+			"/v1/admin/traces/{traceId}",
+			"/v1/admin/access-summaries",
+			"/v1/jobs",
+			"/v1/jobs/{jobId}",
+			"/v1/chain-trace",
+			"/v1/novelty-scan",
+			"/v1/consolidate",
+			"/v1/self-edit",
+		]) {
+			expect(json.paths).not.toHaveProperty(path)
+		}
+		for (const path of contractFixtures.removedTenantControlPaths) {
+			expect(json.paths).not.toHaveProperty(path)
+		}
 	})
 
 	it("validates missing search queries", async () => {
@@ -518,11 +678,46 @@ describe("createApp", () => {
 		})
 	})
 
+	it("preserves safe Memongo failure status and retry metadata", async () => {
+		bridgeMocks.mdbrainBridgeSearch.mockRejectedValueOnce(
+			Object.assign(new Error("temporarily unavailable"), {
+				code: "UPSTREAM_UNAVAILABLE",
+				status: 503,
+				retryable: true,
+				outcome: "unknown",
+				retryAfterMs: 2500,
+			}),
+		)
+
+		const res = await createApp().request("/v1/search", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ query: "retry me" }),
+		})
+
+		expect(res.status).toBe(503)
+		expect(res.headers.get("Retry-After")).toBe("3")
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "UPSTREAM_UNAVAILABLE",
+				message: "temporarily unavailable",
+				retryable: true,
+				outcome: "unknown",
+				retryAfterMs: 2500,
+			},
+		})
+	})
+
 	for (const aliasCase of contractFixtures.aliasCases) {
 		it(`preserves ${aliasCase.name}`, async () => {
 			const res = await createApp().request(aliasCase.path, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: {
+					"Content-Type": "application/json",
+					...(aliasCase.path === "/v1/add"
+						? { "Idempotency-Key": `alias-${aliasCase.name}` }
+						: {}),
+				},
 				body: JSON.stringify(aliasCase.body),
 			})
 
@@ -626,17 +821,23 @@ describe("createApp", () => {
 		expect(json.paths?.["/v1/lifecycle/history"]?.post).toBeDefined()
 	})
 
-	it("protects v1 routes when MDBRAIN_API_KEY is set", async () => {
+	it("does not expose Memongo control operations to authenticated tenants", async () => {
 		process.env.MDBRAIN_API_KEY = "secret"
 
-		const unauthorized = await createApp().request("/v1/status")
-		expect(unauthorized.status).toBe(401)
+		for (const path of [
+			"/v1/status",
+			"/v1/probes/embedding",
+			"/v1/probes/vector",
+		]) {
+			const response = await createApp().request(path, {
+				headers: { Authorization: "Bearer secret" },
+			})
+			expect(response.status).toBe(404)
+		}
 
-		const authorized = await createApp().request("/v1/status", {
-			headers: { Authorization: "Bearer secret" },
-		})
-		expect(authorized.status).toBe(200)
-		expect(bridgeMocks.mdbrainBridgeStatus).toHaveBeenCalledOnce()
+		expect(bridgeMocks.mdbrainBridgeStatus).not.toHaveBeenCalled()
+		expect(bridgeMocks.mdbrainBridgeProbeEmbedding).not.toHaveBeenCalled()
+		expect(bridgeMocks.mdbrainBridgeProbeVector).not.toHaveBeenCalled()
 	})
 
 	it("logs a prominent warning once when API auth is disabled", async () => {
@@ -779,7 +980,7 @@ describe("createApp", () => {
 		])
 
 		expect(() => createApp()).toThrow(
-			"MDBRAIN_API_SCOPED_KEYS policy for token scoped-secret must constrain agentIds, scopes, or scopeRefs",
+			"MDBRAIN_API_SCOPED_KEYS policy at index 0 must constrain agentIds, scopes, or scopeRefs",
 		)
 	})
 
@@ -817,6 +1018,248 @@ describe("createApp", () => {
 		)
 	})
 
+	it("forwards query-only authorized scope through search", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "scoped-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["/workspace/mdbrain"],
+				capabilities: ["read"],
+			},
+		])
+
+		const res = await createApp().request(
+			"/v1/search?agentId=codex&scope=workspace&scopeRef=%2Fworkspace%2Fmdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer scoped-secret",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ query: "query-only scope" }),
+			},
+		)
+
+		expect(res.status).toBe(200)
+		expect(bridgeMocks.mdbrainBridgeSearch).toHaveBeenCalledWith({
+			query: "query-only scope",
+			agentId: "codex",
+			maxResults: undefined,
+			minScore: undefined,
+			sessionKey: undefined,
+			scope: "workspace",
+			scopeRef: "/workspace/mdbrain",
+		})
+	})
+
+	it("rejects an invalid canonical scope before Memongo", async () => {
+		process.env.MDBRAIN_API_KEY = "admin-secret"
+
+		const res = await createApp().request(
+			"/v1/search?agentId=codex&scope=project&scopeRef=%2Fworkspace%2Fmdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer admin-secret",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ query: "invalid canonical scope" }),
+			},
+		)
+
+		expect(res.status).toBe(400)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "VALIDATION_ERROR",
+				message: "scope must be session|user|agent|workspace|tenant|global",
+			},
+		})
+		expect(bridgeMocks.mdbrainBridgeSearch).not.toHaveBeenCalled()
+	})
+
+	it("rejects JSON bodies sent with a non-JSON content type before Memongo", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "scoped-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["/workspace/mdbrain"],
+			},
+		])
+
+		const res = await createApp().request(
+			"/v1/search?agentId=codex&scope=workspace&scopeRef=%2Fworkspace%2Fmdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer scoped-secret",
+					"Content-Type": "text/plain",
+				},
+				body: JSON.stringify({
+					query: "scope bypass",
+					agentId: "codex",
+					scope: "workspace",
+					scopeRef: "/workspace/other",
+				}),
+			},
+		)
+
+		expect(res.status).toBe(415)
+		expect(bridgeMocks.mdbrainBridgeSearch).not.toHaveBeenCalled()
+	})
+
+	it("rejects request bodies without a JSON content type before Memongo", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "scoped-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["/workspace/mdbrain"],
+			},
+		])
+		const request = new Request(
+			"http://localhost/v1/search?agentId=codex&scope=workspace&scopeRef=%2Fworkspace%2Fmdbrain",
+			{
+				method: "POST",
+				headers: { Authorization: "Bearer scoped-secret" },
+				body: new TextEncoder().encode(
+					JSON.stringify({
+						query: "scope bypass",
+						agentId: "codex",
+						scope: "workspace",
+						scopeRef: "/workspace/other",
+					}),
+				),
+			},
+		)
+
+		const res = await createApp().request(request)
+
+		expect(res.status).toBe(415)
+		expect(bridgeMocks.mdbrainBridgeSearch).not.toHaveBeenCalled()
+	})
+
+	it("forwards the authorized search-kb scope unchanged", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "scoped-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["/workspace/mdbrain"],
+				capabilities: ["read"],
+			},
+		])
+		bridgeMocks.mdbrainBridgeSearchKB.mockResolvedValueOnce([])
+
+		const res = await createApp().request(
+			"/v1/search-kb?agentId=codex&scope=workspace&scopeRef=%2Fworkspace%2Fmdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer scoped-secret",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ query: "authorized knowledge" }),
+			},
+		)
+
+		expect(res.status).toBe(200)
+		expect(bridgeMocks.mdbrainBridgeSearchKB).toHaveBeenCalledWith({
+			query: "authorized knowledge",
+			agentId: "codex",
+			maxResults: undefined,
+			minScore: undefined,
+			filter: undefined,
+			scope: "workspace",
+			scopeRef: "/workspace/mdbrain",
+		})
+	})
+
+	it("forwards authenticated scoped recall authority unchanged", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "scoped-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["/workspace/mdbrain"],
+				capabilities: ["read"],
+			},
+		])
+
+		const res = await createApp().request(
+			"/v1/recall-conversation?agentId=codex&scope=workspace&scopeRef=%2Fworkspace%2Fmdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer scoped-secret",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ query: "scoped recall", limit: 2 }),
+			},
+		)
+
+		expect(res.status).toBe(200)
+		expect(bridgeMocks.mdbrainBridgeRecallConversation).toHaveBeenCalledWith({
+			agentId: "codex",
+			query: "scoped recall",
+			scope: "workspace",
+			scopeRef: "/workspace/mdbrain",
+			sessionId: undefined,
+			roles: undefined,
+			startTime: undefined,
+			endTime: undefined,
+			timezone: undefined,
+			includeToolMessages: undefined,
+			limit: 2,
+		})
+	})
+
+	it("enforces server-assigned capabilities by route", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "read-only-secret",
+				subjectId: "service:reader",
+				scopes: ["workspace"],
+				scopeRefs: ["/workspace/mdbrain"],
+				capabilities: ["read"],
+			},
+		])
+		const headers = {
+			Authorization: "Bearer read-only-secret",
+			"Content-Type": "application/json",
+		}
+
+		const search = await createApp().request("/v1/search", {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				query: "allowed read",
+				scope: "workspace",
+				scopeRef: "/workspace/mdbrain",
+			}),
+		})
+		expect(search.status).toBe(200)
+
+		const write = await createApp().request("/v1/add", {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				content: "forbidden write",
+				scope: "workspace",
+				scopeRef: "/workspace/mdbrain",
+			}),
+		})
+		expect(write.status).toBe(403)
+		await expect(write.json()).resolves.toEqual({
+			error: {
+				code: "FORBIDDEN",
+				message: "capability is not allowed for this API key",
+			},
+		})
+		expect(bridgeMocks.mdbrainBridgeAdd).not.toHaveBeenCalled()
+	})
+
 	it("rejects scoped API keys outside their allowed scopeRef", async () => {
 		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
 			{
@@ -849,6 +1292,89 @@ describe("createApp", () => {
 			},
 		})
 		expect(bridgeMocks.mdbrainBridgeSearch).not.toHaveBeenCalled()
+	})
+
+	it("rejects conflicting query and body scope before Memongo", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "scoped-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace", "tenant"],
+				scopeRefs: ["/workspace/mdbrain", "tenant-2"],
+				capabilities: ["read"],
+			},
+		])
+
+		const res = await createApp().request(
+			"/v1/search?agentId=codex&scope=workspace&scopeRef=%2Fworkspace%2Fmdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer scoped-secret",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					query: "conflicting scope",
+					agentId: "codex",
+					scope: "tenant",
+					scopeRef: "tenant-2",
+				}),
+			},
+		)
+
+		expect(res.status).toBe(403)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "FORBIDDEN",
+				message: "conflicting scope values are not allowed",
+			},
+		})
+		expect(bridgeMocks.mdbrainBridgeSearch).not.toHaveBeenCalled()
+	})
+
+	it("rejects conflicting top-level and nested scoped authority", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "scoped-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["/workspace/mdbrain"],
+				capabilities: ["write"],
+			},
+		])
+
+		const res = await createApp().request("/v1/lifecycle/update", {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer scoped-secret",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				agentId: "codex",
+				scope: "workspace",
+				scopeRef: "/workspace/mdbrain",
+				handle: {
+					family: "structured",
+					id: "structured:other",
+					agentId: "other-agent",
+					scope: "tenant",
+					scopeRef: "other-tenant",
+					revision: 1,
+					state: "active",
+					structured: { type: "decision", key: "db" },
+				},
+				patch: { value: "forbidden" },
+			}),
+		})
+
+		expect(res.status).toBe(403)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "FORBIDDEN",
+				message: "conflicting agentId values are not allowed",
+			},
+		})
+		expect(bridgeMocks.mdbrainBridgeUpdateLifecycleItem).not.toHaveBeenCalled()
 	})
 
 	it("requires explicit scoped fields for scoped API keys", async () => {
@@ -921,13 +1447,17 @@ describe("createApp", () => {
 	it("forwards add scope and scopeRef when provided", async () => {
 		const res = await createApp().request("/v1/add", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": "add-scope-1",
+			},
 			body: JSON.stringify({
 				content: "remember the scoped thing",
 				agentId: "codex",
 				sessionId: "session-9",
 				scope: "session",
 				scopeRef: "session:session-9",
+				idempotencyKey: "add-scope-1",
 			}),
 		})
 
@@ -939,6 +1469,7 @@ describe("createApp", () => {
 				sessionId: "session-9",
 				scope: "session",
 				scopeRef: "session:session-9",
+				idempotencyKey: "add-scope-1",
 			}),
 		)
 	})
@@ -946,7 +1477,11 @@ describe("createApp", () => {
 	it("forwards write-event scopeRef when provided", async () => {
 		const res = await createApp().request("/v1/write-event", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": "write-scope-1",
+				"X-Request-ID": "request-1",
+			},
 			body: JSON.stringify({
 				role: "assistant",
 				body: "scoped assistant memory",
@@ -954,6 +1489,8 @@ describe("createApp", () => {
 				sessionId: "session-9",
 				scope: "session",
 				scopeRef: "session:session-9",
+				idempotencyKey: "write-scope-1",
+				requestId: "request-1",
 			}),
 		})
 
@@ -970,6 +1507,116 @@ describe("createApp", () => {
 				scopeRef: "session:session-9",
 			}),
 		)
+	})
+
+	it("accepts explicit receipt-gated wiki promotion on a memory write", async () => {
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": "YOUR_IDEMPOTENCY_KEY_HERE",
+			},
+			body: JSON.stringify({
+				role: "user",
+				body: "Deployments happen on Friday.",
+				agentId: "codex",
+				scope: "workspace",
+				scopeRef: "workspace-1",
+				promotionPolicy: "wiki",
+				wikiPromotion: {
+					page: {
+						kind: "procedure",
+						title: "Deployment schedule",
+						slug: "procedures/deployment-schedule",
+						summary: "Deployments happen on Friday.",
+						body: "Deployments happen on Friday.",
+						frontmatter: { type: "procedure", status: "stable" },
+						claims: [
+							{
+								id: "deploy-day",
+								text: "Deployments happen on Friday.",
+							},
+						],
+						scope: "workspace",
+						scopeRef: "workspace-1",
+						trustTier: "standard",
+					},
+				},
+			}),
+		})
+
+		expect(res.status).toBe(200)
+		expect(deliveryMocks.deliverMemoryWrite).toHaveBeenCalledWith(
+			expect.objectContaining({
+				promotion: expect.objectContaining({
+					key: expect.stringMatching(
+						/^write-event:[a-f0-9]{64}:wiki:procedures\/deployment-schedule:v1$/,
+					),
+					mutateWiki: expect.any(Function),
+				}),
+				payload: expect.objectContaining({
+					promotionPolicy: "wiki",
+					wikiPromotion: expect.any(Object),
+				}),
+			}),
+		)
+		expect(
+			bridgeMocks.mdbrainBridgeWriteConversationEvent,
+		).toHaveBeenCalledWith(
+			expect.not.objectContaining({
+				promotionPolicy: expect.anything(),
+				wikiPromotion: expect.anything(),
+			}),
+		)
+	})
+
+	it("requires caller-owned idempotency for event writes", async () => {
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				role: "user",
+				body: "must be idempotent",
+			}),
+		})
+
+		expect(res.status).toBe(400)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "IDEMPOTENCY_KEY_REQUIRED",
+				message: "Idempotency-Key header is required",
+			},
+		})
+		expect(
+			bridgeMocks.mdbrainBridgeWriteConversationEvent,
+		).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		["POST", "/v1/read-file"],
+		["GET", "/v1/status/detailed"],
+		["GET", "/v1/stats"],
+		["POST", "/v1/sync"],
+		["POST", "/v1/admin/relevance/explain"],
+		["POST", "/v1/admin/relevance/benchmark"],
+		["GET", "/v1/admin/relevance/report"],
+		["GET", "/v1/admin/relevance/sample-rate"],
+		["POST", "/v1/admin/benchmarks/ingest"],
+		["POST", "/v1/import/conversations"],
+		["GET", "/v1/admin/access-trends"],
+		["GET", "/v1/admin/access-summaries"],
+		["POST", "/v1/chain-trace"],
+		["POST", "/v1/novelty-scan"],
+		["POST", "/v1/consolidate"],
+		["POST", "/v1/self-edit"],
+		["GET", "/v1/admin/traces"],
+		["GET", "/v1/admin/traces/trace-1"],
+		["GET", "/v1/jobs"],
+		["GET", "/v1/jobs/job-1"],
+		["POST", "/v1/wiki/maintain"],
+	])("does not expose unsupported operation %s %s", async (method, path) => {
+		const res = await createApp().request(path, { method })
+		expect(res.status).toBe(404)
 	})
 
 	it("rejects invalid scope values before calling the bridge", async () => {
@@ -1015,7 +1662,10 @@ describe("createApp", () => {
 	it("rejects user and tenant scopes without scopeRef", async () => {
 		const res = await createApp().request("/v1/add", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": "tenant-validation-1",
+			},
 			body: JSON.stringify({
 				content: "remember this for a tenant",
 				scope: "tenant",
@@ -1376,339 +2026,6 @@ describe("createApp", () => {
 		})
 	})
 
-	it("traces reasoning chain for a fact via chain-trace", async () => {
-		bridgeMocks.mdbrainBridgeTraceChain.mockResolvedValue({
-			factId: "fact-1",
-			collection: "structured",
-			chain: [
-				{ id: "fact-1", content: "root fact", depth: 0, sourceIds: ["fact-0"] },
-			],
-			depth: 1,
-		})
-
-		const res = await createApp().request("/v1/chain-trace", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				factId: "fact-1",
-				collection: "structured",
-				agentId: "agent-42",
-				maxDepth: 3,
-			}),
-		})
-
-		expect(res.status).toBe(200)
-		const json = await res.json()
-		expect(json).toEqual(
-			expect.objectContaining({
-				factId: "fact-1",
-				collection: "structured",
-			}),
-		)
-		expect(bridgeMocks.mdbrainBridgeTraceChain).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			factId: "fact-1",
-			collection: "structured",
-			maxDepth: 3,
-		})
-	})
-
-	it("lists recall traces via admin route", async () => {
-		bridgeMocks.mdbrainBridgeListRecallTraces.mockResolvedValue([
-			{
-				traceId: "trace-1",
-				agentId: "agent-42",
-				query: "phoenix",
-				timestamp: "2026-04-09T12:00:00.000Z",
-				lanesUsed: ["structured"],
-			},
-		])
-
-		const res = await createApp().request(
-			"/v1/admin/traces?agentId=agent-42&limit=5",
-		)
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual([
-			expect.objectContaining({ traceId: "trace-1" }),
-		])
-		expect(bridgeMocks.mdbrainBridgeListRecallTraces).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			limit: 5,
-		})
-	})
-
-	it("clamps recall trace list limit to 100", async () => {
-		await createApp().request(
-			"/v1/admin/traces?agentId=agent-42&limit=999999999",
-		)
-
-		expect(bridgeMocks.mdbrainBridgeListRecallTraces).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			limit: 100,
-		})
-	})
-
-	it("gets one recall trace via admin route", async () => {
-		bridgeMocks.mdbrainBridgeGetRecallTrace.mockResolvedValue({
-			traceId: "trace-1",
-			agentId: "agent-42",
-			query: "phoenix",
-			timestamp: "2026-04-09T12:00:00.000Z",
-		})
-
-		const res = await createApp().request(
-			"/v1/admin/traces/trace-1?agentId=agent-42",
-		)
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual(
-			expect.objectContaining({ traceId: "trace-1" }),
-		)
-		expect(bridgeMocks.mdbrainBridgeGetRecallTrace).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			traceId: "trace-1",
-		})
-	})
-
-	it("returns access trends via admin route", async () => {
-		bridgeMocks.mdbrainBridgeAccessTrends.mockResolvedValue([
-			{
-				collection: "events",
-				memoryId: "evt-1",
-				day: "2026-04-09T00:00:00.000Z",
-				count: 3,
-				rolling7dCount: 9,
-				lastAccessedAt: "2026-04-09T10:00:00.000Z",
-			},
-		])
-
-		const res = await createApp().request(
-			"/v1/admin/access-trends?agentId=agent-42&collection=events&memoryIds=evt-1,evt-2&windowDays=14&limit=8",
-		)
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual([
-			expect.objectContaining({ memoryId: "evt-1" }),
-		])
-		expect(bridgeMocks.mdbrainBridgeAccessTrends).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			collection: "events",
-			memoryIds: ["evt-1", "evt-2"],
-			windowDays: 14,
-			limit: 8,
-		})
-	})
-
-	it("returns access summaries via admin route", async () => {
-		bridgeMocks.mdbrainBridgeAccessSummaries.mockResolvedValue([
-			{
-				collection: "events",
-				memoryId: "evt-1",
-				accessCount: 7,
-				lastAccessedAt: "2026-04-09T10:00:00.000Z",
-			},
-		])
-
-		const res = await createApp().request(
-			"/v1/admin/access-summaries?agentId=agent-42&collection=events&memoryIds=evt-1,evt-2&windowDays=14",
-		)
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual([
-			expect.objectContaining({ memoryId: "evt-1", accessCount: 7 }),
-		])
-		expect(bridgeMocks.mdbrainBridgeAccessSummaries).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			collection: "events",
-			memoryIds: ["evt-1", "evt-2"],
-			windowDays: 14,
-		})
-	})
-
-	it("ingests benchmark datasets via admin route", async () => {
-		const res = await createApp().request("/v1/admin/benchmarks/ingest", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				agentId: "agent-42",
-				datasetPath: "/tmp/benchmark.json",
-				scope: "workspace",
-				limitConversations: 2,
-				limitTurnsPerConversation: 4,
-			}),
-		})
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual(
-			expect.objectContaining({
-				datasetPath: "/tmp/benchmark.json",
-				conversationsIngested: 1,
-			}),
-		)
-		expect(bridgeMocks.mdbrainBridgeBenchmarkIngest).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			datasetPath: "/tmp/benchmark.json",
-			scope: "workspace",
-			limitConversations: 2,
-			limitTurnsPerConversation: 4,
-		})
-	})
-
-	it("imports conversations through the canonical public route", async () => {
-		const res = await createApp().request("/v1/import/conversations", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				agentId: "agent-42",
-				datasetPath: "/tmp/history.json",
-				scope: "workspace",
-				limitConversations: 2,
-				limitTurnsPerConversation: 4,
-			}),
-		})
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual(
-			expect.objectContaining({
-				datasetPath: "/tmp/history.json",
-				datasetKind: "generic",
-				conversationsImported: 1,
-			}),
-		)
-		expect(bridgeMocks.mdbrainBridgeImportConversations).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			datasetPath: "/tmp/history.json",
-			scope: "workspace",
-			limitConversations: 2,
-			limitTurnsPerConversation: 4,
-		})
-	})
-
-	it("returns publishable benchmark metrics via admin route", async () => {
-		const res = await createApp().request("/v1/admin/relevance/benchmark", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				agentId: "agent-42",
-				datasetPath: "/tmp/longmemeval.json",
-				maxResults: 10,
-				minScore: 0.1,
-			}),
-		})
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual(
-			expect.objectContaining({
-				datasetVersion: "bench-v1",
-				datasetKind: "longmemeval",
-				rAt5: 0.88,
-				rAt10: 0.91,
-				ndcgAt10: 0.86,
-				officialMetrics: expect.objectContaining({
-					longMemEval: expect.objectContaining({
-						retrievalCases: 4,
-						session: expect.objectContaining({
-							recallAllAt5: 0.88,
-							ndcgAnyAt10: 0.9,
-						}),
-					}),
-				}),
-				benchmarkReport: expect.objectContaining({
-					generatedAt: "2026-04-10T12:00:00.000Z",
-					build: expect.objectContaining({
-						commitSha: "abc123",
-					}),
-					corpus: expect.objectContaining({
-						datasetVersion: "bench-v1",
-						cases: 4,
-					}),
-					releaseGates: expect.arrayContaining([
-						expect.objectContaining({
-							gate: "query-governance",
-							status: "advisory-only",
-						}),
-					]),
-				}),
-			}),
-		)
-		expect(bridgeMocks.mdbrainBridgeRelevanceBenchmark).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			datasetPath: "/tmp/longmemeval.json",
-			maxResults: 10,
-			minScore: 0.1,
-		})
-	})
-
-	it("accepts datasetSha256, embeddingConfig, and rerankerConfig in benchmark body (Task 1.A)", async () => {
-		const res = await createApp().request("/v1/admin/relevance/benchmark", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				agentId: "agent-42",
-				datasetPath: "/tmp/longmemeval.json",
-				maxResults: 10,
-				datasetSha256: "a".repeat(64),
-				embeddingConfig: {
-					model: "voyage-3",
-					dimensions: 1024,
-					quantization: "float32",
-				},
-				rerankerConfig: {
-					model: "rerank-2",
-					version: null,
-					stage: "post-fusion",
-				},
-			}),
-		})
-
-		expect(res.status).toBe(200)
-		expect(bridgeMocks.mdbrainBridgeRelevanceBenchmark).toHaveBeenCalledWith(
-			expect.objectContaining({
-				agentId: "agent-42",
-				datasetPath: "/tmp/longmemeval.json",
-				maxResults: 10,
-				datasetSha256: "a".repeat(64),
-				embeddingConfig: {
-					model: "voyage-3",
-					dimensions: 1024,
-					quantization: "float32",
-				},
-				rerankerConfig: {
-					model: "rerank-2",
-					version: null,
-					stage: "post-fusion",
-				},
-			}),
-		)
-	})
-
-	it("rejects benchmark ingest when datasetPath is missing", async () => {
-		const res = await createApp().request("/v1/admin/benchmarks/ingest", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		})
-
-		expect(res.status).toBe(400)
-		await expect(res.json()).resolves.toEqual({
-			error: { code: "VALIDATION_ERROR", message: "datasetPath is required" },
-		})
-	})
-
-	it("rejects conversation import when datasetPath is missing", async () => {
-		const res = await createApp().request("/v1/import/conversations", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		})
-
-		expect(res.status).toBe(400)
-		await expect(res.json()).resolves.toEqual({
-			error: { code: "VALIDATION_ERROR", message: "datasetPath is required" },
-		})
-	})
-
 	it("schedules background extraction for one event", async () => {
 		const res = await createApp().request("/v1/extract", {
 			method: "POST",
@@ -1738,224 +2055,6 @@ describe("createApp", () => {
 		expect(res.status).toBe(400)
 		await expect(res.json()).resolves.toEqual({
 			error: { code: "VALIDATION_ERROR", message: "eventId is required" },
-		})
-	})
-
-	it("lists memory jobs via jobs route", async () => {
-		bridgeMocks.mdbrainBridgeListMemoryJobs.mockResolvedValue([
-			{
-				jobId: "consolidation-1",
-				jobType: "consolidation",
-				agentId: "agent-42",
-				status: "running",
-				createdAt: "2026-04-09T12:00:00.000Z",
-			},
-		])
-
-		const res = await createApp().request(
-			"/v1/jobs?agentId=agent-42&status=running&jobType=consolidation&limit=10",
-		)
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual([
-			expect.objectContaining({ jobId: "consolidation-1" }),
-		])
-		expect(bridgeMocks.mdbrainBridgeListMemoryJobs).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			status: "running",
-			limit: 10,
-			jobType: "consolidation",
-		})
-	})
-
-	it("clamps memory jobs list limit to 100", async () => {
-		await createApp().request(
-			"/v1/jobs?agentId=agent-42&status=running&limit=999999999",
-		)
-
-		expect(bridgeMocks.mdbrainBridgeListMemoryJobs).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			status: "running",
-			limit: 100,
-			jobType: undefined,
-		})
-	})
-
-	it("gets one memory job via jobs route", async () => {
-		bridgeMocks.mdbrainBridgeGetMemoryJob.mockResolvedValue({
-			jobId: "consolidation-1",
-			jobType: "consolidation",
-			agentId: "agent-42",
-			status: "completed",
-			createdAt: "2026-04-09T12:00:00.000Z",
-		})
-
-		const res = await createApp().request(
-			"/v1/jobs/consolidation-1?agentId=agent-42",
-		)
-
-		expect(res.status).toBe(200)
-		await expect(res.json()).resolves.toEqual(
-			expect.objectContaining({ jobId: "consolidation-1" }),
-		)
-		expect(bridgeMocks.mdbrainBridgeGetMemoryJob).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			jobId: "consolidation-1",
-		})
-	})
-
-	it("rejects chain-trace when factId is missing", async () => {
-		const res = await createApp().request("/v1/chain-trace", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ collection: "structured" }),
-		})
-
-		expect(res.status).toBe(400)
-		await expect(res.json()).resolves.toEqual({
-			error: { code: "VALIDATION_ERROR", message: "factId is required" },
-		})
-	})
-
-	it("rejects chain-trace when collection is missing", async () => {
-		const res = await createApp().request("/v1/chain-trace", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ factId: "fact-1" }),
-		})
-
-		expect(res.status).toBe(400)
-		await expect(res.json()).resolves.toEqual({
-			error: { code: "VALIDATION_ERROR", message: "collection is required" },
-		})
-	})
-
-	it("scans for novel observations via novelty-scan", async () => {
-		bridgeMocks.mdbrainBridgeScanNovelty.mockResolvedValue({
-			novelItems: [
-				{ id: "evt-1", body: "surprising observation", surprisal: 0.95 },
-			],
-			totalScanned: 50,
-		})
-
-		const res = await createApp().request("/v1/novelty-scan", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				agentId: "agent-42",
-				limit: 10,
-				scope: "workspace",
-			}),
-		})
-
-		expect(res.status).toBe(200)
-		const json = await res.json()
-		expect(json).toEqual(
-			expect.objectContaining({
-				novelItems: expect.any(Array),
-				totalScanned: 50,
-			}),
-		)
-		expect(bridgeMocks.mdbrainBridgeScanNovelty).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			limit: 10,
-			scope: "workspace",
-		})
-	})
-
-	it("runs dreamer consolidation via consolidate", async () => {
-		bridgeMocks.mdbrainBridgeConsolidate.mockResolvedValue({
-			factsExtracted: 3,
-			eventsProcessed: 10,
-			skipped: 2,
-		})
-
-		const res = await createApp().request("/v1/consolidate", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				agentId: "agent-42",
-				maxEvents: 20,
-				minCombinedScore: 0.15,
-				scope: "workspace",
-			}),
-		})
-
-		expect(res.status).toBe(200)
-		const json = await res.json()
-		expect(json).toEqual(
-			expect.objectContaining({
-				factsExtracted: 3,
-				eventsProcessed: 10,
-			}),
-		)
-		expect(bridgeMocks.mdbrainBridgeConsolidate).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			maxEvents: 20,
-			minCombinedScore: 0.15,
-			scope: "workspace",
-		})
-	})
-
-	it("edits core memory block via self-edit", async () => {
-		bridgeMocks.mdbrainBridgeSelfEdit.mockResolvedValue({
-			upserted: true,
-			id: "core:user",
-		})
-
-		const res = await createApp().request("/v1/self-edit", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				agentId: "agent-42",
-				block: "user",
-				action: "append",
-				content: "User prefers dark mode",
-			}),
-		})
-
-		expect(res.status).toBe(200)
-		const json = await res.json()
-		expect(json).toEqual(
-			expect.objectContaining({
-				upserted: true,
-				id: "core:user",
-			}),
-		)
-		expect(bridgeMocks.mdbrainBridgeSelfEdit).toHaveBeenCalledWith({
-			agentId: "agent-42",
-			block: "user",
-			action: "append",
-			content: "User prefers dark mode",
-		})
-	})
-
-	it("rejects self-edit when block is missing", async () => {
-		const res = await createApp().request("/v1/self-edit", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ action: "replace", content: "test" }),
-		})
-
-		expect(res.status).toBe(400)
-		await expect(res.json()).resolves.toEqual({
-			error: {
-				code: "VALIDATION_ERROR",
-				message: "block must be user|persona|instructions",
-			},
-		})
-	})
-
-	it("rejects self-edit when content is missing", async () => {
-		const res = await createApp().request("/v1/self-edit", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ block: "user", action: "replace" }),
-		})
-
-		expect(res.status).toBe(400)
-		await expect(res.json()).resolves.toEqual({
-			error: { code: "VALIDATION_ERROR", message: "content is required" },
 		})
 	})
 
@@ -2150,6 +2249,8 @@ describe("createApp", () => {
 			body: JSON.stringify({
 				agentId: "agent-42",
 				query: "phoenix",
+				scope: "workspace",
+				scopeRef: "/workspace/mdbrain",
 				sessionId: "session-9",
 				roles: ["assistant"],
 				startTime: "2026-04-08",
@@ -2191,6 +2292,8 @@ describe("createApp", () => {
 		expect(bridgeMocks.mdbrainBridgeRecallConversation).toHaveBeenCalledWith({
 			agentId: "agent-42",
 			query: "phoenix",
+			scope: "workspace",
+			scopeRef: "/workspace/mdbrain",
 			sessionId: "session-9",
 			roles: ["assistant"],
 			startTime: "2026-04-08",
