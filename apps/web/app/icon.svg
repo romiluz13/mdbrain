@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+	<title>MDBrain</title>
+	<rect width="64" height="64" rx="12" fill="#052e2b"/>
+	<path d="M12 49V15l20 12 20-12v34L32 37 12 49Z" fill="none" stroke="#c8f24b" stroke-width="4" stroke-linejoin="bevel"/>
+	<circle cx="32" cy="32" r="4" fill="#c8f24b"/>
+</svg>

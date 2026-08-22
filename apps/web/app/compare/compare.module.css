@@ -1,0 +1,372 @@
+.page {
+	--ink: #102a29;
+	--forest: #073f3a;
+	--paper: #f5f0e6;
+	--acid: #c8f24b;
+	--line: rgba(16, 42, 41, 0.2);
+	min-height: 100vh;
+	background:
+		linear-gradient(rgba(16, 42, 41, 0.035) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(16, 42, 41, 0.035) 1px, transparent 1px),
+		var(--paper);
+	background-size: 28px 28px;
+	color: var(--ink);
+}
+
+.page,
+.page * {
+	box-sizing: border-box;
+}
+
+.page a {
+	color: inherit;
+	text-decoration: none;
+}
+
+.header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: min(1368px, calc(100% - 72px));
+	margin: 0 auto;
+	padding: 24px 0;
+	border-bottom: 1px solid var(--line);
+	font-family: var(--font-mono), monospace;
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.hero {
+	display: grid;
+	grid-template-columns: minmax(0, 1.3fr) minmax(270px, 0.7fr);
+	gap: 80px;
+	align-items: end;
+	width: min(1368px, calc(100% - 72px));
+	margin: 0 auto;
+	padding: 110px 0 90px;
+}
+
+.eyebrow,
+.categoryHeading > p {
+	margin: 0 0 25px;
+	font-family: var(--font-mono), monospace;
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
+.hero h1 {
+	grid-column: 1;
+	margin: 0;
+	font-family: var(--font-display), sans-serif;
+	font-size: clamp(74px, 10vw, 150px);
+	letter-spacing: -0.08em;
+	line-height: 0.76;
+}
+
+.hero h1 em {
+	display: block;
+	margin-top: 0.22em;
+	color: #24766b;
+	font-family: var(--font-serif), serif;
+	font-size: 0.62em;
+	font-weight: 400;
+	letter-spacing: -0.05em;
+}
+
+.hero > p:last-child {
+	grid-column: 2;
+	grid-row: 2;
+	margin: 0;
+	color: #586966;
+	font-size: 16px;
+	line-height: 1.7;
+}
+
+.method {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	width: 100%;
+	background: var(--forest);
+	color: white;
+}
+
+.method > div {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-height: 105px;
+	padding: 25px max(24px, calc((100vw - 1368px) / 8));
+	border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.method span,
+.product small,
+.strength span,
+.difference span,
+.difference small {
+	color: var(--acid);
+	font-family: var(--font-mono), monospace;
+	font-size: 8px;
+	letter-spacing: 0.09em;
+	text-transform: uppercase;
+}
+
+.method strong {
+	font-family: var(--font-serif), serif;
+	font-size: 18px;
+	font-weight: 400;
+}
+
+.category {
+	width: min(1368px, calc(100% - 72px));
+	margin: 0 auto;
+	padding: 120px 0 10px;
+}
+
+.categoryHeading {
+	display: grid;
+	grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
+	gap: 60px;
+	align-items: start;
+	margin-bottom: 52px;
+}
+
+.categoryHeading h2 {
+	margin: -12px 0 0;
+	font-family: var(--font-display), sans-serif;
+	font-size: clamp(48px, 6vw, 84px);
+	letter-spacing: -0.065em;
+	line-height: 0.94;
+}
+
+.comparisonList {
+	border-top: 1px solid var(--ink);
+}
+
+.columnLabels,
+.comparisonList article {
+	display: grid;
+	grid-template-columns: 0.65fr 1fr 1.1fr;
+	gap: 34px;
+}
+
+.columnLabels {
+	padding: 13px 0;
+	border-bottom: 1px solid var(--line);
+	font-family: var(--font-mono), monospace;
+	font-size: 8px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.comparisonList article {
+	min-height: 260px;
+	padding: 34px 0;
+	border-bottom: 1px solid var(--line);
+}
+
+.comparisonList article > div {
+	padding-right: 30px;
+	border-right: 1px solid var(--line);
+}
+
+.comparisonList article > div:last-child {
+	padding-right: 0;
+	border-right: 0;
+}
+
+.product h3 {
+	margin: 11px 0;
+	font-family: var(--font-display), sans-serif;
+	font-size: clamp(34px, 4vw, 58px);
+	letter-spacing: -0.055em;
+}
+
+.product p,
+.strength p,
+.difference p {
+	margin: 0;
+	color: #586966;
+	font-size: 14px;
+	line-height: 1.65;
+}
+
+.strength span,
+.difference span {
+	display: none;
+	margin-bottom: 14px;
+	color: #24766b;
+}
+
+.difference a {
+	display: block;
+	width: fit-content;
+	margin-top: 25px;
+	border-bottom: 1px solid var(--ink);
+	font-family: var(--font-mono), monospace;
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.difference small {
+	display: block;
+	margin-top: 12px;
+	color: #6d7876;
+}
+
+.boundary {
+	display: grid;
+	grid-template-columns: 1fr 0.72fr;
+	gap: 90px;
+	width: 100%;
+	margin-top: 130px;
+	padding: 120px max(36px, calc((100vw - 1368px) / 2));
+	background: var(--acid);
+}
+
+.boundary h2 {
+	margin: 0;
+	font-family: var(--font-display), sans-serif;
+	font-size: clamp(52px, 7vw, 96px);
+	letter-spacing: -0.07em;
+	line-height: 0.9;
+}
+
+.boundary > div:last-child {
+	align-self: end;
+}
+
+.boundary > div:last-child p {
+	margin: 22px 0 0;
+	font-family: var(--font-serif), serif;
+	font-size: 20px;
+	line-height: 1.45;
+}
+
+.footer {
+	display: flex;
+	gap: 50px;
+	align-items: center;
+	justify-content: space-between;
+	padding: 80px max(36px, calc((100vw - 1368px) / 2));
+	background: var(--forest);
+	color: white;
+}
+
+.footer h2 {
+	max-width: 840px;
+	margin: 0;
+	font-family: var(--font-serif), serif;
+	font-size: clamp(38px, 5vw, 70px);
+	font-weight: 400;
+	letter-spacing: -0.04em;
+	line-height: 1;
+}
+
+.footer a {
+	flex: 0 0 auto;
+	padding: 15px 18px;
+	background: var(--acid);
+	color: var(--forest);
+	font-family: var(--font-mono), monospace;
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+	.hero {
+		grid-template-columns: 1fr;
+	}
+
+	.hero > p:last-child {
+		grid-column: 1;
+		grid-row: auto;
+		max-width: 650px;
+	}
+
+	.method {
+		grid-template-columns: repeat(2, 1fr);
+	}
+
+	.categoryHeading,
+	.boundary {
+		grid-template-columns: 1fr;
+	}
+
+	.columnLabels {
+		display: none;
+	}
+
+	.comparisonList article {
+		grid-template-columns: 1fr 1fr;
+	}
+
+	.product {
+		grid-column: 1 / -1;
+	}
+
+	.strength span,
+	.difference span {
+		display: block;
+	}
+}
+
+@media (max-width: 620px) {
+	.header,
+	.hero,
+	.category {
+		width: calc(100% - 40px);
+	}
+
+	.header {
+		gap: 20px;
+	}
+
+	.hero {
+		padding: 76px 0 70px;
+	}
+
+	.hero h1 {
+		font-size: clamp(66px, 21vw, 96px);
+	}
+
+	.method {
+		grid-template-columns: 1fr;
+	}
+
+	.category {
+		padding-top: 90px;
+	}
+
+	.comparisonList article {
+		grid-template-columns: 1fr;
+	}
+
+	.product {
+		grid-column: 1;
+	}
+
+	.comparisonList article > div {
+		padding: 0 0 25px;
+		border-right: 0;
+	}
+
+	.boundary {
+		padding: 90px 20px;
+	}
+
+	.footer {
+		flex-direction: column;
+		align-items: flex-start;
+		padding: 80px 20px;
+	}
+}
