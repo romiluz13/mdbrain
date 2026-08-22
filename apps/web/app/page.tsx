@@ -1,352 +1,432 @@
-"use client"
+import Link from "next/link"
+import { ScenarioExplorer } from "./components/scenario-explorer.js"
+import { SystemAtlas } from "./components/system-atlas.js"
+import styles from "./landing.module.css"
+import {
+	architectureStages,
+	proofScenarios,
+} from "../lib/marketing/architecture.js"
+import {
+	categoryComparisons,
+	comparisonRows,
+} from "../lib/marketing/comparisons.js"
 
-import { useEffect, useRef } from "react"
+const repository = "https://github.com/romiluz13/mdbrain"
 
-const memoryLayers = [
+const fragments = [
 	{
-		label: "Events",
-		title: "Every interaction stays source-backed.",
-		body: "Conversations, tool calls, documents, and agent actions land as durable memory events with timestamps, scope, provenance, and metadata.",
+		number: "01",
+		title: "Retrieval without history",
+		body: "A chunk can match a question without knowing whether the source was replaced last Tuesday.",
 	},
 	{
-		label: "Structure",
-		title: "Facts become current state, not loose notes.",
-		body: "Preferences, procedures, profile details, revisions, and superseded values are modeled so an agent can know what changed and what still holds.",
+		number: "02",
+		title: "Memory without governance",
+		body: "A useful fact can still be the wrong fact for this user, agent, role, or department.",
 	},
 	{
-		label: "Retrieval",
-		title: "Semantic, lexical, graph, and hybrid recall work together.",
-		body: "Vector similarity finds meaning, full-text search catches names and exact facts, graph links recover relationships, and hybrid ranking chooses the right evidence.",
+		number: "03",
+		title: "Graphs without evidence",
+		body: "A relationship is easy to traverse and hard to trust when the source path disappeared.",
 	},
 	{
-		label: "Proof",
-		title: "The answer can point back to the memory.",
-		body: "Context bundles preserve source IDs, scores, roles, timestamps, and stale/current labels so memory can be inspected instead of trusted blindly.",
+		number: "04",
+		title: "Wikis without recall",
+		body: "Readable knowledge decays if agents cannot search, update, and deliver it in the moment.",
 	},
 ]
 
-const capabilities = [
-	[
-		"Document memory",
-		"Events, facts, KB chunks, procedures, graph edges, and telemetry live together.",
-	],
-	[
-		"Vector recall",
-		"High-recall semantic search for fuzzy questions and long-running context.",
-	],
-	[
-		"Lexical recall",
-		"Exact names, dates, identifiers, and proper nouns stay recoverable.",
-	],
-	[
-		"Hybrid ranking",
-		"Semantic and keyword evidence can be fused without leaving the memory store.",
-	],
-	[
-		"Graph context",
-		"Episodes, entities, sessions, and scopes become traversable relationships.",
-	],
-	[
-		"Operational truth",
-		"Health, indexes, provenance, cleanup, and release gates are first-class.",
-	],
+const mongoCapabilities = [
+	{
+		name: "Document model",
+		syntax: "BSON",
+		body: "Pages, claims, revisions, provenance, access rules, and graph edges keep their native shape.",
+	},
+	{
+		name: "Semantic retrieval",
+		syntax: "$vectorSearch",
+		body: "Meaning-based recall runs against operational knowledge with governance filters attached.",
+	},
+	{
+		name: "Lexical retrieval",
+		syntax: "$search",
+		body: "Identifiers, names, exact phrases, and dates survive alongside semantic similarity.",
+	},
+	{
+		name: "Server-side fusion",
+		syntax: "$rankFusion",
+		body: "Complementary result sets become one ranking without a second retrieval database.",
+	},
+	{
+		name: "Relationship context",
+		syntax: "$graphLookup",
+		body: "A relevant page expands into typed, depth-aware surrounding knowledge.",
+	},
+	{
+		name: "Governed change",
+		syntax: "transactions",
+		body: "Revisions, contradictions, claims, and indexes change together or not at all.",
+	},
 ]
 
-const codeSample = `const mdbrain = new MdbrainClient({
-  baseUrl: "http://127.0.0.1:3847"
-})
+const evidence = [
+	{
+		claim: "Wiki writes retain revision history",
+		status: "IMPLEMENTED",
+		detail: "Transactional revision tests",
+		href: `${repository}/blob/main/packages/wiki-engine/src/wiki-revisions.test.ts`,
+	},
+	{
+		claim: "Contradictions survive duplicate filtering",
+		status: "IMPLEMENTED",
+		detail: "Contradiction pipeline tests",
+		href: `${repository}/blob/main/packages/wiki-engine/src/wiki-contradictions.test.ts`,
+	},
+	{
+		claim: "Reads enforce scoped governance",
+		status: "IMPLEMENTED",
+		detail: "Isolation and policy tests",
+		href: `${repository}/blob/main/packages/wiki-engine/src/wiki-governance.test.ts`,
+	},
+	{
+		claim: "Search combines semantic and lexical evidence",
+		status: "RUNTIME-GATED",
+		detail: "Atlas and local search paths",
+		href: `${repository}/blob/main/packages/wiki-engine/src/wiki-search.test.ts`,
+	},
+	{
+		claim: "Knowledge exports through OKF",
+		status: "IMPLEMENTED",
+		detail: "Portable interchange tests",
+		href: `${repository}/blob/main/packages/wiki-engine/src/okf.test.ts`,
+	},
+	{
+		claim: "Long-term memory is independently deployable",
+		status: "EXTERNAL",
+		detail: "Pinned Memongo HTTP contract",
+		href: `${repository}/blob/main/packages/memory-bridge/src/memongo-http-client.ts`,
+	},
+]
 
-await mdbrain.add({
-  sessionId: "agent-42",
-  content: "Romi prefers concise release notes.",
-  idempotencyKey: crypto.randomUUID()
-})
-
-const context = await mdbrain.search({
-  sessionKey: "agent-42",
-  query: "How should I write the launch note?",
-  limit: 8
-})`
-
-export default function LandingPage() {
-	const rootRef = useRef<HTMLElement>(null)
-
-	useEffect(() => {
-		const root = rootRef.current
-		if (!root) {
-			return
-		}
-
-		const reduceMotion = window.matchMedia(
-			"(prefers-reduced-motion: reduce)",
-		).matches
-
-		if (reduceMotion) {
-			root.dataset.motion = "reduced"
-			return
-		}
-
-		let cleanup = () => {}
-
-		void (async () => {
-			const [{ gsap }, { ScrollTrigger }] = await Promise.all([
-				import("gsap"),
-				import("gsap/ScrollTrigger"),
-			])
-
-			gsap.registerPlugin(ScrollTrigger)
-
-			const context = gsap.context(() => {
-				gsap
-					.timeline({ defaults: { ease: "power4.out" } })
-					.from(".hero-kicker", { opacity: 0, y: 18, duration: 0.7 })
-					.from(
-						".hero-title span",
-						{
-							opacity: 0,
-							yPercent: 70,
-							rotateX: -35,
-							stagger: 0.08,
-							duration: 0.9,
-						},
-						"-=0.4",
-					)
-					.from(
-						".hero-copy, .hero-actions",
-						{
-							opacity: 0,
-							y: 22,
-							duration: 0.8,
-							stagger: 0.12,
-						},
-						"-=0.45",
-					)
-					.from(
-						".memory-constellation",
-						{
-							opacity: 0,
-							scale: 0.96,
-							duration: 1,
-						},
-						"-=0.8",
-					)
-
-				gsap.to(".memory-orbit", {
-					rotate: 360,
-					duration: 48,
-					repeat: -1,
-					ease: "none",
-					transformOrigin: "50% 50%",
-				})
-
-				gsap.to(".memory-core", {
-					scale: 1.08,
-					duration: 2.8,
-					yoyo: true,
-					repeat: -1,
-					ease: "sine.inOut",
-				})
-
-				gsap.utils.toArray<HTMLElement>(".reveal").forEach((element) => {
-					gsap.from(element, {
-						opacity: 0,
-						y: 44,
-						duration: 0.9,
-						ease: "power4.out",
-						scrollTrigger: {
-							trigger: element,
-							start: "top 82%",
-						},
-					})
-				})
-
-				gsap.to(".system-line", {
-					scaleY: 1,
-					ease: "none",
-					scrollTrigger: {
-						trigger: ".system-story",
-						start: "top 74%",
-						end: "bottom 68%",
-						scrub: true,
-					},
-				})
-			}, root)
-
-			cleanup = () => context.revert()
-		})()
-
-		return () => cleanup()
-	}, [])
-
+export default function Home() {
 	return (
-		<main ref={rootRef} className="landing-shell">
-			<section className="landing-hero">
-				<nav className="landing-nav" aria-label="Primary navigation">
-					<a className="brand-mark" href="/" aria-label="Mdbrain home">
-						<span className="brand-mark__glyph">M</span>
-						<span>Mdbrain</span>
-					</a>
-					<div className="nav-links">
-						<a href="#architecture">Architecture</a>
-						<a href="#memory-model">Memory model</a>
-						<a href="/console">Console</a>
-						<a href="https://github.com/romiluz13/mdbrain">GitHub</a>
-					</div>
+		<main className={styles.page}>
+			<header className={styles.header}>
+				<Link className={styles.brand} href="/" aria-label="MDBrain home">
+					<svg viewBox="0 0 32 32" aria-hidden="true">
+						<path d="M5 25V7l11 7 11-7v18l-11-7-11 7Z" />
+					</svg>
+					<span>MDBrain</span>
+				</Link>
+				<nav aria-label="Primary navigation">
+					<a href="#architecture">Architecture</a>
+					<a href="#proof">Proof</a>
+					<a href="#comparison">Comparison</a>
+					<Link href="/compare">Field guide</Link>
 				</nav>
+				<a className={styles.headerCta} href={repository}>
+					View source
+					<span aria-hidden="true">↗</span>
+				</a>
+			</header>
 
-				<div className="hero-grid">
-					<div className="hero-copy-block">
-						<p className="hero-kicker">MongoDB-native agent memory</p>
-						<h1 className="hero-title">
-							<span>Memory,</span>
-							<span>minus the</span>
-							<span>
-								<code className="hero-title-code">.md</code> tax.
-							</span>
-						</h1>
-						<p className="hero-copy">
-							A <code>.md</code> file is fine for the first run. It fails when
-							every turn makes the agent reread the whole past. Mdbrain stores
-							memory in MongoDB, then retrieves only the slice that matters:
-							source, search, graph, and proof.
-						</p>
-						<div className="hero-actions">
-							<a className="button button-primary" href="#quickstart">
-								Start in five minutes
-							</a>
-							<a className="button button-secondary" href="/console">
-								Open console
-							</a>
-						</div>
+			<section className={styles.hero}>
+				<div className={styles.heroCopy}>
+					<p className={styles.eyebrow}>
+						<span>Open system blueprint</span>
+						MongoDB-native knowledge + memory
+					</p>
+					<h1>
+						Your AI can retrieve a fact.{" "}
+						<em>Can it tell when that fact stopped being true?</em>
+					</h1>
+					<p className={styles.heroSummary}>
+						MDBrain is an open-source architecture for governed company
+						knowledge and long-term agent memory. It keeps meaning, history,
+						permissions, relationships, and evidence inside one inspectable
+						system.
+					</p>
+					<div className={styles.heroActions}>
+						<a className={styles.primaryButton} href="#quickstart">
+							Install the blueprint
+							<span aria-hidden="true">↓</span>
+						</a>
+						<a className={styles.secondaryButton} href="#architecture">
+							Trace the architecture
+						</a>
 					</div>
-
-					<div
-						className="memory-constellation"
-						role="img"
-						aria-label="Animated memory system diagram"
-					>
-						<div className="memory-ring memory-ring--outer" />
-						<div className="memory-ring memory-ring--inner" />
-						<div className="memory-orbit">
-							<span className="memory-node memory-node--event">events</span>
-							<span className="memory-node memory-node--vector">vector</span>
-							<span className="memory-node memory-node--graph">graph</span>
-							<span className="memory-node memory-node--text">text</span>
-						</div>
-						<div className="memory-core">
-							<span className="memory-core__label">one memory store</span>
-							<strong>source, search, graph, proof</strong>
-						</div>
-					</div>
+					<ul className={styles.heroFacts} aria-label="Project facts">
+						<li>
+							<strong>Apache 2.0</strong>
+							<span>open source</span>
+						</li>
+						<li>
+							<strong>6 stages</strong>
+							<span>source to context</span>
+						</li>
+						<li>
+							<strong>0 black boxes</strong>
+							<span>every claim linked</span>
+						</li>
+					</ul>
 				</div>
+				<SystemAtlas stages={architectureStages} />
 			</section>
 
-			<section className="signal-strip" aria-label="Mdbrain capabilities">
-				<div>
-					<span>Stores</span>
-					<strong>events, facts, procedures, docs</strong>
+			<section className={styles.thesis} aria-labelledby="thesis-heading">
+				<div className={styles.sectionLead}>
+					<p className={styles.eyebrow}>The fragmentation tax</p>
+					<h2 id="thesis-heading">
+						Most memory stacks remember the answer.
+						<em>They forget the system around it.</em>
+					</h2>
 				</div>
-				<div>
-					<span>Retrieves</span>
-					<strong>vector, lexical, hybrid, graph</strong>
+				<div className={styles.fragmentGrid}>
+					{fragments.map((fragment) => (
+						<article key={fragment.number}>
+							<span>{fragment.number}</span>
+							<h3>{fragment.title}</h3>
+							<p>{fragment.body}</p>
+						</article>
+					))}
 				</div>
-				<div>
-					<span>Explains</span>
-					<strong>sources, scores, roles, timestamps</strong>
-				</div>
+				<p className={styles.thesisLine}>
+					The result is a chain of indexes, graphs, files, policy layers, and
+					sync jobs, each holding only part of the truth.
+				</p>
 			</section>
 
-			<section id="architecture" className="section-grid system-story">
-				<div className="section-heading reveal">
-					<p className="eyebrow">The hidden hard part</p>
-					<h2>Memory is not a vector table.</h2>
+			<section
+				className={styles.architectureSection}
+				id="architecture"
+				aria-labelledby="architecture-heading"
+			>
+				<div className={styles.sectionLead}>
+					<p className={styles.eyebrow}>The living system</p>
+					<h2 id="architecture-heading">
+						One living system, not a pipeline of loose parts.
+					</h2>
 					<p>
-						A useful agent needs more than nearest neighbors. It needs the
-						actual event, the current fact, the old fact it replaced, the exact
-						name a user typed, the relationship between sessions, and the proof
-						that a context bundle was assembled honestly.
+						Each stage adds a contract. None of them erase the source that came
+						before.
 					</p>
 				</div>
-				<div className="system-steps">
-					<div className="system-line" />
-					{memoryLayers.map((layer) => (
-						<article className="system-step reveal" key={layer.label}>
-							<span>{layer.label}</span>
-							<h3>{layer.title}</h3>
-							<p>{layer.body}</p>
+				<div className={styles.systemRail}>
+					{architectureStages.map((stage, index) => (
+						<article key={stage.id}>
+							<div>
+								<span>{String(index + 1).padStart(2, "0")}</span>
+								<strong>{stage.label.split(" / ")[1]}</strong>
+							</div>
+							<h3>{stage.title}</h3>
+							<p>{stage.description}</p>
+							<a href={stage.source.href}>{stage.source.label} ↗</a>
 						</article>
 					))}
 				</div>
 			</section>
 
-			<section id="memory-model" className="capability-section reveal">
-				<div className="capability-intro">
-					<p className="eyebrow">The shape of the system</p>
-					<h2>One memory substrate, many recall modes.</h2>
+			<section
+				className={styles.proofSection}
+				id="proof"
+				aria-labelledby="proof-heading"
+			>
+				<div className={styles.sectionLead}>
+					<p className={styles.eyebrow}>Executable ideas</p>
+					<h2 id="proof-heading">Five ways to prove it.</h2>
 					<p>
-						Mdbrain is built around a simple belief: agent memory should live
-						where documents, indexes, relationships, operational queries, and
-						provenance can be reasoned about together.
+						Not animations pretending to be a product. Each scenario links to
+						the repository path that exercises the behavior.
 					</p>
 				</div>
-				<div className="capability-grid">
-					{capabilities.map(([title, body]) => (
-						<article className="capability-tile" key={title}>
-							<h3>{title}</h3>
-							<p>{body}</p>
+				<ScenarioExplorer scenarios={proofScenarios} />
+			</section>
+
+			<section
+				className={styles.mongodbSection}
+				aria-labelledby="mongodb-heading"
+			>
+				<div className={styles.mongoIntro}>
+					<p className={styles.eyebrow}>Why MongoDB</p>
+					<h2 id="mongodb-heading">Why MongoDB changes the architecture.</h2>
+					<p>
+						MongoDB is not just the vector store at the end of the diagram. It
+						lets documents, transactions, search, rankings, and graph traversal
+						share one operational boundary.
+					</p>
+					<a href="https://www.mongodb.com/docs/atlas/atlas-vector-search/hybrid-search/">
+						Read the MongoDB retrieval docs ↗
+					</a>
+				</div>
+				<div className={styles.mongoCapabilities}>
+					{mongoCapabilities.map((capability) => (
+						<article key={capability.name}>
+							<code>{capability.syntax}</code>
+							<h3>{capability.name}</h3>
+							<p>{capability.body}</p>
 						</article>
 					))}
 				</div>
 			</section>
 
-			<section className="proof-section reveal">
-				<div>
-					<p className="eyebrow">Not benchmark theater</p>
-					<h2>Built for audit before bragging.</h2>
+			<section
+				className={styles.comparisonSection}
+				id="comparison"
+				aria-labelledby="comparison-heading"
+			>
+				<div className={styles.sectionLead}>
+					<p className={styles.eyebrow}>Category comparison</p>
+					<h2 id="comparison-heading">Compare architectures, not slogans.</h2>
 					<p>
-						Mdbrain keeps benchmark claims scoped. Retrieval evidence and judged
-						answer quality are separated. Source IDs, commands, metadata,
-						topology, cleanup proof, and model posture matter more than a
-						headline.
+						These categories solve different jobs. “External” means the
+						capability can be added, but is not part of the category’s core
+						model.
 					</p>
 				</div>
-				<div className="proof-card">
-					<span className="proof-card__status">Public posture</span>
-					<strong>
-						Selected retrieval evidence is published. Broad ecosystem leadership
-						is not claimed.
-					</strong>
+				<section
+					aria-labelledby="comparison-table-heading"
+					className={styles.tableWrap}
+					// A horizontally scrollable region must be keyboard focusable.
+					// biome-ignore lint/a11y/noNoninteractiveTabindex: Enables keyboard scrolling.
+					tabIndex={0}
+				>
+					<h3 className={styles.visuallyHidden} id="comparison-table-heading">
+						Architecture capability comparison
+					</h3>
+					<table>
+						<thead>
+							<tr>
+								<th scope="col">Capability</th>
+								{categoryComparisons.map((category) => (
+									<th
+										className={
+											category.id === "mdbrain" ? styles.highlightCell : ""
+										}
+										key={category.id}
+										scope="col"
+									>
+										{category.label}
+									</th>
+								))}
+							</tr>
+						</thead>
+						<tbody>
+							{comparisonRows.map((row) => (
+								<tr key={row.id}>
+									<th scope="row">{row.label}</th>
+									{categoryComparisons.map((category) => (
+										<td
+											className={
+												category.id === "mdbrain" ? styles.highlightCell : ""
+											}
+											data-value={category.capabilities[row.id]}
+											key={category.id}
+										>
+											{category.capabilities[row.id]}
+										</td>
+									))}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</section>
+				<div className={styles.comparisonFooter}>
 					<p>
-						The product is open source now. The benchmark work remains honest,
-						reproducible, and deliberately scoped.
+						Need product-by-product context? The field guide cites only
+						first-party sources and states where each alternative is stronger.
 					</p>
+					<Link href="/compare">Open the sourced field guide →</Link>
 				</div>
 			</section>
 
-			<section id="quickstart" className="quickstart-section reveal">
-				<div>
-					<p className="eyebrow">Use it like infrastructure</p>
-					<h2>Add memory, search memory, inspect the answer.</h2>
+			<section
+				className={styles.evidenceSection}
+				aria-labelledby="evidence-heading"
+			>
+				<div className={styles.sectionLead}>
+					<p className={styles.eyebrow}>Evidence ledger</p>
+					<h2 id="evidence-heading">Inspect every claim.</h2>
 					<p>
-						Run the API, connect the SDK, then let your agent retrieve context
-						from the same place that stores the source evidence.
+						The showcase distinguishes code-backed behavior, capabilities that
+						require a configured runtime, and services deployed outside this
+						repository.
 					</p>
-					<div className="hero-actions">
-						<a
-							className="button button-primary"
-							href="https://github.com/romiluz13/mdbrain#quickstart"
-						>
-							Read the quickstart
-						</a>
-						<a className="button button-secondary" href="/console">
-							Try the console
-						</a>
-					</div>
 				</div>
-				<pre className="code-window">
-					<code>{codeSample}</code>
-				</pre>
+				<div className={styles.evidenceLedger}>
+					{evidence.map((item, index) => (
+						<a href={item.href} key={item.claim}>
+							<span>{String(index + 1).padStart(2, "0")}</span>
+							<strong>{item.claim}</strong>
+							<small data-status={item.status}>{item.status}</small>
+							<p>{item.detail}</p>
+							<b aria-hidden="true">↗</b>
+						</a>
+					))}
+				</div>
 			</section>
+
+			<section
+				className={styles.quickstartSection}
+				id="quickstart"
+				aria-labelledby="quickstart-heading"
+			>
+				<div className={styles.quickstartCopy}>
+					<p className={styles.eyebrow}>Run it yourself</p>
+					<h2 id="quickstart-heading">Install the entire system.</h2>
+					<p>
+						Clone the repository, start the transaction-capable local MongoDB
+						stack, connect a compatible Memongo 2.0.1 service, and boot the API.
+						No hosted MDBrain account is required.
+					</p>
+					<a href={`${repository}#quickstart`}>Read the full quickstart ↗</a>
+				</div>
+				<section aria-labelledby="terminal-heading" className={styles.terminal}>
+					<h3 className={styles.visuallyHidden} id="terminal-heading">
+						Terminal quickstart
+					</h3>
+					<div>
+						<span />
+						<span />
+						<span />
+						<small>~/mdbrain</small>
+					</div>
+					<pre>
+						<code>{`git clone https://github.com/romiluz13/mdbrain.git
+cd mdbrain && bun install
+
+docker compose \\
+  -f docker/docker-compose.minimal.yml up -d
+
+# Configure a compatible Memongo 2.0.1 service
+export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?replicaSet=rs0"
+export MEMONGO_API_URL=http://127.0.0.1:3900
+export MEMONGO_API_KEY=local-memongo-secret
+export MEMONGO_ALLOW_INSECURE_LOCAL=1
+export MDBRAIN_API_KEY=local-dev-secret
+
+bun --cwd apps/api dev`}</code>
+					</pre>
+				</section>
+			</section>
+
+			<footer className={styles.footer}>
+				<div>
+					<p className={styles.eyebrow}>The open blueprint</p>
+					<h2>Build an AI that can remember, revise, and explain.</h2>
+				</div>
+				<div className={styles.footerLinks}>
+					<a className={styles.primaryButton} href={repository}>
+						Explore the repository ↗
+					</a>
+					<Link className={styles.secondaryButton} href="/compare">
+						Read the field guide
+					</Link>
+				</div>
+				<p className={styles.footerNote}>
+					MDBrain is an independent open-source project. MongoDB is a trademark
+					of MongoDB, Inc.
+				</p>
+			</footer>
 		</main>
 	)
 }
