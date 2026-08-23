@@ -96,3 +96,107 @@ test("field guide renders sourced, dated comparisons", async ({ page }) => {
 	expect(viewportHasNoOverflow).toBe(true)
 	await expectNoSeriousAccessibilityViolations(page)
 })
+
+test("retrieval autopsy turns a wrong answer into inspectable context", async ({
+	page,
+}) => {
+	const consoleErrors: string[] = []
+	page.on("console", (message) => {
+		if (message.type() === "error") {
+			consoleErrors.push(message.text())
+		}
+	})
+
+	await page.goto("/demo")
+	await expect(
+		page.getByRole("heading", {
+			level: 1,
+			name: /Your coding agent found the answer/,
+		}),
+	).toBeVisible()
+	await expect(
+		page.getByText("Guided synthetic simulation").first(),
+	).toBeVisible()
+	await expect(
+		page.getByText(/After the Identity Gateway v2 migration/).first(),
+	).toBeVisible()
+
+	const runRetrieval = page.getByRole("button", { name: "Run retrieval" })
+	await runRetrieval.focus()
+	await page.keyboard.press("Enter")
+	await expect(
+		page.getByRole("heading", { name: "The confident answer" }),
+	).toBeVisible()
+	await expect(page.getByText(/Use passport-jwt/)).toBeVisible()
+
+	await page.getByRole("button", { name: "← Back" }).click()
+	await expect(
+		page.getByRole("heading", {
+			name: "A normal question. Five pieces of company truth.",
+		}),
+	).toBeVisible()
+	await page.getByRole("button", { name: "Run retrieval" }).click()
+
+	const openAutopsy = page.getByRole("button", { name: "Open the autopsy" })
+	await openAutopsy.focus()
+	await page.keyboard.press("Enter")
+	await expect(
+		page.getByRole("region", { name: "Open the retrieval autopsy" }),
+	).toBeFocused()
+	await expect(
+		page.getByRole("heading", { name: "Open the retrieval autopsy" }),
+	).toBeVisible()
+	await expect(page.getByText("Discard", { exact: true })).toHaveCount(2)
+	await expect(
+		page
+			.getByRole("listitem")
+			.filter({ hasText: "Billing API authentication runbook" })
+			.getByText("Discard", { exact: true }),
+	).toBeVisible()
+	await expect(
+		page
+			.getByRole("listitem")
+			.filter({ hasText: "FY27 identity platform budget" })
+			.getByText("Discard", { exact: true }),
+	).toBeVisible()
+
+	await page.getByRole("button", { name: /Run through MDBrain/ }).click()
+	await expect(page.getByRole("heading", { name: "$rankFusion" })).toBeVisible()
+	await expect(
+		page.getByRole("heading", { name: "$rerank (optional)" }),
+	).toBeVisible()
+	await page.getByRole("button", { name: /Reveal the answer/ }).click()
+
+	await expect(
+		page.getByText(/Use @northstar\/identity-edge for the billing API/),
+	).toBeVisible()
+	await expect(
+		page.getByText("Potential conflict", { exact: true }),
+	).toBeVisible()
+	await page.getByRole("button", { name: "JSON" }).click()
+	await expect(
+		page
+			.getByRole("region", {
+				name: "Representative context bundle JSON",
+			})
+			.getByText(/northstar-engineering/),
+	).toBeVisible()
+
+	await page.getByRole("button", { name: "Restart" }).click()
+	await expect(
+		page.getByRole("heading", {
+			name: "A normal question. Five pieces of company truth.",
+		}),
+	).toBeVisible()
+	await page.getByRole("button", { name: "Skip to answer" }).click()
+	await expect(
+		page.getByRole("button", { name: "Human view" }),
+	).toHaveAttribute("aria-pressed", "true")
+
+	const viewportHasNoOverflow = await page.evaluate(
+		() => document.documentElement.scrollWidth <= window.innerWidth + 1,
+	)
+	expect(viewportHasNoOverflow).toBe(true)
+	expect(consoleErrors).toEqual([])
+	await expectNoSeriousAccessibilityViolations(page)
+})

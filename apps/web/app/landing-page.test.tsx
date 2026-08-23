@@ -11,6 +11,7 @@ describe("Living System Atlas landing page", () => {
 		expect(text).toContain(
 			"Your AI can retrieve a fact. Can it tell when that fact stopped being true?",
 		)
+		expect(text).toContain("Run the retrieval autopsy")
 		expect(text).toContain("One living system, not a pipeline of loose parts.")
 		expect(text).toContain("Five ways to prove it")
 		expect(text).toContain("Why MongoDB changes the architecture")
