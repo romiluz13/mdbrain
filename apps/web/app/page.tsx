@@ -119,6 +119,7 @@ export default function Home() {
 					<span>MDBrain</span>
 				</Link>
 				<nav aria-label="Primary navigation">
+					<Link href="/demo">Demo</Link>
 					<a href="#architecture">Architecture</a>
 					<a href="#proof">Proof</a>
 					<a href="#comparison">Comparison</a>
@@ -147,10 +148,10 @@ export default function Home() {
 						system.
 					</p>
 					<div className={styles.heroActions}>
-						<a className={styles.primaryButton} href="#quickstart">
-							Install the blueprint
-							<span aria-hidden="true">↓</span>
-						</a>
+						<Link className={styles.primaryButton} href="/demo">
+							Run the retrieval autopsy
+							<span aria-hidden="true">→</span>
+						</Link>
 						<a className={styles.secondaryButton} href="#architecture">
 							Trace the architecture
 						</a>
