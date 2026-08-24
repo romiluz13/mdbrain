@@ -51,7 +51,13 @@ jobs:
 
       - name: Generate wiki
         timeout-minutes: 60
-        run: droid exec --output-format stream-json --skip-permissions-unsafe --model "custom:Grove-GLM-5.2-Fireworks-0" --reasoning-effort off "/wiki"
+        run: >-
+          droid exec
+          --output-format stream-json
+          --skip-permissions-unsafe
+          --model "custom:Grove-GLM-5.2-Fireworks-0"
+          --reasoning-effort off
+          "/wiki Refresh the existing droid-wiki baseline. Upload to GitHub Wiki only. Skip Factory Cloud upload and video generation."
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
