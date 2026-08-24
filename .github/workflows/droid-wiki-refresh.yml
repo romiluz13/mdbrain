@@ -2,7 +2,7 @@ name: Droid Wiki Refresh
 
 on:
   push:
-    branches: [main, factory/fix-wiki-refresh]
+    branches: [main]
 
 jobs:
   wiki-refresh:
