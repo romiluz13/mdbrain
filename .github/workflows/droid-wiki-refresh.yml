@@ -2,7 +2,7 @@ name: Droid Wiki Refresh
 
 on:
   push:
-    branches: [main, factory/use-grove-wiki]
+    branches: [main]
 
 jobs:
   wiki-refresh:
@@ -43,11 +43,6 @@ jobs:
             ]
           }
           JSONEOF
-
-      - name: Verify Grove model
-        run: droid exec --output-format stream-json --model "custom:Grove-GLM-5.2-Fireworks-0" --reasoning-effort off "Reply exactly OK"
-        env:
-          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
 
       - name: Generate wiki
         timeout-minutes: 60
