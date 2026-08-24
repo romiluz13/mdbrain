@@ -8,12 +8,28 @@ jobs:
   wiki-refresh:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Factory Droid
         run: curl -fsSL https://app.factory.ai/cli | sh
 
       - name: Generate wiki
-        run: droid exec --auto high "/wiki"
+        run: |
+          set +e
+          output=$(droid exec --output-format json --auto high "/wiki" 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+
+          if [ "$status" -ne 0 ] && printf '%s' "$output" | grep -Fq '"result":"Exec failed"'; then
+            echo "::warning title=Wiki refresh skipped::Factory could not start a Droid execution. Check the account's model access or billing."
+            cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ### Wiki refresh skipped
+
+          Factory could not start a Droid execution. Check the account's model access or billing.
+          EOF
+          elif [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
