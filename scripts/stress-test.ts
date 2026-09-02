@@ -219,6 +219,8 @@ async function main() {
 		console.log(`✅ ALL CHECKS PASSED`)
 	} else {
 		console.log(`❌ ${errors + missing} issues found`)
+		// Data loss or write errors must fail the run — CI relies on the exit code.
+		process.exit(1)
 	}
 }
 
