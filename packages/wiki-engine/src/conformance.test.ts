@@ -146,6 +146,50 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 		])
 	})
 
+	// RED reproduction — C2-15 defect class. The update path must normalize
+	// relationships like the create path: optional fields (weight, confidence,
+	// evidenceKind, privacyTier) omitted when absent, defaults applied.
+	it("updateWikiPage accepts relationships without optional fields (C2-15 class)", async () => {
+		await createWikiPage(handle, pageInput({ slug: "concepts/c2-15b" }))
+		await createWikiPage(handle, pageInput({ slug: "concepts/c2-15b-target" }))
+		const updated = await updateWikiPage(
+			handle,
+			"concepts/c2-15b",
+			SCOPE,
+			SCOPE_REF,
+			{
+				relationships: [
+					{
+						targetPageSlug: "concepts/c2-15b-target",
+						targetTitle: "Conformance Concept",
+						kind: "relates_to",
+					},
+				],
+			},
+		)
+		expect(updated?.relationships).toEqual([
+			expect.objectContaining({
+				targetPageSlug: "concepts/c2-15b-target",
+				kind: "relates_to",
+				weight: 0,
+			}),
+		])
+		// The target gained a clean backlink from the update path (also
+		// exercises NB-1: the backlink write must omit context, not null it).
+		const target = await getWikiPage(
+			handle,
+			"concepts/c2-15b-target",
+			SCOPE,
+			SCOPE_REF,
+		)
+		expect(target?.backlinks).toEqual([
+			expect.objectContaining({
+				sourcePageSlug: "concepts/c2-15b",
+				sourceTitle: "Conformance Concept",
+			}),
+		])
+	})
+
 	// RED reproduction — NB-1. Intended contract: creating a page with
 	// relationships succeeds and the target gains a clean backlink entry.
 	it("creating a page with relationships writes clean backlinks to the target (NB-1)", async () => {

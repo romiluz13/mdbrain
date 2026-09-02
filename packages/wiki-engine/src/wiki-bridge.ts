@@ -522,17 +522,39 @@ export async function updateWikiPage(
 	if (patch.questions !== undefined) {
 		// Normalize like the create path: default status + createdAt so the
 		// $jsonSchema validator (requires id/text/status/createdAt per question)
-		// does not reject the update.
-		setFields.questions = (patch.questions ?? []).map((q) => ({
-			id: q.id,
-			text: q.text,
-			status: q.status ?? "open",
-			answeredByClaimId: q.answeredByClaimId,
-			createdAt: now,
-		}))
+		// does not reject the update. answeredByClaimId is optional — set it
+		// only when present: the driver serializes undefined as BSON null,
+		// which fails the bsonType "string" validator (C2-15).
+		setFields.questions = (patch.questions ?? []).map((q) => {
+			const question: Record<string, unknown> = {
+				id: q.id,
+				text: q.text,
+				status: q.status ?? "open",
+				createdAt: now,
+			}
+			if (q.answeredByClaimId) {
+				question.answeredByClaimId = q.answeredByClaimId
+			}
+			return question
+		})
 	}
-	if (patch.relationships !== undefined)
-		setFields.relationships = patch.relationships
+	if (patch.relationships !== undefined) {
+		// Normalize like the create path: default weight/confidence and omit
+		// optional string/enum fields when absent — undefined values serialize
+		// to BSON null and fail the $jsonSchema validator (same class as C2-15).
+		setFields.relationships = (patch.relationships ?? []).map((r) => {
+			const rel: Record<string, unknown> = {
+				targetPageSlug: r.targetPageSlug,
+				targetTitle: r.targetTitle,
+				kind: r.kind,
+				weight: r.weight ?? 0,
+				confidence: r.confidence ?? 0,
+			}
+			if (r.evidenceKind) rel.evidenceKind = r.evidenceKind
+			if (r.privacyTier) rel.privacyTier = r.privacyTier
+			return rel
+		})
+	}
 
 	// Recompute the auto-embed text field when title/summary/body changes.
 	// Uses merged old + new values so partial patches still produce correct text.

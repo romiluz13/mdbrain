@@ -72,12 +72,15 @@ export async function recomputeBacklinksFor(
 		relationships?: Array<{ targetPageSlug: string; kind?: string }>
 	}>
 
+	// NOTE: `context` is intentionally omitted — writing `context: undefined`
+	// serializes to BSON null, which fails the $jsonSchema validator (context
+	// is optional but must be a string when present — NB-1). Set it only when
+	// a context is actually derived from the relationship.
 	const backlinks: WikiBacklink[] = referringPages
 		.filter((p) => p.slug !== targetSlug) // no self-backlinks
 		.map((p) => ({
 			sourcePageSlug: p.slug,
 			sourceTitle: p.title,
-			context: undefined,
 		}))
 
 	// Write the backlinks[] to the target page.
