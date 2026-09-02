@@ -12,7 +12,11 @@ export const ALL_PRINCIPAL_CAPABILITIES = [
 ] as const
 
 export type PrincipalCapability = (typeof ALL_PRINCIPAL_CAPABILITIES)[number]
-export type PrincipalTrustTier = "restricted" | "standard" | "admin"
+export type PrincipalTrustTier =
+	| "restricted"
+	| "standard"
+	| "admin"
+	| "development"
 export type PrincipalIdentityState = "active" | "stale" | "unknown"
 export type PrincipalScopeGrant = {
 	scope: MemoryScope | "*"
@@ -54,7 +58,12 @@ const MEMORY_SCOPES = new Set<string>([
 	"global",
 ])
 const CAPABILITIES = new Set<string>(ALL_PRINCIPAL_CAPABILITIES)
-const TRUST_TIERS = new Set<string>(["restricted", "standard", "admin"])
+const TRUST_TIERS = new Set<string>([
+	"restricted",
+	"standard",
+	"admin",
+	"development",
+])
 const WILDCARD = "*"
 
 export function timingSafeBearerEquals(a: string, b: string): boolean {
@@ -105,6 +114,37 @@ function stringList(
 	return [...new Set(values)]
 }
 
+function parseGrantPairs(
+	value: unknown,
+	index: number,
+): PrincipalScopeGrant[] | undefined {
+	if (value === undefined) return undefined
+	if (!Array.isArray(value) || value.length === 0) {
+		throw new Error(
+			`MDBRAIN_API_SCOPED_KEYS policy at index ${index} has invalid grants`,
+		)
+	}
+	return value.map((entry) => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+			throw new Error(
+				`MDBRAIN_API_SCOPED_KEYS policy at index ${index} has invalid grants`,
+			)
+		}
+		const grant = entry as Record<string, unknown>
+		const scope = optionalString(grant.scope, "grants scope", index)
+		const scopeRef = optionalString(grant.scopeRef, "grants scopeRef", index)
+		if (scope && scope !== WILDCARD && !MEMORY_SCOPES.has(scope)) {
+			throw new Error(
+				`MDBRAIN_API_SCOPED_KEYS policy at index ${index} has invalid grants scope`,
+			)
+		}
+		return {
+			scope: (scope ?? WILDCARD) as MemoryScope | "*",
+			scopeRef: scopeRef ?? WILDCARD,
+		}
+	})
+}
+
 function defaultSubjectId(token: string): string {
 	const fingerprint = createHash("sha256").update(token, "utf8").digest("hex")
 	return `api-key:${fingerprint.slice(0, 16)}`
@@ -126,9 +166,10 @@ function normalizePolicy(raw: unknown, index: number): ScopedApiKeyCredential {
 	const agentIds = stringList(item.agentIds, "agentIds", index)
 	const scopes = stringList(item.scopes, "scopes", index)
 	const scopeRefs = stringList(item.scopeRefs, "scopeRefs", index)
-	if (!agentIds && !scopes && !scopeRefs) {
+	const grants = parseGrantPairs(item.grants, index)
+	if (!agentIds && !scopes && !scopeRefs && !grants) {
 		throw new Error(
-			`MDBRAIN_API_SCOPED_KEYS policy at index ${index} must constrain agentIds, scopes, or scopeRefs`,
+			`MDBRAIN_API_SCOPED_KEYS policy at index ${index} must constrain agentIds, scopes, scopeRefs, or grants`,
 		)
 	}
 	for (const scope of scopes ?? []) {
@@ -178,12 +219,20 @@ function normalizePolicy(raw: unknown, index: number): ScopedApiKeyCredential {
 	}
 	const identityState: PrincipalIdentityState =
 		item.active === false ? "stale" : "active"
-	const allowedScopes = (scopes ?? [WILDCARD]).flatMap((scope) =>
-		(scopeRefs ?? [WILDCARD]).map((scopeRef) => ({
-			scope: scope as MemoryScope | "*",
-			scopeRef,
-		})),
-	)
+	// Scope authority: `scopes: [A, B]` x `scopeRefs: [X, Y]` expands to the
+	// FULL Cartesian product (all four pairs) — intending (A,X) and (B,Y)
+	// accidentally grants (A,Y) and (B,X). Use `grants: [{scope, scopeRef}]`
+	// for exact pair grants when the cross product would over-authorize.
+	const cartesianGrants =
+		scopes || scopeRefs
+			? (scopes ?? [WILDCARD]).flatMap((scope) =>
+					(scopeRefs ?? [WILDCARD]).map((scopeRef) => ({
+						scope: scope as MemoryScope | "*",
+						scopeRef,
+					})),
+				)
+			: []
+	const allowedScopes = [...cartesianGrants, ...(grants ?? [])]
 	return {
 		token,
 		principal: {
@@ -217,10 +266,23 @@ export function parseScopedApiKeyPolicies(
 		? parsed
 		: parsed && typeof parsed === "object"
 			? Object.entries(parsed as Record<string, unknown>).map(
-					([token, policy]) =>
-						policy && typeof policy === "object" && !Array.isArray(policy)
+					([token, policy]) => {
+						if (
+							policy &&
+							typeof policy === "object" &&
+							!Array.isArray(policy) &&
+							"token" in (policy as Record<string, unknown>)
+						) {
+							throw new Error(
+								"MDBRAIN_API_SCOPED_KEYS object-form policy must not contain a token field",
+							)
+						}
+						return policy &&
+							typeof policy === "object" &&
+							!Array.isArray(policy)
 							? { token, ...(policy as Record<string, unknown>) }
-							: { token },
+							: { token }
+					},
 				)
 			: undefined
 	if (!policies) {
@@ -232,6 +294,12 @@ export function parseScopedApiKeyPolicies(
 		)
 	}
 	const credentials = policies.map(normalizePolicy)
+	if (
+		new Set(credentials.map((credential) => credential.token)).size !==
+		credentials.length
+	) {
+		throw new Error("MDBRAIN_API_SCOPED_KEYS must use unique tokens")
+	}
 	if (
 		new Set(credentials.map((credential) => credential.principal.subjectId))
 			.size !== credentials.length
@@ -265,7 +333,10 @@ export function createDevelopmentPrincipal(): ApiPrincipal {
 		...createAdminPrincipal("development:anonymous"),
 		displayName: "Unauthenticated local development",
 		roles: [],
-		trustTier: "standard",
+		// Reported honestly for audit/forensics: this principal is
+		// development-only and full-capability, not an ordinary "standard"
+		// writer. Governance treats it as admin (it holds every capability).
+		trustTier: "development",
 	}
 }
 

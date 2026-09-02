@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { Hono, type Context } from "hono"
 import type { ApiEnvironment } from "../api-context.js"
 import { getApiPrincipal, getAuthorizedRequestScope } from "../api-context.js"
+import type { AuthorizedRequestScope } from "../api-context.js"
 import {
 	mdbrainBridgeAdd,
 	mdbrainBridgeBuildContextBundle,
@@ -255,6 +256,78 @@ function readScopeInputError(body: Record<string, unknown>): string | null {
 		return `${scope} scope requires scopeRef`
 	}
 	return null
+}
+
+/**
+ * Effective write identity (REV-01 A1 fix): write routes execute under the
+ * middleware-authorized request scope, never under divergent body defaults.
+ * The body may narrow or repeat the authorized identity, but a conflicting
+ * body identity is rejected. When the request omits an identity component,
+ * the authorized (query-derived) value wins; only when neither supplies one
+ * does the route default apply — and the exact resolved tuple is what is
+ * dispatched upstream and stored in the delivery ledger.
+ */
+type WriteIdentity = { agentId: string; scope: ApiScope; scopeRef: string }
+
+type WriteIdentityResolution =
+	| { ok: true; identity: WriteIdentity }
+	| { ok: false; error: string }
+
+function resolveWriteIdentity(
+	body: Record<string, unknown>,
+	authorized: AuthorizedRequestScope,
+): WriteIdentityResolution {
+	const bodyAgentId = readAgentId(body)
+	const bodyScope = readScope(body)
+	const bodyScopeRef = readScopeRef(body)
+	if (bodyAgentId && authorized.agentId && bodyAgentId !== authorized.agentId) {
+		return {
+			ok: false,
+			error: "agentId conflicts with the authorized request scope",
+		}
+	}
+	if (bodyScope && authorized.scope && bodyScope !== authorized.scope) {
+		return {
+			ok: false,
+			error: "scope conflicts with the authorized request scope",
+		}
+	}
+	if (
+		bodyScopeRef &&
+		authorized.scopeRef &&
+		bodyScopeRef !== authorized.scopeRef
+	) {
+		return {
+			ok: false,
+			error: "scopeRef conflicts with the authorized request scope",
+		}
+	}
+	const agentId = authorized.agentId ?? bodyAgentId ?? "default"
+	const scope = (authorized.scope ?? bodyScope ?? "agent") as ApiScope
+	const scopeRef = authorized.scopeRef ?? bodyScopeRef ?? agentId
+	return { ok: true, identity: { agentId, scope, scopeRef } }
+}
+
+/**
+ * Optional agentId-only resolution for routes without a scope/scopeRef
+ * payload (/extract, /write-structured, /write-procedure). Conflicting body
+ * identity is rejected; the authorized value wins otherwise.
+ */
+type AgentIdentityResolution =
+	| { ok: true; agentId: string | undefined }
+	| { ok: false; error: string }
+
+function resolveAgentIdentity(
+	bodyAgentId: string | undefined,
+	authorizedAgentId: string | undefined,
+): AgentIdentityResolution {
+	if (bodyAgentId && authorizedAgentId && bodyAgentId !== authorizedAgentId) {
+		return {
+			ok: false,
+			error: "agentId conflicts with the authorized request scope",
+		}
+	}
+	return { ok: true, agentId: authorizedAgentId ?? bodyAgentId }
 }
 
 function readAccessCollection(
@@ -1422,11 +1495,16 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				? (body.metadata as Record<string, unknown>)
 				: undefined
 		try {
-			const agentId = readAgentId(body) ?? "default"
-			const scope = readScope(body) ?? "agent"
-			const scopeRef = readScopeRef(body) ?? agentId
-			const requestId = c.req.header("X-Request-ID")?.trim()
 			const principal = getApiPrincipal(c)
+			const resolvedIdentity = resolveWriteIdentity(
+				body,
+				getAuthorizedRequestScope(c),
+			)
+			if (!resolvedIdentity.ok) {
+				return jsonError(c, 403, "FORBIDDEN", resolvedIdentity.error)
+			}
+			const { agentId, scope, scopeRef } = resolvedIdentity.identity
+			const requestId = c.req.header("X-Request-ID")?.trim()
 			const promotionResult = buildMemoryWikiPromotion({
 				body,
 				operationId: buildMemoryDeliveryOperationId({
@@ -1445,11 +1523,11 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			}
 			const bridgePayload = {
 				content,
-				agentId: readAgentId(body),
+				agentId,
 				sessionId: readSessionId(body),
 				metadata,
-				scope: readScope(body),
-				scopeRef: readScopeRef(body),
+				scope,
+				scopeRef,
 			}
 			const payload = {
 				...bridgePayload,
@@ -1538,13 +1616,21 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			!Array.isArray(body.metadata)
 				? (body.metadata as Record<string, unknown>)
 				: undefined
-		const scope = readScope(body)
 		try {
-			const agentId = readAgentId(body) ?? "default"
-			const resolvedScope = scope ?? "agent"
-			const scopeRef = readScopeRef(body) ?? agentId
-			const requestId = c.req.header("X-Request-ID")?.trim()
 			const principal = getApiPrincipal(c)
+			const resolvedIdentity = resolveWriteIdentity(
+				body,
+				getAuthorizedRequestScope(c),
+			)
+			if (!resolvedIdentity.ok) {
+				return jsonError(c, 403, "FORBIDDEN", resolvedIdentity.error)
+			}
+			const {
+				agentId,
+				scope: resolvedScope,
+				scopeRef,
+			} = resolvedIdentity.identity
+			const requestId = c.req.header("X-Request-ID")?.trim()
 			const promotionResult = buildMemoryWikiPromotion({
 				body,
 				operationId: buildMemoryDeliveryOperationId({
@@ -1562,15 +1648,15 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				return jsonError(c, 400, "VALIDATION_ERROR", promotionResult.error)
 			}
 			const bridgePayload = {
-				agentId: readAgentId(body),
+				agentId,
 				role: role as "user" | "assistant" | "system" | "tool",
 				body: bodyText,
 				sessionId: readSessionId(body),
 				timestamp:
 					typeof body.timestamp === "string" ? body.timestamp : undefined,
 				metadata,
-				scope,
-				scopeRef: readScopeRef(body),
+				scope: resolvedScope,
+				scopeRef,
 			}
 			const payload = {
 				...bridgePayload,
@@ -1626,9 +1712,16 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (!eventId.trim()) {
 			return jsonError(c, 400, "VALIDATION_ERROR", "eventId is required")
 		}
+		const resolvedAgent = resolveAgentIdentity(
+			readAgentId(body),
+			getAuthorizedRequestScope(c).agentId,
+		)
+		if (!resolvedAgent.ok) {
+			return jsonError(c, 403, "FORBIDDEN", resolvedAgent.error)
+		}
 		try {
 			const out = await mdbrainBridgeExtractEvent({
-				agentId: readAgentId(body),
+				agentId: resolvedAgent.agentId,
 				eventId,
 			})
 			return c.json({ ok: true, ...out }, 202)
@@ -1646,9 +1739,35 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
 			return jsonError(c, 400, "VALIDATION_ERROR", "entry object is required")
 		}
+		const resolvedAgent = resolveAgentIdentity(
+			readAgentId(body),
+			getAuthorizedRequestScope(c).agentId,
+		)
+		if (!resolvedAgent.ok) {
+			return jsonError(c, 403, "FORBIDDEN", resolvedAgent.error)
+		}
+		// REV-01 A14 guard: a nested entry.agentId may not launder a different
+		// identity past the authorized one.
+		const rawEntryAgentId = (entry as Record<string, unknown>).agentId
+		const entryAgentId =
+			typeof rawEntryAgentId === "string" && rawEntryAgentId.trim()
+				? rawEntryAgentId
+				: undefined
+		if (
+			entryAgentId &&
+			resolvedAgent.agentId &&
+			entryAgentId !== resolvedAgent.agentId
+		) {
+			return jsonError(
+				c,
+				403,
+				"FORBIDDEN",
+				"entry.agentId conflicts with the authorized request scope",
+			)
+		}
 		try {
 			const out = await mdbrainBridgeWriteStructuredMemory({
-				agentId: readAgentId(body),
+				agentId: resolvedAgent.agentId ?? entryAgentId,
 				entry: entry as StructuredMemoryEntry,
 			})
 			return c.json(out)
@@ -1666,9 +1785,33 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
 			return jsonError(c, 400, "VALIDATION_ERROR", "entry object is required")
 		}
+		const resolvedAgent = resolveAgentIdentity(
+			readAgentId(body),
+			getAuthorizedRequestScope(c).agentId,
+		)
+		if (!resolvedAgent.ok) {
+			return jsonError(c, 403, "FORBIDDEN", resolvedAgent.error)
+		}
+		const rawEntryAgentId = (entry as Record<string, unknown>).agentId
+		const entryAgentId =
+			typeof rawEntryAgentId === "string" && rawEntryAgentId.trim()
+				? rawEntryAgentId
+				: undefined
+		if (
+			entryAgentId &&
+			resolvedAgent.agentId &&
+			entryAgentId !== resolvedAgent.agentId
+		) {
+			return jsonError(
+				c,
+				403,
+				"FORBIDDEN",
+				"entry.agentId conflicts with the authorized request scope",
+			)
+		}
 		try {
 			const out = await mdbrainBridgeWriteProcedure({
-				agentId: readAgentId(body),
+				agentId: resolvedAgent.agentId ?? entryAgentId,
 				entry: entry as ProcedureEntry,
 			})
 			return c.json(out)
@@ -1819,7 +1962,10 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			scopeRef,
 			subjectId: principal.subjectId,
 			groups: principal.groups,
-			trustTier: principal.trustTier,
+			// The development principal is full-capability; governance sees it
+			// as admin while the principal itself reports "development" for audit.
+			trustTier:
+				principal.trustTier === "development" ? "admin" : principal.trustTier,
 			roles: principal.roles,
 			departments: principal.departments,
 			capabilities: principal.capabilities,

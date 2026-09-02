@@ -722,11 +722,15 @@ describe("createApp", () => {
 			})
 
 			expect(res.status).toBe(200)
+			// Write routes dispatch an explicit identity (never a body-derived or
+			// upstream default); read routes leave agentId unset for the bridge.
+			const isWriteRoute =
+				aliasCase.path.startsWith("/v1/write") || aliasCase.path === "/v1/add"
 			expect(
 				bridgeMocks[aliasCase.bridgeMock as keyof typeof bridgeMocks],
 			).toHaveBeenCalledWith(
 				expect.objectContaining({
-					agentId: undefined,
+					agentId: isWriteRoute ? "default" : undefined,
 					...aliasCase.expected,
 				}),
 			)
@@ -852,7 +856,9 @@ describe("createApp", () => {
 			createApp()
 
 			expect(warn).toHaveBeenCalledTimes(1)
-			expect(warn.mock.calls[0]?.[0]).toContain("MDBRAIN_API_KEY is not set")
+			expect(warn.mock.calls[0]?.[0]).toContain(
+				"routes run as the unauthenticated development principal",
+			)
 		} finally {
 			warn.mockRestore()
 		}
@@ -980,7 +986,7 @@ describe("createApp", () => {
 		])
 
 		expect(() => createApp()).toThrow(
-			"MDBRAIN_API_SCOPED_KEYS policy at index 0 must constrain agentIds, scopes, or scopeRefs",
+			"MDBRAIN_API_SCOPED_KEYS policy at index 0 must constrain agentIds, scopes, scopeRefs, or grants",
 		)
 	})
 
@@ -2677,5 +2683,220 @@ describe("createApp", () => {
 				message: "roles must contain only user|assistant|system|tool",
 			},
 		})
+	})
+
+	it("executes /v1/add under the authorized request scope instead of body defaults (REV-01 A1)", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "identity-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["ws:mdbrain"],
+			},
+		])
+		const res = await createApp().request(
+			"/v1/add?agentId=codex&scope=workspace&scopeRef=ws:mdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer identity-secret",
+					"Content-Type": "application/json",
+					"Idempotency-Key": "ws1-add-authorized-identity",
+				},
+				body: JSON.stringify({ content: "authorized identity write" }),
+			},
+		)
+		expect(res.status).toBe(200)
+		const delivery = deliveryMocks.deliverMemoryWrite.mock.calls[0][0]
+		expect(delivery.agentId).toBe("codex")
+		expect(delivery.scope).toBe("workspace")
+		expect(delivery.scopeRef).toBe("ws:mdbrain")
+		expect(delivery.payload).toMatchObject({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+		})
+		expect(bridgeMocks.mdbrainBridgeAdd.mock.calls[0][0]).toMatchObject({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+		})
+	})
+
+	it("executes /v1/write-event under the authorized request scope instead of body defaults", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "identity-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["ws:mdbrain"],
+			},
+		])
+		const res = await createApp().request(
+			"/v1/write-event?agentId=codex&scope=workspace&scopeRef=ws:mdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer identity-secret",
+					"Content-Type": "application/json",
+					"Idempotency-Key": "ws1-write-event-authorized-identity",
+				},
+				body: JSON.stringify({ role: "user", body: "hello" }),
+			},
+		)
+		expect(res.status).toBe(200)
+		const delivery = deliveryMocks.deliverMemoryWrite.mock.calls[0][0]
+		expect(delivery).toMatchObject({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+		})
+		expect(
+			bridgeMocks.mdbrainBridgeWriteConversationEvent.mock.calls[0][0],
+		).toMatchObject({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+		})
+	})
+
+	it("executes /v1/extract under the authorized agentId", async () => {
+		const res = await createApp().request("/v1/extract?agentId=codex", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ eventId: "evt-ws1" }),
+		})
+		expect(res.status).toBe(202)
+		expect(bridgeMocks.mdbrainBridgeExtractEvent).toHaveBeenCalledWith(
+			expect.objectContaining({ agentId: "codex", eventId: "evt-ws1" }),
+		)
+	})
+
+	it("dispatches /v1/write-structured under the entry-authorized agentId", async () => {
+		const res = await createApp().request("/v1/write-structured", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				entry: { agentId: "codex", kind: "decision", key: "k" },
+			}),
+		})
+		expect(res.status).toBe(200)
+		expect(bridgeMocks.mdbrainBridgeWriteStructuredMemory).toHaveBeenCalledWith(
+			expect.objectContaining({ agentId: "codex" }),
+		)
+	})
+
+	it("rejects structured entries that launder a different agentId", async () => {
+		bridgeMocks.mdbrainBridgeWriteStructuredMemory.mockClear()
+		const res = await createApp().request("/v1/write-structured", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				agentId: "codex",
+				entry: { agentId: "other-agent", kind: "decision", key: "k" },
+			}),
+		})
+		expect(res.status).toBe(403)
+		expect(
+			bridgeMocks.mdbrainBridgeWriteStructuredMemory,
+		).not.toHaveBeenCalled()
+	})
+
+	it("refuses the fail-open development principal without explicit opt-in", () => {
+		delete process.env.MDBRAIN_ALLOW_DEV_PRINCIPAL
+		expect(() => createApp()).toThrow(/MDBRAIN_ALLOW_DEV_PRINCIPAL/)
+	})
+
+	it("still refuses unauthenticated routes in production even with opt-in", () => {
+		process.env.NODE_ENV = "production"
+		process.env.MDBRAIN_ALLOW_DEV_PRINCIPAL = "1"
+		expect(() => createApp()).toThrow(/production mode/)
+	})
+
+	it("rejects duplicate scoped-key tokens at startup", () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{ token: "dup-secret", agentIds: ["a"] },
+			{ token: "dup-secret", agentIds: ["b"] },
+		])
+		expect(() => createApp()).toThrow(
+			"MDBRAIN_API_SCOPED_KEYS must use unique tokens",
+		)
+	})
+
+	it("rejects an admin token that duplicates a scoped-key token", () => {
+		process.env.MDBRAIN_API_KEY = "admin-dup-secret"
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{ token: "admin-dup-secret", agentIds: ["a"] },
+		])
+		expect(() => createApp()).toThrow(/duplicates a scoped API key token/)
+	})
+
+	it("rejects object-form policies that override the key token", () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify({
+			"real-token": { token: "injected-token", agentIds: ["a"] },
+		})
+		expect(() => createApp()).toThrow(
+			"MDBRAIN_API_SCOPED_KEYS object-form policy must not contain a token field",
+		)
+	})
+
+	it("honors exact pair grants without the Cartesian cross product", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "pair-secret",
+				grants: [
+					{ scope: "workspace", scopeRef: "ws:a" },
+					{ scope: "user", scopeRef: "ws:b" },
+				],
+			},
+		])
+		const headers = {
+			Authorization: "Bearer pair-secret",
+			"Content-Type": "application/json",
+		}
+		const okA = await createApp().request("/v1/search", {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				query: "q",
+				scope: "workspace",
+				scopeRef: "ws:a",
+			}),
+		})
+		expect(okA.status).toBe(200)
+		const cross = await createApp().request("/v1/search", {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				query: "q",
+				scope: "workspace",
+				scopeRef: "ws:b",
+			}),
+		})
+		expect(cross.status).toBe(403)
+	})
+
+	it("keeps the documented Cartesian semantics for scope arrays", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "cartesian-secret",
+				scopes: ["workspace", "user"],
+				scopeRefs: ["ws:a", "ws:b"],
+			},
+		])
+		const res = await createApp().request("/v1/search", {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer cartesian-secret",
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				query: "q",
+				scope: "workspace",
+				scopeRef: "ws:b",
+			}),
+		})
+		// (workspace, ws:b) is granted: arrays expand to the full cross product.
+		expect(res.status).toBe(200)
 	})
 })

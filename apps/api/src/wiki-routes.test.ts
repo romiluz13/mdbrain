@@ -264,7 +264,7 @@ describe("wiki routes", () => {
 				expect.objectContaining({
 					scope: "workspace",
 					scopeRef: "ws-1",
-					trustTier: "standard",
+					trustTier: "admin",
 					subjectId: "development:anonymous",
 				}),
 			)
@@ -366,7 +366,7 @@ describe("wiki routes", () => {
 				expect.objectContaining({
 					scope: "workspace",
 					scopeRef: "ws-1",
-					trustTier: "standard",
+					trustTier: "admin",
 					subjectId: "development:anonymous",
 				}),
 			)
@@ -414,7 +414,7 @@ describe("wiki routes", () => {
 					governance: expect.objectContaining({
 						scope: "workspace",
 						scopeRef: "ws-1",
-						trustTier: "standard",
+						trustTier: "admin",
 						subjectId: "development:anonymous",
 					}),
 				},
@@ -742,7 +742,7 @@ describe("wiki routes", () => {
 			expect(params.governance).toBeDefined()
 			expect(params.governance.scope).toBe("workspace")
 			expect(params.governance.scopeRef).toBe("ws-1")
-			expect(params.governance.trustTier).toBe("standard")
+			expect(params.governance.trustTier).toBe("admin")
 		})
 
 		it("rejects missing outDir", async () => {

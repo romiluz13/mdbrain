@@ -3,6 +3,7 @@ import {
 	ALL_PRINCIPAL_CAPABILITIES,
 	authorizePrincipalRequest,
 	createAdminPrincipal,
+	createDevelopmentPrincipal,
 	parseScopedApiKeyPolicies,
 	resolveBearerPrincipal,
 } from "./principal.js"
@@ -156,7 +157,73 @@ describe("server-owned API principals", () => {
 				JSON.stringify([{ token: "never-print-this-secret" }]),
 			),
 		).toThrow(
-			"MDBRAIN_API_SCOPED_KEYS policy at index 0 must constrain agentIds, scopes, or scopeRefs",
+			"MDBRAIN_API_SCOPED_KEYS policy at index 0 must constrain agentIds, scopes, scopeRefs, or grants",
+		)
+	})
+
+	it("reports the development principal honestly for audit and forensics", () => {
+		const principal = createDevelopmentPrincipal()
+		expect(principal.subjectId).toBe("development:anonymous")
+		expect(principal.trustTier).toBe("development")
+		expect(principal.capabilities).toEqual([...ALL_PRINCIPAL_CAPABILITIES])
+	})
+
+	it("supports exact pair grants without the Cartesian cross product", () => {
+		const [credential] = parseScopedApiKeyPolicies(
+			JSON.stringify([
+				{
+					token: "secret",
+					grants: [
+						{ scope: "workspace", scopeRef: "ws:a" },
+						{ scope: "user", scopeRef: "ws:b" },
+					],
+				},
+			]),
+		)
+		expect(credential?.principal.allowedScopes).toEqual([
+			{ scope: "workspace", scopeRef: "ws:a" },
+			{ scope: "user", scopeRef: "ws:b" },
+		])
+	})
+
+	it("expands scope arrays to the documented Cartesian product", () => {
+		const [credential] = parseScopedApiKeyPolicies(
+			JSON.stringify([
+				{
+					token: "secret",
+					scopes: ["workspace", "user"],
+					scopeRefs: ["ws:a", "ws:b"],
+				},
+			]),
+		)
+		expect(credential?.principal.allowedScopes).toEqual([
+			{ scope: "workspace", scopeRef: "ws:a" },
+			{ scope: "workspace", scopeRef: "ws:b" },
+			{ scope: "user", scopeRef: "ws:a" },
+			{ scope: "user", scopeRef: "ws:b" },
+		])
+	})
+
+	it("rejects duplicate tokens across policies", () => {
+		expect(() =>
+			parseScopedApiKeyPolicies(
+				JSON.stringify([
+					{ token: "dup-secret", agentIds: ["a"] },
+					{ token: "dup-secret", agentIds: ["b"] },
+				]),
+			),
+		).toThrow("MDBRAIN_API_SCOPED_KEYS must use unique tokens")
+	})
+
+	it("rejects object-form policies that override the key token", () => {
+		expect(() =>
+			parseScopedApiKeyPolicies(
+				JSON.stringify({
+					"real-token": { token: "injected-token", agentIds: ["a"] },
+				}),
+			),
+		).toThrow(
+			"MDBRAIN_API_SCOPED_KEYS object-form policy must not contain a token field",
 		)
 	})
 })

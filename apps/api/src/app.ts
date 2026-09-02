@@ -407,6 +407,11 @@ export function createApp(): Hono<ApiEnvironment> {
 
 	const token = process.env.MDBRAIN_API_KEY?.trim()
 	const scopedCredentials = parseScopedApiKeyPolicies()
+	if (token && scopedCredentials.some((c) => c.token === token)) {
+		throw new Error(
+			"MDBRAIN_API_KEY duplicates a scoped API key token; tokens must be unique",
+		)
+	}
 	if (token || scopedCredentials.length > 0) {
 		app.use("/v1/*", async (c, next) => {
 			const auth = c.req.header("Authorization") ?? ""
@@ -444,7 +449,7 @@ export function createApp(): Hono<ApiEnvironment> {
 			c.set("authorizedRequestScope", requestScope)
 			await next()
 		})
-	} else if (!unauthenticatedApiWarningEmitted) {
+	} else {
 		const isProduction =
 			process.env.NODE_ENV === "production" ||
 			process.env.MDBRAIN_ENV === "production"
@@ -453,10 +458,20 @@ export function createApp(): Hono<ApiEnvironment> {
 				"MDBRAIN_API_KEY is not set and MDBRAIN_API_SCOPED_KEYS is empty. Refusing to start in production mode with unauthenticated /v1 routes. Set MDBRAIN_API_KEY or MDBRAIN_API_SCOPED_KEYS, or set NODE_ENV=development.",
 			)
 		}
-		unauthenticatedApiWarningEmitted = true
-		console.warn(
-			"WARNING: MDBRAIN_API_KEY is not set and MDBRAIN_API_SCOPED_KEYS is empty; /v1 routes are unauthenticated. Use only for trusted local development.",
-		)
+		// Fail-open development access is opt-in: staging/preview/QA or an
+		// unset environment must not silently install a full-capability
+		// principal just because the env is not named exactly "production".
+		if (process.env.MDBRAIN_ALLOW_DEV_PRINCIPAL !== "1") {
+			throw new Error(
+				"MDBRAIN_API_KEY is not set and MDBRAIN_API_SCOPED_KEYS is empty, and the unauthenticated development principal is not explicitly allowed. Set MDBRAIN_API_KEY, set MDBRAIN_API_SCOPED_KEYS, or opt in to the development principal with MDBRAIN_ALLOW_DEV_PRINCIPAL=1 for trusted local development only.",
+			)
+		}
+		if (!unauthenticatedApiWarningEmitted) {
+			unauthenticatedApiWarningEmitted = true
+			console.warn(
+				"WARNING: MDBRAIN_ALLOW_DEV_PRINCIPAL=1 is set with no MDBRAIN_API_KEY and empty MDBRAIN_API_SCOPED_KEYS; /v1 routes run as the unauthenticated development principal. Use only for trusted local development.",
+			)
+		}
 	}
 	if (!token && scopedCredentials.length === 0) {
 		app.use("/v1/*", async (c, next) => {
