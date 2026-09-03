@@ -4,6 +4,7 @@ import type { MemoryScope } from "@mdbrain/lib"
 export const ALL_PRINCIPAL_CAPABILITIES = [
 	"read",
 	"write",
+	"write-trusted",
 	"administer",
 	"change-permissions",
 	"hard-delete",

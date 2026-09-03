@@ -17,6 +17,7 @@ export const MEMORY_DELIVERY_STATES = [
 
 export type MemoryDeliveryState = (typeof MEMORY_DELIVERY_STATES)[number]
 export type MemoryPromotionPolicy = "none" | "wiki"
+export type MemoryPromotionApproval = "required" | "approved"
 export type MemoryDeliveryReplayConflictField =
 	| "payloadFingerprint"
 	| "idempotencyKey"
@@ -38,6 +39,8 @@ export type MemoryDeliveryIntent = {
 	scope: string
 	scopeRef: string
 	promotionPolicy: MemoryPromotionPolicy
+	/** Present only for wiki promotions recorded under approval mode. */
+	promotionApproval?: MemoryPromotionApproval
 	state: MemoryDeliveryState
 	attempts: number
 	reconciliationAttempts: number
@@ -65,6 +68,7 @@ export type MemoryDeliveryIntentInput = {
 	scope: string
 	scopeRef: string
 	promotionPolicy: MemoryPromotionPolicy
+	promotionApproval?: MemoryPromotionApproval
 }
 
 export class MemoryDeliveryConflictError extends Error {
@@ -182,6 +186,9 @@ export async function recordMemoryDeliveryIntent(
 		scope: params.scope,
 		scopeRef: params.scopeRef,
 		promotionPolicy: params.promotionPolicy,
+		...(params.promotionApproval
+			? { promotionApproval: params.promotionApproval }
+			: {}),
 		state: "recorded",
 		attempts: 0,
 		reconciliationAttempts: 0,
@@ -452,6 +459,51 @@ export async function promoteMemoryDelivery(
 	)
 	if (!updated)
 		throw new MemoryDeliveryStateError("promotion state update lost")
+	return updated as unknown as MemoryDeliveryIntent
+}
+
+export async function getMemoryDeliveryIntent(
+	handle: WikiDbHandle,
+	operationId: string,
+): Promise<MemoryDeliveryIntent | null> {
+	return (await memoryDeliveryIntentsCollection(
+		handle.db,
+		handle.prefix,
+	).findOne({ operationId })) as unknown as MemoryDeliveryIntent | null
+}
+
+/**
+ * Marks a promotion-pending intent that was recorded under approval mode
+ * ("required") as human-approved ("approved"). The state predicate makes the
+ * transition safe to race with the reconciler: an intent that is not exactly
+ * in (promotion-pending, required) is left untouched.
+ */
+export async function setMemoryDeliveryPromotionApproval(
+	handle: WikiDbHandle,
+	operationId: string,
+	approval: MemoryPromotionApproval,
+	session: ClientSession,
+): Promise<MemoryDeliveryIntent> {
+	const collection = memoryDeliveryIntentsCollection(handle.db, handle.prefix)
+	const updated = await collection.findOneAndUpdate(
+		{
+			operationId,
+			state: "promotion-pending",
+			promotionApproval: "required",
+		},
+		{
+			$set: {
+				promotionApproval: approval,
+				updatedAt: new Date(),
+			},
+		},
+		{ session, returnDocument: "after" },
+	)
+	if (!updated) {
+		throw new MemoryDeliveryStateError(
+			"promotion approval requires a pending promotion recorded under approval mode",
+		)
+	}
 	return updated as unknown as MemoryDeliveryIntent
 }
 

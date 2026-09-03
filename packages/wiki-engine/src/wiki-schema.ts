@@ -596,6 +596,7 @@ const MEMORY_DELIVERY_INTENTS_SCHEMA: Document = {
 			scope: { enum: SCOPE_VALUES },
 			scopeRef: { bsonType: "string" },
 			promotionPolicy: { enum: ["none", "wiki"] },
+			promotionApproval: { enum: ["required", "approved"] },
 			state: {
 				enum: [
 					"recorded",

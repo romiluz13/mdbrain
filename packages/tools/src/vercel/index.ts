@@ -3,64 +3,24 @@ import type {
 	LanguageModelV2CallOptions,
 } from "@ai-sdk/provider"
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai"
-import { fireWriteEvent } from "../write-event.js"
-import type { MdbrainWriteFailure } from "../write-event.js"
+import {
+	fetchRenderedContextBundle,
+	findLastMessageIndexByRole,
+	renderMemoryMessageContent,
+	type MdbrainCoreOptions,
+} from "../memory-context.js"
+import {
+	fireWriteEvent,
+	MODEL_OUTPUT_WRITE_METADATA,
+	USER_INPUT_WRITE_METADATA,
+} from "../write-event.js"
 
+export type { MdbrainCoreOptions } from "../memory-context.js"
 export type { MdbrainWriteFailure } from "../write-event.js"
 
-export interface MdbrainCoreOptions {
-	apiUrl: string
-	apiKey: string
-	userId: string
-	agentId?: string
-	mode?: "wake-up" | "full"
-	onWriteError?: (failure: MdbrainWriteFailure) => void | Promise<void>
-}
-
-/* ------------------------------------------------------------------ */
-/*  Simple LRU cache: Map with max 50 entries, 60s TTL                */
-/* ------------------------------------------------------------------ */
-
-interface CacheEntry {
-	rendered: string
-	expiresAt: number
-}
-
-const MAX_CACHE_SIZE = 50
-const CACHE_TTL_MS = 60_000
-
-const cache = new Map<string, CacheEntry>()
-
-function hashQuery(text: string): string {
-	let h = 0
-	for (let i = 0; i < text.length; i++) {
-		h = (Math.imul(31, h) + text.charCodeAt(i)) | 0
-	}
-	return String(h)
-}
-
-function cacheGet(key: string): string | undefined {
-	const entry = cache.get(key)
-	if (!entry) return undefined
-	if (Date.now() > entry.expiresAt) {
-		cache.delete(key)
-		return undefined
-	}
-	return entry.rendered
-}
-
-function cacheSet(key: string, rendered: string): void {
-	if (cache.size >= MAX_CACHE_SIZE) {
-		const oldest = cache.keys().next().value
-		if (oldest !== undefined) cache.delete(oldest)
-	}
-	cache.set(key, { rendered, expiresAt: Date.now() + CACHE_TTL_MS })
-}
-
-/** Exported for testing only. */
-export function _clearCache(): void {
-	cache.clear()
-}
+/** @deprecated Test helper retained for compatibility; clears the shared
+ *  tenant-isolated context cache. */
+export { _clearContextCache as _clearCache } from "../memory-context.js"
 
 /* ------------------------------------------------------------------ */
 /*  Helpers: extract user query, extract response text                */
@@ -90,48 +50,35 @@ function extractResponseText(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Core: fetch context bundle from Mdbrain API                       */
+/*  Memory injection                                                  */
 /* ------------------------------------------------------------------ */
 
-async function fetchContextBundle(
-	options: MdbrainCoreOptions,
-	userQuery?: string,
-): Promise<string> {
-	const mode =
-		userQuery && options.mode !== "wake-up"
-			? "full"
-			: (options.mode ?? "wake-up")
-	const cacheKey = `${options.userId}:${hashQuery(userQuery ?? "")}`
-	const cached = cacheGet(cacheKey)
-	if (cached !== undefined) return cached
-
-	const body: Record<string, unknown> = {
-		agentId: options.agentId ?? options.userId,
-		mode,
+/**
+ * Builds the prompt with retrieved memory injected as a user-role message
+ * carrying fenced, provenance-labeled data. The memory message is inserted
+ * directly BEFORE the final user message (or appended when no user turn
+ * exists) so it never carries system authority and the user's own turn
+ * remains the last instruction-bearing message.
+ */
+function withMemoryMessage(
+	prompt: LanguageModelV2CallOptions["prompt"],
+	rendered: string,
+): LanguageModelV2CallOptions["prompt"] {
+	const memoryMessage = {
+		role: "user" as const,
+		content: [
+			{ type: "text" as const, text: renderMemoryMessageContent(rendered) },
+		],
 	}
-	if (mode === "full" && userQuery) {
-		body.query = userQuery
+	const lastUserIndex = findLastMessageIndexByRole(prompt, "user")
+	if (lastUserIndex === -1) {
+		return [...prompt, memoryMessage]
 	}
-
-	try {
-		const res = await fetch(`${options.apiUrl}/v1/context-bundle`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${options.apiKey}`,
-			},
-			body: JSON.stringify(body),
-		})
-
-		if (!res.ok) return ""
-
-		const data = (await res.json()) as { rendered?: string }
-		const rendered = data.rendered ?? ""
-		if (rendered) cacheSet(cacheKey, rendered)
-		return rendered
-	} catch {
-		return ""
-	}
+	return [
+		...prompt.slice(0, lastUserIndex),
+		memoryMessage,
+		...prompt.slice(lastUserIndex),
+	]
 }
 
 /* ------------------------------------------------------------------ */
@@ -145,18 +92,11 @@ export function withMdbrain(
 	const middleware: LanguageModelMiddleware = {
 		transformParams: async ({ params }) => {
 			const userQuery = extractUserQuery(params.prompt)
-			const rendered = await fetchContextBundle(options, userQuery)
+			const rendered = await fetchRenderedContextBundle(options, userQuery)
 
 			if (!rendered) return params
 
-			const newPrompt: LanguageModelV2CallOptions["prompt"] = [
-				{
-					role: "system" as const,
-					content: `[Memory Context]\n${rendered}`,
-				},
-				...params.prompt,
-			]
-			return { ...params, prompt: newPrompt }
+			return { ...params, prompt: withMemoryMessage(params.prompt, rendered) }
 		},
 
 		wrapGenerate: async ({ doGenerate, params }) => {
@@ -165,7 +105,7 @@ export function withMdbrain(
 			// Fire-and-forget: save user message
 			const userQuery = extractUserQuery(params.prompt)
 			if (userQuery) {
-				fireWriteEvent(options, "user", userQuery)
+				fireWriteEvent(options, "user", userQuery, USER_INPUT_WRITE_METADATA)
 			}
 
 			// Fire-and-forget: save assistant response
@@ -173,7 +113,12 @@ export function withMdbrain(
 				result.content as Array<{ type: string; text?: string }>,
 			)
 			if (responseText) {
-				fireWriteEvent(options, "assistant", responseText)
+				fireWriteEvent(
+					options,
+					"assistant",
+					responseText,
+					MODEL_OUTPUT_WRITE_METADATA,
+				)
 			}
 
 			return result
@@ -185,7 +130,7 @@ export function withMdbrain(
 			// Fire-and-forget: save user message
 			const userQuery = extractUserQuery(params.prompt)
 			if (userQuery) {
-				fireWriteEvent(options, "user", userQuery)
+				fireWriteEvent(options, "user", userQuery, USER_INPUT_WRITE_METADATA)
 			}
 
 			// Collect streamed text chunks and save assistant message after stream ends
@@ -202,7 +147,12 @@ export function withMdbrain(
 					flush() {
 						const fullText = chunks.join("")
 						if (fullText) {
-							fireWriteEvent(options, "assistant", fullText)
+							fireWriteEvent(
+								options,
+								"assistant",
+								fullText,
+								MODEL_OUTPUT_WRITE_METADATA,
+							)
 						}
 					},
 				}),

@@ -15,10 +15,26 @@ export interface WriteEventOptions {
 	onWriteError?: (failure: MdbrainWriteFailure) => void | Promise<void>
 }
 
+/**
+ * Provenance metadata attached to adapter-initiated write events so
+ * retrieved/promoted content can later be distinguished from raw user
+ * input and from generated model output.
+ */
+export type WriteEventMetadata = { provenance: "user-input" | "model-output" }
+
+export const USER_INPUT_WRITE_METADATA: WriteEventMetadata = {
+	provenance: "user-input",
+}
+
+export const MODEL_OUTPUT_WRITE_METADATA: WriteEventMetadata = {
+	provenance: "model-output",
+}
+
 async function writeEvent(
 	options: WriteEventOptions,
 	role: "user" | "assistant",
 	body: string,
+	metadata?: WriteEventMetadata,
 ): Promise<void> {
 	const idempotencyKey = globalThis.crypto.randomUUID()
 	const requestInit: RequestInit = {
@@ -32,6 +48,7 @@ async function writeEvent(
 			role,
 			body,
 			agentId: options.agentId ?? options.userId,
+			...(metadata ? { metadata } : {}),
 		}),
 	}
 	const url = `${options.apiUrl}/v1/write-event`
@@ -89,6 +106,7 @@ export function fireWriteEvent(
 	options: WriteEventOptions,
 	role: "user" | "assistant",
 	body: string,
+	metadata?: WriteEventMetadata,
 ): void {
-	void writeEvent(options, role, body).catch(() => {})
+	void writeEvent(options, role, body, metadata).catch(() => {})
 }

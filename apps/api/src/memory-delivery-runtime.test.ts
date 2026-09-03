@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const events: string[] = []
 let stored: Record<string, unknown>
@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
 	failMemoryPromotion: vi.fn(),
 	promoteMemoryDelivery: vi.fn(),
 	listMemoryDeliveryIntents: vi.fn(),
+	getMemoryDeliveryIntent: vi.fn(),
+	setMemoryDeliveryPromotionApproval: vi.fn(),
 	getWikiStoreHandle: vi.fn(),
 	mdbrainBridgeAdd: vi.fn(),
 	mdbrainBridgeWriteConversationEvent: vi.fn(),
@@ -32,6 +34,8 @@ vi.mock("@mdbrain/wiki-engine", () => ({
 	failMemoryPromotion: mocks.failMemoryPromotion,
 	promoteMemoryDelivery: mocks.promoteMemoryDelivery,
 	listMemoryDeliveryIntents: mocks.listMemoryDeliveryIntents,
+	getMemoryDeliveryIntent: mocks.getMemoryDeliveryIntent,
+	setMemoryDeliveryPromotionApproval: mocks.setMemoryDeliveryPromotionApproval,
 	createWikiPage: mocks.createWikiPage,
 	recordWikiMutationIntent: mocks.recordWikiMutationIntent,
 	MemoryDeliveryConflictError: class MemoryDeliveryConflictError extends Error {},
@@ -45,9 +49,12 @@ vi.mock("@mdbrain/memory-bridge", () => ({
 }))
 
 import {
+	approvePendingWikiPromotion,
+	buildMemoryWikiPromotion,
 	deliverMemoryWrite,
 	MemoryDeliveryDispatchError,
 	reconcileMemoryDeliveriesOnce,
+	wikiPromotionApprovalRequired,
 } from "./memory-delivery-runtime.js"
 import type { ApiPrincipal } from "./principal.js"
 
@@ -101,6 +108,13 @@ function resetRuntimeMocks() {
 	)
 	mocks.createWikiPage.mockResolvedValue(undefined)
 	mocks.recordWikiMutationIntent.mockResolvedValue(undefined)
+	mocks.getMemoryDeliveryIntent.mockResolvedValue(null)
+	mocks.setMemoryDeliveryPromotionApproval.mockImplementation(
+		async (_handle, _id, approval) => ({
+			...stored,
+			promotionApproval: approval,
+		}),
+	)
 	mocks.mdbrainBridgeAdd.mockResolvedValue({
 		eventId: "event-1",
 		chunkCreated: true,
@@ -485,5 +499,390 @@ describe("reconcileMemoryDeliveriesOnce wiki promotion replay", () => {
 		expect(result).toEqual({ attempted: 1, completed: 0, failed: 1 })
 		expect(mocks.createWikiPage).not.toHaveBeenCalled()
 		expect(mocks.mdbrainBridgeWriteConversationEvent).not.toHaveBeenCalled()
+	})
+})
+
+describe("wiki promotion trust tier floor", () => {
+	const validBody = {
+		promotionPolicy: "wiki",
+		wikiPromotion: {
+			page: {
+				kind: "concept",
+				title: "Promoted",
+				slug: "promoted-page",
+				summary: "Promoted summary",
+				body: "Promoted body",
+				scope: "workspace",
+				scopeRef: "workspace-1",
+				trustTier: "restricted",
+				frontmatter: { type: "concept" },
+				claims: [{ id: "claim-1", text: "Promoted claim" }],
+			},
+		},
+	}
+
+	it("rejects promotions from restricted-tier principals regardless of page tier", () => {
+		const result = buildMemoryWikiPromotion({
+			body: validBody,
+			operationId: "write-event:op",
+			scope: "workspace",
+			scopeRef: "workspace-1",
+			principal: {
+				subjectId: "subject-1",
+				trustTier: "restricted",
+				capabilities: ["read", "write", "change-permissions"],
+			},
+		})
+		// Even a change-permissions capability cannot lift a restricted-tier
+		// principal over the promotion floor.
+		expect(result.error).toBe(
+			"wiki promotion requires a principal trust tier of standard or admin",
+		)
+		expect(result.promotion).toBeUndefined()
+	})
+
+	it("allows the full-capability development principal", () => {
+		const result = buildMemoryWikiPromotion({
+			body: validBody,
+			operationId: "write-event:op",
+			scope: "workspace",
+			scopeRef: "workspace-1",
+			principal: {
+				subjectId: "subject-1",
+				trustTier: "development",
+				// The real development principal holds every capability.
+				capabilities: ["change-permissions"],
+			},
+		})
+		// The development principal is admin-equivalent (trusted local
+		// development only) and passes the tier floor.
+		expect(result.error).toBeUndefined()
+		expect(result.promotion).toBeDefined()
+	})
+
+	it("allows promotions from standard-tier principals", () => {
+		const result = buildMemoryWikiPromotion({
+			body: {
+				...validBody,
+				wikiPromotion: {
+					page: {
+						...validBody.wikiPromotion.page,
+						trustTier: "standard",
+					},
+				},
+			},
+			operationId: "write-event:op",
+			scope: "workspace",
+			scopeRef: "workspace-1",
+			principal: {
+				subjectId: "subject-1",
+				trustTier: "standard",
+				capabilities: [],
+			},
+		})
+		expect(result.error).toBeUndefined()
+		expect(result.promotion).toBeDefined()
+	})
+})
+
+describe("wiki promotion approval queue", () => {
+	beforeEach(() => {
+		resetRuntimeMocks()
+	})
+
+	it("holds the promotion when deliverMemoryWrite records approval-required", async () => {
+		mocks.confirmMemoryDelivery.mockImplementation(
+			async (_handle, _id, receipt) => {
+				events.push("confirmed")
+				stored = { ...stored, state: "promotion-pending", receipt }
+				return stored
+			},
+		)
+		const mutateWiki = vi.fn(async () => {
+			events.push("wiki")
+		})
+
+		const receipt = await deliverMemoryWrite({
+			...params,
+			promotion: { key: "promotion-key", mutateWiki },
+			promotionApproval: "required",
+			dispatch: async () => {
+				events.push("network")
+				return { eventId: "event-1", chunkCreated: true }
+			},
+		})
+
+		expect(receipt).toEqual({ eventId: "event-1", chunkCreated: true })
+		// The write dispatched and confirmed, but the promotion is held: no
+		// promote, no wiki mutation.
+		expect(events).toEqual(["recorded", "delivering", "network", "confirmed"])
+		expect(mutateWiki).not.toHaveBeenCalled()
+		expect(mocks.recordMemoryDeliveryIntent).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ promotionApproval: "required" }),
+			expect.anything(),
+		)
+	})
+
+	it("does not record an approval marker when approval mode is off", async () => {
+		mocks.confirmMemoryDelivery.mockImplementation(
+			async (_handle, _id, receipt) => {
+				events.push("confirmed")
+				stored = { ...stored, state: "promotion-pending", receipt }
+				return stored
+			},
+		)
+		const mutateWiki = vi.fn(async () => {})
+
+		await deliverMemoryWrite({
+			...params,
+			promotion: { key: "promotion-key", mutateWiki },
+			dispatch: async () => ({ eventId: "event-1", chunkCreated: true }),
+		})
+
+		expect(events).toContain("promoting")
+		expect(mocks.recordMemoryDeliveryIntent).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ promotionPolicy: "wiki" }),
+			expect.anything(),
+		)
+		const recordedInput = mocks.recordMemoryDeliveryIntent.mock.calls[0][1]
+		expect("promotionApproval" in recordedInput).toBe(false)
+	})
+
+	it("skips approval-queued intents during reconciliation", async () => {
+		const updatedAt = new Date("2026-08-17T00:00:00.000Z")
+		const queuedIntent = {
+			...params,
+			operationId: "write-event:queued",
+			payloadFingerprint: "fingerprint",
+			promotionPolicy: "wiki",
+			promotionApproval: "required",
+			state: "promotion-pending",
+			attempts: 1,
+			reconciliationAttempts: 0,
+			promotionAttempts: 0,
+			createdAt: updatedAt,
+			updatedAt,
+		}
+		mocks.listMemoryDeliveryIntents.mockImplementation(
+			async (_handle, options: { state: string }) =>
+				options.state === "promotion-pending" ? [queuedIntent] : [],
+		)
+
+		const result = await reconcileMemoryDeliveriesOnce({
+			now: updatedAt.getTime() + 2_000,
+		})
+
+		expect(result).toEqual({ attempted: 0, completed: 0, failed: 0 })
+		expect(mocks.mdbrainBridgeWriteConversationEvent).not.toHaveBeenCalled()
+		expect(mocks.createWikiPage).not.toHaveBeenCalled()
+	})
+
+	it("approves and promotes a queued promotion in one transaction", async () => {
+		const updatedAt = new Date("2026-08-17T00:00:00.000Z")
+		const queuedIntent = {
+			...params,
+			operationId: "write-event:queued",
+			payload: {
+				role: "user",
+				body: "remember",
+				promotionPolicy: "wiki",
+				wikiPromotion: {
+					page: {
+						kind: "concept",
+						title: "Promoted",
+						slug: "promoted-page",
+						summary: "Promoted summary",
+						body: "Promoted body",
+						scope: "workspace",
+						scopeRef: "workspace-1",
+						trustTier: "standard",
+						frontmatter: { type: "concept" },
+						claims: [{ id: "claim-1", text: "Promoted claim" }],
+					},
+				},
+			},
+			payloadFingerprint: "fingerprint",
+			promotionPolicy: "wiki",
+			promotionApproval: "required",
+			state: "promotion-pending",
+			receipt: { eventId: "event-1", chunkCreated: true },
+			attempts: 1,
+			reconciliationAttempts: 0,
+			promotionAttempts: 0,
+			createdAt: updatedAt,
+			updatedAt,
+		}
+		mocks.getMemoryDeliveryIntent.mockResolvedValue(queuedIntent)
+		mocks.promoteMemoryDelivery.mockImplementation(
+			async (handle, _id, _key, mutateWiki, session) => {
+				events.push("promoting")
+				await mutateWiki(handle, queuedIntent, session)
+				return { ...queuedIntent, state: "promoted" }
+			},
+		)
+		const standardPrincipal: ApiPrincipal = {
+			subjectId: "subject-1",
+			groups: [],
+			roles: [],
+			departments: [],
+			trustTier: "standard",
+			allowedAgentIds: ["*"],
+			allowedScopes: [{ scope: "*", scopeRef: "*" }],
+			capabilities: [],
+			identityState: "active",
+		}
+
+		const result = await approvePendingWikiPromotion({
+			operationId: "write-event:queued",
+			resolvePrincipal: () => standardPrincipal,
+		})
+
+		expect(result).toEqual({
+			ok: true,
+			operationId: "write-event:queued",
+			pageSlug: "promoted-page",
+		})
+		expect(mocks.setMemoryDeliveryPromotionApproval).toHaveBeenCalledWith(
+			expect.anything(),
+			"write-event:queued",
+			"approved",
+			expect.anything(),
+		)
+		expect(mocks.createWikiPage).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ slug: "promoted-page" }),
+			expect.anything(),
+		)
+	})
+
+	it("refuses approval when the intent is not queued for approval", async () => {
+		const updatedAt = new Date("2026-08-17T00:00:00.000Z")
+		mocks.getMemoryDeliveryIntent.mockResolvedValue({
+			...params,
+			operationId: "write-event:queued",
+			promotionPolicy: "wiki",
+			state: "promotion-pending",
+			attempts: 0,
+			reconciliationAttempts: 0,
+			promotionAttempts: 0,
+			createdAt: updatedAt,
+			updatedAt,
+		})
+
+		const result = await approvePendingWikiPromotion({
+			operationId: "write-event:queued",
+		})
+
+		expect(result).toMatchObject({
+			ok: false,
+			status: 409,
+			code: "INVALID_DELIVERY_STATE",
+		})
+		expect(mocks.promoteMemoryDelivery).not.toHaveBeenCalled()
+	})
+
+	it("refuses approval when the original principal was downgraded", async () => {
+		const updatedAt = new Date("2026-08-17T00:00:00.000Z")
+		const queuedIntent = {
+			...params,
+			operationId: "write-event:queued",
+			payload: {
+				role: "user",
+				body: "remember",
+				promotionPolicy: "wiki",
+				wikiPromotion: {
+					page: {
+						kind: "concept",
+						title: "Promoted",
+						slug: "promoted-page",
+						summary: "Promoted summary",
+						body: "Promoted body",
+						scope: "workspace",
+						scopeRef: "workspace-1",
+						trustTier: "standard",
+						frontmatter: { type: "concept" },
+						claims: [{ id: "claim-1", text: "Promoted claim" }],
+					},
+				},
+			},
+			payloadFingerprint: "fingerprint",
+			promotionPolicy: "wiki",
+			promotionApproval: "required",
+			state: "promotion-pending",
+			receipt: { eventId: "event-1", chunkCreated: true },
+			attempts: 0,
+			reconciliationAttempts: 0,
+			promotionAttempts: 0,
+			createdAt: updatedAt,
+			updatedAt,
+		}
+		mocks.getMemoryDeliveryIntent.mockResolvedValue(queuedIntent)
+		const restrictedPrincipal: ApiPrincipal = {
+			subjectId: "subject-1",
+			groups: [],
+			roles: [],
+			departments: [],
+			trustTier: "restricted",
+			allowedAgentIds: ["*"],
+			allowedScopes: [{ scope: "*", scopeRef: "*" }],
+			capabilities: [],
+			identityState: "active",
+		}
+
+		const result = await approvePendingWikiPromotion({
+			operationId: "write-event:queued",
+			resolvePrincipal: () => restrictedPrincipal,
+		})
+
+		expect(result).toMatchObject({
+			ok: false,
+			status: 409,
+			code: "PROMOTION_UNAUTHORIZED",
+		})
+		expect(mocks.setMemoryDeliveryPromotionApproval).not.toHaveBeenCalled()
+		expect(mocks.createWikiPage).not.toHaveBeenCalled()
+	})
+
+	it("returns 404 for an unknown operation", async () => {
+		mocks.getMemoryDeliveryIntent.mockResolvedValue(null)
+
+		const result = await approvePendingWikiPromotion({
+			operationId: "write-event:missing",
+		})
+
+		expect(result).toMatchObject({ ok: false, status: 404, code: "NOT_FOUND" })
+	})
+})
+
+describe("wikiPromotionApprovalRequired", () => {
+	const original = process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL
+
+	afterEach(() => {
+		if (original === undefined) {
+			delete process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL
+		} else {
+			process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL = original
+		}
+	})
+
+	it("defaults to direct promotion when unset", () => {
+		delete process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL
+		expect(wikiPromotionApprovalRequired()).toBe(false)
+	})
+
+	it("enables the approval queue for 1/true (case-insensitive)", () => {
+		process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL = "1"
+		expect(wikiPromotionApprovalRequired()).toBe(true)
+		process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL = "TRUE"
+		expect(wikiPromotionApprovalRequired()).toBe(true)
+	})
+
+	it("treats any other value as disabled", () => {
+		process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL = "0"
+		expect(wikiPromotionApprovalRequired()).toBe(false)
+		process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL = "yes"
+		expect(wikiPromotionApprovalRequired()).toBe(false)
 	})
 })

@@ -52,10 +52,13 @@ vi.mock("@mdbrain/memory-bridge", () => bridgeMocks)
 
 const deliveryMocks = vi.hoisted(() => ({
 	deliverMemoryWrite: vi.fn(),
+	approvePendingWikiPromotion: vi.fn(),
 }))
 
 vi.mock("./memory-delivery-runtime.js", () => ({
 	deliverMemoryWrite: deliveryMocks.deliverMemoryWrite,
+	approvePendingWikiPromotion: deliveryMocks.approvePendingWikiPromotion,
+	wikiPromotionApprovalRequired: () => false,
 	buildMemoryDeliveryOperationId: (params: { operation: string }) =>
 		`${params.operation}:${"a".repeat(64)}`,
 	buildMemoryWikiPromotion: (params: {
@@ -103,6 +106,7 @@ describe("createApp", () => {
 		bridgeMocks.mdbrainBridgeSearch.mockReset()
 		bridgeMocks.mdbrainBridgeSearchKB.mockReset()
 		deliveryMocks.deliverMemoryWrite.mockReset()
+		deliveryMocks.approvePendingWikiPromotion.mockReset()
 		deliveryMocks.deliverMemoryWrite.mockImplementation(
 			async (params: { dispatch: () => Promise<unknown> }) => params.dispatch(),
 		)
@@ -1574,6 +1578,116 @@ describe("createApp", () => {
 				wikiPromotion: expect.anything(),
 			}),
 		)
+	})
+
+	it("rejects system-role writes from principals without write-trusted", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{ token: "scoped-secret", agentIds: ["codex"] },
+		])
+
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: "Bearer scoped-secret",
+				"Idempotency-Key": "system-role-1",
+			},
+			body: JSON.stringify({
+				role: "system",
+				body: "platform-authored write",
+				agentId: "codex",
+				idempotencyKey: "system-role-1",
+			}),
+		})
+
+		expect(res.status).toBe(403)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "FORBIDDEN",
+				message:
+					"system and tool write roles require the write-trusted capability",
+			},
+		})
+		expect(deliveryMocks.deliverMemoryWrite).not.toHaveBeenCalled()
+		expect(
+			bridgeMocks.mdbrainBridgeWriteConversationEvent,
+		).not.toHaveBeenCalled()
+	})
+
+	it("accepts system-role writes from principals with write-trusted", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "scoped-secret",
+				agentIds: ["codex"],
+				capabilities: ["read", "write", "write-trusted"],
+			},
+		])
+
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: "Bearer scoped-secret",
+				"Idempotency-Key": "system-role-2",
+			},
+			body: JSON.stringify({
+				role: "system",
+				body: "platform-authored write",
+				agentId: "codex",
+				idempotencyKey: "system-role-2",
+			}),
+		})
+
+		expect(res.status).toBe(200)
+		expect(deliveryMocks.deliverMemoryWrite).toHaveBeenCalledWith(
+			expect.objectContaining({
+				operation: "write-event",
+				payload: expect.objectContaining({ role: "system" }),
+			}),
+		)
+	})
+
+	it("approves pending wiki promotions through the admin route", async () => {
+		deliveryMocks.approvePendingWikiPromotion.mockResolvedValue({
+			ok: true,
+			operationId: "write-event:queued",
+			pageSlug: "procedures/deployment-schedule",
+		})
+
+		const res = await createApp().request(
+			"/v1/admin/wiki-promotions/write-event%3Aqueued/approve",
+			{ method: "POST" },
+		)
+
+		expect(res.status).toBe(200)
+		await expect(res.json()).resolves.toEqual({
+			ok: true,
+			operationId: "write-event:queued",
+			state: "promoted",
+			pageSlug: "procedures/deployment-schedule",
+		})
+		expect(deliveryMocks.approvePendingWikiPromotion).toHaveBeenCalledWith({
+			operationId: "write-event:queued",
+		})
+	})
+
+	it("surfaces approval failures from the admin route", async () => {
+		deliveryMocks.approvePendingWikiPromotion.mockResolvedValue({
+			ok: false,
+			status: 404,
+			code: "NOT_FOUND",
+			message: "no such delivery intent",
+		})
+
+		const res = await createApp().request(
+			"/v1/admin/wiki-promotions/write-event%3Amissing/approve",
+			{ method: "POST" },
+		)
+
+		expect(res.status).toBe(404)
+		await expect(res.json()).resolves.toEqual({
+			error: { code: "NOT_FOUND", message: "no such delivery intent" },
+		})
 	})
 
 	it("requires caller-owned idempotency for event writes", async () => {

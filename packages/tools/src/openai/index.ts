@@ -1,5 +1,16 @@
-import type { MdbrainCoreOptions } from "../vercel/index.js"
-import { fireWriteEvent } from "../write-event.js"
+import {
+	fetchRenderedContextBundle,
+	findLastMessageIndexByRole,
+	renderMemoryMessageContent,
+	type MdbrainCoreOptions,
+} from "../memory-context.js"
+import {
+	fireWriteEvent,
+	MODEL_OUTPUT_WRITE_METADATA,
+	USER_INPUT_WRITE_METADATA,
+} from "../write-event.js"
+
+export type { MdbrainCoreOptions } from "../memory-context.js"
 
 /* ------------------------------------------------------------------ */
 /*  OpenAI-compatible chat message shape                              */
@@ -25,42 +36,8 @@ interface ChatCompletion {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Helpers: shared with Vercel middleware via MdbrainCoreOptions      */
+/*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
-
-async function fetchContextBundle(
-	options: MdbrainCoreOptions,
-	userQuery?: string,
-): Promise<string> {
-	const mode =
-		userQuery && options.mode !== "wake-up"
-			? "full"
-			: (options.mode ?? "wake-up")
-
-	const body: Record<string, unknown> = {
-		agentId: options.agentId ?? options.userId,
-		mode,
-	}
-	if (mode === "full" && userQuery) {
-		body.query = userQuery
-	}
-
-	try {
-		const res = await fetch(`${options.apiUrl}/v1/context-bundle`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${options.apiKey}`,
-			},
-			body: JSON.stringify(body),
-		})
-		if (!res.ok) return ""
-		const data = (await res.json()) as { rendered?: string }
-		return data.rendered ?? ""
-	} catch {
-		return ""
-	}
-}
 
 function extractUserQuery(messages: ChatMessage[]): string | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -69,6 +46,32 @@ function extractUserQuery(messages: ChatMessage[]): string | undefined {
 		}
 	}
 	return undefined
+}
+
+/**
+ * Builds the message list with retrieved memory injected as a user-role
+ * message carrying fenced, provenance-labeled data. The memory message is
+ * inserted directly BEFORE the final user message (or appended when no
+ * user turn exists) so it never carries system authority and the user's
+ * own turn remains the last instruction-bearing message.
+ */
+function withMemoryMessage(
+	messages: ChatMessage[],
+	rendered: string,
+): ChatMessage[] {
+	const memoryMessage = {
+		role: "user" as const,
+		content: renderMemoryMessageContent(rendered),
+	}
+	const lastUserIndex = findLastMessageIndexByRole(messages, "user")
+	if (lastUserIndex === -1) {
+		return [...messages, memoryMessage]
+	}
+	return [
+		...messages.slice(0, lastUserIndex),
+		memoryMessage,
+		...messages.slice(lastUserIndex),
+	]
 }
 
 /* ------------------------------------------------------------------ */
@@ -88,16 +91,10 @@ export function createOpenAIMiddleware<
 			if (prop === "create") {
 				return async (params: ChatCreateParams, ...rest: unknown[]) => {
 					const userQuery = extractUserQuery(params.messages)
-					const rendered = await fetchContextBundle(options, userQuery)
+					const rendered = await fetchRenderedContextBundle(options, userQuery)
 
 					const enrichedMessages = rendered
-						? [
-								{
-									role: "system" as const,
-									content: `[Memory Context]\n${rendered}`,
-								},
-								...params.messages,
-							]
+						? withMemoryMessage(params.messages, rendered)
 						: params.messages
 
 					const result = await (target.create as any)(
@@ -107,7 +104,12 @@ export function createOpenAIMiddleware<
 
 					// Fire-and-forget: save user message
 					if (userQuery) {
-						fireWriteEvent(options, "user", userQuery)
+						fireWriteEvent(
+							options,
+							"user",
+							userQuery,
+							USER_INPUT_WRITE_METADATA,
+						)
 					}
 
 					// Only extract assistant text for non-streaming calls
@@ -116,7 +118,12 @@ export function createOpenAIMiddleware<
 						const assistantText =
 							completion?.choices?.[0]?.message?.content ?? ""
 						if (assistantText) {
-							fireWriteEvent(options, "assistant", assistantText)
+							fireWriteEvent(
+								options,
+								"assistant",
+								assistantText,
+								MODEL_OUTPUT_WRITE_METADATA,
+							)
 						}
 					}
 					// Streaming calls: context is injected but assistant text

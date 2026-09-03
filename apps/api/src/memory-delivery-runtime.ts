@@ -5,13 +5,16 @@ import {
 	createWikiPage,
 	failMemoryDelivery,
 	failMemoryPromotion,
+	getMemoryDeliveryIntent,
 	listMemoryDeliveryIntents,
 	MemoryDeliveryStateError,
 	promoteMemoryDelivery,
 	recordWikiMutationIntent,
 	recordMemoryDeliveryIntent,
+	setMemoryDeliveryPromotionApproval,
 	type MemoryDeliveryIntent,
 	type MemoryDeliveryState,
+	type MemoryPromotionApproval,
 	type WikiDbHandle,
 	type WikiPageInput,
 	type WikiTransactionSession,
@@ -77,6 +80,21 @@ export function buildMemoryWikiPromotion(params: {
 	if (policy === undefined || policy === "none") return {}
 	if (policy !== "wiki") {
 		return { error: "promotionPolicy must be none|wiki" }
+	}
+	// Trust tier floor: retrieved memory (and model output flowing through
+	// these writes) must never be promoted into the governed wiki from a
+	// restricted-tier principal, regardless of the page's claimed tier. The
+	// full-capability development principal (trusted local development only)
+	// is admin-equivalent and passes the floor.
+	if (
+		params.principal.trustTier !== "standard" &&
+		params.principal.trustTier !== "admin" &&
+		params.principal.trustTier !== "development"
+	) {
+		return {
+			error:
+				"wiki promotion requires a principal trust tier of standard or admin",
+		}
 	}
 	const rawPromotion = params.body.wikiPromotion
 	if (
@@ -259,6 +277,10 @@ export async function deliverMemoryWrite(params: {
 			session: WikiTransactionSession,
 		) => Promise<void>
 	}
+	/** "required" records the intent in the human approval queue: the write
+	 *  dispatches, the promotion is held, and only an admin approval (or a
+	 *  replay after approval) can execute it. */
+	promotionApproval?: MemoryPromotionApproval
 	dispatch: () => Promise<MemoryWriteReceipt>
 }): Promise<MemoryWriteReceipt> {
 	const operationId = buildMemoryDeliveryOperationId(params)
@@ -307,6 +329,9 @@ export async function deliverMemoryWrite(params: {
 					scope: params.scope,
 					scopeRef: params.scopeRef,
 					promotionPolicy: params.promotion ? "wiki" : "none",
+					...(params.promotionApproval
+						? { promotionApproval: params.promotionApproval }
+						: {}),
 				},
 				session,
 			),
@@ -322,8 +347,14 @@ export async function deliverMemoryWrite(params: {
 		throw new MemoryDeliveryDispatchError(operationId, "conflict", "CONFLICT")
 	}
 	if (recorded.intent.receipt) {
+		const approvalHeld =
+			(params.promotionApproval ?? recorded.intent.promotionApproval) ===
+			"required"
 		if (promotion && recorded.intent.state === "promotion-pending") {
-			await promote()
+			// An approval-queued promotion is replayed only after an admin has
+			// approved it (the approve path promotes directly; a later replay
+			// of an approved intent is idempotent via promoteMemoryDelivery).
+			if (!approvalHeld) await promote()
 		} else if (
 			promotion &&
 			recorded.intent.state !== "promoted" &&
@@ -380,7 +411,11 @@ export async function deliverMemoryWrite(params: {
 	const confirmed = await withWikiTransaction((handle, session) =>
 		confirmMemoryDelivery(handle, operationId, receipt, session),
 	)
-	if (promotion && confirmed.state === "promotion-pending") {
+	if (
+		promotion &&
+		confirmed.state === "promotion-pending" &&
+		params.promotionApproval !== "required"
+	) {
 		await promote()
 	}
 	return receipt
@@ -482,6 +517,16 @@ function stringPayload(
 		: undefined
 }
 
+/**
+ * When enabled (MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL=1|true), wiki
+ * promotions are recorded into a human approval queue instead of executing
+ * inline; an admin must approve each pending promotion.
+ */
+export function wikiPromotionApprovalRequired(): boolean {
+	const raw = process.env.MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL?.trim()
+	return raw === "1" || raw?.toLowerCase() === "true"
+}
+
 async function dispatchPersistedIntent(
 	intent: MemoryDeliveryIntent,
 ): Promise<MemoryWriteReceipt> {
@@ -529,6 +574,123 @@ async function dispatchPersistedIntent(
 	})
 }
 
+/**
+ * Approves and executes one promotion-pending intent that was recorded
+ * under approval mode. The original principal is re-authorized at its
+ * CURRENT credential state (same rules as replay): a queued promotion from
+ * a since-revoked or downgraded principal cannot execute. The approval
+ * marker and the promotion run in a single transaction so the reconciler
+ * can never observe approved-but-unpromoted state.
+ */
+export async function approvePendingWikiPromotion(params: {
+	operationId: string
+	resolvePrincipal?: (subjectId: string) => ApiPrincipal | null
+}): Promise<
+	| { ok: true; operationId: string; pageSlug: string }
+	| { ok: false; status: 400 | 404 | 409; code: string; message: string }
+> {
+	const handle = await getWikiStoreHandle()
+	const intent = await getMemoryDeliveryIntent(handle, params.operationId)
+	if (!intent) {
+		return {
+			ok: false,
+			status: 404,
+			code: "NOT_FOUND",
+			message: "memory delivery intent not found",
+		}
+	}
+	if (
+		intent.state !== "promotion-pending" ||
+		intent.promotionApproval !== "required"
+	) {
+		return {
+			ok: false,
+			status: 409,
+			code: "INVALID_DELIVERY_STATE",
+			message:
+				`delivery ${params.operationId} is ${intent.state}` +
+				(intent.promotionApproval
+					? ` (approval ${intent.promotionApproval})`
+					: ""),
+		}
+	}
+	let promotion: MemoryWikiPromotion | undefined
+	try {
+		promotion = persistedPromotion(
+			intent,
+			params.resolvePrincipal ?? defaultResolveReplayPrincipal,
+		)
+		if (!promotion) {
+			return {
+				ok: false,
+				status: 409,
+				code: "PROMOTION_INVALID",
+				message: "persisted wiki promotion is invalid",
+			}
+		}
+	} catch (error) {
+		return {
+			ok: false,
+			status: 409,
+			code: "PROMOTION_UNAUTHORIZED",
+			message: error instanceof Error ? error.message : String(error),
+		}
+	}
+	const wikiPromotion = intent.payload.wikiPromotion
+	const rawPage =
+		typeof wikiPromotion === "object" && wikiPromotion !== null
+			? (wikiPromotion as Record<string, unknown>).page
+			: undefined
+	const pageSlug =
+		typeof rawPage === "object" && rawPage !== null
+			? String((rawPage as Record<string, unknown>).slug ?? "")
+			: ""
+	try {
+		await withWikiTransaction(async (transactionHandle, session) => {
+			await setMemoryDeliveryPromotionApproval(
+				transactionHandle,
+				params.operationId,
+				"approved",
+				session,
+			)
+			await promoteMemoryDelivery(
+				transactionHandle,
+				params.operationId,
+				promotion!.key,
+				promotion!.mutateWiki,
+				session,
+			)
+		})
+		return { ok: true, operationId: params.operationId, pageSlug }
+	} catch (error) {
+		const classified = classifyFailure(error)
+		const errorCode =
+			classified.code === "OUTCOME_UNKNOWN"
+				? "PROMOTION_FAILED"
+				: classified.code
+		// Record the failed attempt so repeated failures eventually dead-letter
+		// rather than being retried forever.
+		try {
+			await withWikiTransaction((recoveryHandle, session) =>
+				failMemoryPromotion(
+					recoveryHandle,
+					params.operationId,
+					errorCode,
+					session,
+				),
+			)
+		} catch {
+			// Preserve the original promotion failure when ledger recovery races.
+		}
+		return {
+			ok: false,
+			status: 409,
+			code: errorCode,
+			message: error instanceof Error ? error.message : "wiki promotion failed",
+		}
+	}
+}
+
 export async function reconcileMemoryDeliveriesOnce(
 	options: {
 		now?: number
@@ -550,6 +712,9 @@ export async function reconcileMemoryDeliveriesOnce(
 	let completed = 0
 	let failed = 0
 	for (const intent of batches.flat()) {
+		// Approval-queued promotions wait for an explicit admin approval;
+		// auto-replay would defeat the queue (and starve other due intents).
+		if (intent.promotionApproval === "required") continue
 		if (!isDueForReconciliation(intent, now)) continue
 		attempted++
 		try {

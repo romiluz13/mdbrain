@@ -52,10 +52,12 @@ import {
 } from "@mdbrain/wiki-engine"
 import { jsonError } from "../lib/errors.js"
 import {
+	approvePendingWikiPromotion,
 	buildMemoryDeliveryOperationId,
 	buildMemoryWikiPromotion,
 	deliverMemoryWrite,
 	MemoryDeliveryDispatchError,
+	wikiPromotionApprovalRequired,
 } from "../memory-delivery-runtime.js"
 import {
 	getWikiStoreHandle,
@@ -1521,6 +1523,10 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			if (promotionResult.error) {
 				return jsonError(c, 400, "VALIDATION_ERROR", promotionResult.error)
 			}
+			const promotionApproval =
+				promotionResult.promotion && wikiPromotionApprovalRequired()
+					? ("required" as const)
+					: undefined
 			const bridgePayload = {
 				content,
 				agentId,
@@ -1546,6 +1552,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				scope,
 				scopeRef,
 				promotion: promotionResult.promotion,
+				...(promotionApproval ? { promotionApproval } : {}),
 				dispatch: () =>
 					mdbrainBridgeAdd({
 						...bridgePayload,
@@ -1618,6 +1625,21 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				: undefined
 		try {
 			const principal = getApiPrincipal(c)
+			// system/tool roles speak with platform authority: they are reserved
+			// for principals explicitly granted the write-trusted capability.
+			// Adapter writebacks (user/assistant with provenance metadata) are
+			// unaffected.
+			if (
+				(role === "system" || role === "tool") &&
+				!principal.capabilities.includes("write-trusted")
+			) {
+				return jsonError(
+					c,
+					403,
+					"FORBIDDEN",
+					"system and tool write roles require the write-trusted capability",
+				)
+			}
 			const resolvedIdentity = resolveWriteIdentity(
 				body,
 				getAuthorizedRequestScope(c),
@@ -1647,6 +1669,10 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			if (promotionResult.error) {
 				return jsonError(c, 400, "VALIDATION_ERROR", promotionResult.error)
 			}
+			const promotionApproval =
+				promotionResult.promotion && wikiPromotionApprovalRequired()
+					? ("required" as const)
+					: undefined
 			const bridgePayload = {
 				agentId,
 				role: role as "user" | "assistant" | "system" | "tool",
@@ -1675,6 +1701,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				scope: resolvedScope,
 				scopeRef,
 				promotion: promotionResult.promotion,
+				...(promotionApproval ? { promotionApproval } : {}),
 				dispatch: () =>
 					mdbrainBridgeWriteConversationEvent({
 						...bridgePayload,
@@ -1924,6 +1951,33 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"Unable to list memory deliveries",
 			)
 		}
+	})
+
+	// Approves a promotion-pending memory delivery that was recorded under
+	// approval mode (MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL). Gated to the
+	// administer capability by the /v1/admin/* middleware. The original
+	// principal is re-authorized at its current credential state before the
+	// promotion executes.
+	v1.post("/admin/wiki-promotions/:operationId/approve", async (c) => {
+		const operationId = c.req.param("operationId")?.trim()
+		if (!operationId) {
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"operationId path parameter is required",
+			)
+		}
+		const result = await approvePendingWikiPromotion({ operationId })
+		if (!result.ok) {
+			return jsonError(c, result.status, result.code, result.message)
+		}
+		return c.json({
+			ok: true,
+			operationId,
+			state: "promoted",
+			pageSlug: result.pageSlug,
+		})
 	})
 
 	// ---------------------------------------------------------------------------
