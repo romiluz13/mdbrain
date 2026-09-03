@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { MemoryDeliveryPayloadTooLargeError } from "@mdbrain/wiki-engine"
 import contractFixtures from "./__fixtures__/contract-fixtures.js"
 
 const bridgeMocks = vi.hoisted(() => ({
@@ -53,11 +54,23 @@ vi.mock("@mdbrain/memory-bridge", () => bridgeMocks)
 const deliveryMocks = vi.hoisted(() => ({
 	deliverMemoryWrite: vi.fn(),
 	approvePendingWikiPromotion: vi.fn(),
+	redriveDeadLetteredMemoryDelivery: vi.fn(),
+	MemoryDeliveryDispatchError: class MemoryDeliveryDispatchError extends Error {
+		constructor(
+			readonly operationId: string,
+			readonly state: string,
+			readonly code: string,
+		) {
+			super(`memory delivery ${operationId} entered ${state}`)
+		}
+	},
 }))
 
 vi.mock("./memory-delivery-runtime.js", () => ({
 	deliverMemoryWrite: deliveryMocks.deliverMemoryWrite,
 	approvePendingWikiPromotion: deliveryMocks.approvePendingWikiPromotion,
+	redriveDeadLetteredMemoryDelivery:
+		deliveryMocks.redriveDeadLetteredMemoryDelivery,
 	wikiPromotionApprovalRequired: () => false,
 	buildMemoryDeliveryOperationId: (params: { operation: string }) =>
 		`${params.operation}:${"a".repeat(64)}`,
@@ -76,15 +89,7 @@ vi.mock("./memory-delivery-runtime.js", () => ({
 					},
 				}
 			: {},
-	MemoryDeliveryDispatchError: class MemoryDeliveryDispatchError extends Error {
-		constructor(
-			readonly operationId: string,
-			readonly state: string,
-			readonly code: string,
-		) {
-			super(`memory delivery ${operationId} entered ${state}`)
-		}
-	},
+	MemoryDeliveryDispatchError: deliveryMocks.MemoryDeliveryDispatchError,
 }))
 
 const wikiStoreMocks = vi.hoisted(() => ({
@@ -107,6 +112,7 @@ describe("createApp", () => {
 		bridgeMocks.mdbrainBridgeSearchKB.mockReset()
 		deliveryMocks.deliverMemoryWrite.mockReset()
 		deliveryMocks.approvePendingWikiPromotion.mockReset()
+		deliveryMocks.redriveDeadLetteredMemoryDelivery.mockReset()
 		deliveryMocks.deliverMemoryWrite.mockImplementation(
 			async (params: { dispatch: () => Promise<unknown> }) => params.dispatch(),
 		)
@@ -1687,6 +1693,97 @@ describe("createApp", () => {
 		expect(res.status).toBe(404)
 		await expect(res.json()).resolves.toEqual({
 			error: { code: "NOT_FOUND", message: "no such delivery intent" },
+		})
+	})
+	it("redrives dead-lettered deliveries through the admin route", async () => {
+		deliveryMocks.redriveDeadLetteredMemoryDelivery.mockResolvedValue({
+			ok: true,
+			operationId: "write-event:dead",
+			state: "recorded",
+		})
+		const res = await createApp().request(
+			"/v1/admin/deliveries/write-event%3Adead/redrive",
+			{ method: "POST" },
+		)
+		expect(res.status).toBe(200)
+		await expect(res.json()).resolves.toEqual({
+			ok: true,
+			operationId: "write-event:dead",
+			state: "recorded",
+		})
+		expect(
+			deliveryMocks.redriveDeadLetteredMemoryDelivery,
+		).toHaveBeenCalledWith({ operationId: "write-event:dead" })
+	})
+	it("maps redrive failures to the runtime's status and code", async () => {
+		deliveryMocks.redriveDeadLetteredMemoryDelivery.mockResolvedValue({
+			ok: false,
+			status: 409,
+			code: "INVALID_DELIVERY_STATE",
+			message: "delivery cannot be redriven from state promoted",
+		})
+		const res = await createApp().request(
+			"/v1/admin/deliveries/write-event%3Aalive/redrive",
+			{ method: "POST" },
+		)
+		expect(res.status).toBe(409)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "INVALID_DELIVERY_STATE",
+				message: "delivery cannot be redriven from state promoted",
+			},
+		})
+	})
+	it("maps a lost dispatch lease to a typed 409, not a 500", async () => {
+		deliveryMocks.deliverMemoryWrite.mockRejectedValue(
+			new deliveryMocks.MemoryDeliveryDispatchError(
+				"write-event:contested",
+				"outcome-unknown",
+				"LEASE_LOST",
+			),
+		)
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": "lease-lost-1",
+			},
+			body: JSON.stringify({
+				role: "user",
+				body: "contested write",
+				agentId: "codex",
+			}),
+		})
+		expect(res.status).toBe(409)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "DELIVERY_LEASE_LOST",
+				message: expect.stringContaining("claimed by another worker"),
+			},
+		})
+	})
+	it("rejects oversized memory payloads with 413", async () => {
+		deliveryMocks.deliverMemoryWrite.mockRejectedValue(
+			new MemoryDeliveryPayloadTooLargeError(300_000, 262_144),
+		)
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": "oversized-1",
+			},
+			body: JSON.stringify({
+				role: "user",
+				body: "oversized write",
+				agentId: "codex",
+			}),
+		})
+		expect(res.status).toBe(413)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "PAYLOAD_TOO_LARGE",
+				message: expect.stringContaining("262144 bytes"),
+			},
 		})
 	})
 

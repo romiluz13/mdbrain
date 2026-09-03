@@ -42,6 +42,7 @@ import {
 	listUnresolvedContradictions,
 	listWikiPageRevisions,
 	listMemoryDeliveryIntents,
+	MemoryDeliveryPayloadTooLargeError,
 	getWikiPageRevision,
 	resolveTransclusions,
 	recordWikiMutationIntent,
@@ -57,6 +58,7 @@ import {
 	buildMemoryWikiPromotion,
 	deliverMemoryWrite,
 	MemoryDeliveryDispatchError,
+	redriveDeadLetteredMemoryDelivery,
 	wikiPromotionApprovalRequired,
 } from "../memory-delivery-runtime.js"
 import {
@@ -1567,6 +1569,16 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			})
 		} catch (err) {
 			if (err instanceof MemoryDeliveryDispatchError) {
+				if (err.code === "LEASE_LOST") {
+					// Another worker owns the claim: the client's same-key retry
+					// is safe and will observe the claimant's outcome.
+					return jsonError(
+						c,
+						409,
+						"DELIVERY_LEASE_LOST",
+						`Memory delivery ${err.operationId} is claimed by another worker`,
+					)
+				}
 				const status = err.state === "conflict" ? 409 : 503
 				return jsonError(
 					c,
@@ -1575,6 +1587,14 @@ export function createV1Router(): Hono<ApiEnvironment> {
 						? "IDEMPOTENCY_CONFLICT"
 						: "MEMORY_DELIVERY_PENDING",
 					`Memory delivery is ${err.state}`,
+				)
+			}
+			if (err instanceof MemoryDeliveryPayloadTooLargeError) {
+				return jsonError(
+					c,
+					413,
+					"PAYLOAD_TOO_LARGE",
+					`Memory delivery payload exceeds ${err.limit} bytes`,
 				)
 			}
 			return bridgeJsonError(c, "ADD_FAILED", err)
@@ -1716,6 +1736,16 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			})
 		} catch (err) {
 			if (err instanceof MemoryDeliveryDispatchError) {
+				if (err.code === "LEASE_LOST") {
+					// Another worker owns the claim: the client's same-key retry
+					// is safe and will observe the claimant's outcome.
+					return jsonError(
+						c,
+						409,
+						"DELIVERY_LEASE_LOST",
+						`Memory delivery ${err.operationId} is claimed by another worker`,
+					)
+				}
 				const status = err.state === "conflict" ? 409 : 503
 				return jsonError(
 					c,
@@ -1724,6 +1754,14 @@ export function createV1Router(): Hono<ApiEnvironment> {
 						? "IDEMPOTENCY_CONFLICT"
 						: "MEMORY_DELIVERY_PENDING",
 					`Memory delivery is ${err.state}`,
+				)
+			}
+			if (err instanceof MemoryDeliveryPayloadTooLargeError) {
+				return jsonError(
+					c,
+					413,
+					"PAYLOAD_TOO_LARGE",
+					`Memory delivery payload exceeds ${err.limit} bytes`,
 				)
 			}
 			return bridgeJsonError(c, "WRITE_EVENT_FAILED", err)
@@ -1977,6 +2015,31 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			operationId,
 			state: "promoted",
 			pageSlug: result.pageSlug,
+		})
+	})
+	// Requeues a dead-lettered memory delivery intent for a fresh delivery
+	// lifecycle (counters reset, failure evidence cleared). Gated to the
+	// administer capability by the /v1/admin/* middleware. A dead letter
+	// carrying a confirmed receipt is requeued as promotion-pending so the
+	// promotion is retried rather than redispatched.
+	v1.post("/admin/deliveries/:operationId/redrive", async (c) => {
+		const operationId = c.req.param("operationId")?.trim()
+		if (!operationId) {
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"operationId path parameter is required",
+			)
+		}
+		const result = await redriveDeadLetteredMemoryDelivery({ operationId })
+		if (!result.ok) {
+			return jsonError(c, result.status, result.code, result.message)
+		}
+		return c.json({
+			ok: true,
+			operationId,
+			state: result.state,
 		})
 	})
 

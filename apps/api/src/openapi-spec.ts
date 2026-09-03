@@ -1965,6 +1965,28 @@ export const openApiSpec = {
 				},
 			},
 		},
+		"/v1/admin/deliveries/{operationId}/redrive": {
+			post: {
+				summary:
+					"Requeue a dead-lettered memory delivery intent for a fresh delivery lifecycle",
+				parameters: [
+					{
+						in: "path",
+						name: "operationId",
+						required: true,
+						schema: { type: "string" },
+						description: "Durable memory delivery operation identifier",
+					},
+				],
+				responses: {
+					"200": { description: "Delivery requeued with counters reset" },
+					"400": { description: "Missing operationId path parameter" },
+					"404": { description: "No delivery intent found for operationId" },
+					"409": { description: "Delivery is not in the dead-letter state" },
+					"500": { description: "Redrive failed" },
+				},
+			},
+		},
 		"/v1/wiki": {
 			post: {
 				summary: "Create a wiki page",

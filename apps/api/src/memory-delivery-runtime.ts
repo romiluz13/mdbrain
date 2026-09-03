@@ -3,14 +3,17 @@ import {
 	beginMemoryDelivery,
 	confirmMemoryDelivery,
 	createWikiPage,
+	DEFAULT_MEMORY_LEDGER_TTL_MS,
 	failMemoryDelivery,
 	failMemoryPromotion,
 	getMemoryDeliveryIntent,
-	listMemoryDeliveryIntents,
+	listDueMemoryDeliveryIntents,
+	MemoryDeliveryLeaseLostError,
 	MemoryDeliveryStateError,
 	promoteMemoryDelivery,
 	recordWikiMutationIntent,
 	recordMemoryDeliveryIntent,
+	redriveMemoryDeliveryIntent,
 	setMemoryDeliveryPromotionApproval,
 	type MemoryDeliveryIntent,
 	type MemoryDeliveryState,
@@ -23,6 +26,7 @@ import {
 	mdbrainBridgeAdd,
 	mdbrainBridgeWriteConversationEvent,
 } from "@mdbrain/memory-bridge"
+import { createSubsystemLogger } from "@mdbrain/lib"
 import type { MemoryScope } from "@mdbrain/lib/types/memory"
 import {
 	authorizePrincipalRequest,
@@ -34,6 +38,8 @@ import {
 	withWikiTransaction,
 } from "./wiki-store-runtime.js"
 
+const log = createSubsystemLogger("api:memory-delivery")
+
 const WIKI_VALID_KINDS = [
 	"entity",
 	"concept",
@@ -43,6 +49,41 @@ const WIKI_VALID_KINDS = [
 	"procedure",
 ]
 const WIKI_VALID_TRUST_TIERS = ["restricted", "standard", "admin"]
+
+/** Terminal-state ledger retention, from MDBRAIN_MEMORY_LEDGER_TTL_DAYS.
+ *  Unset (or invalid) configuration must fail closed — never silently
+ *  disable GC (unbounded ledger growth) and never silently shrink
+ *  retention below the default. */
+function memoryLedgerTtlMs(): number {
+	const raw = process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS?.trim()
+	if (!raw) return DEFAULT_MEMORY_LEDGER_TTL_MS
+	const days = Number(raw)
+	if (!Number.isFinite(days) || days <= 0) {
+		throw new Error(
+			"MDBRAIN_MEMORY_LEDGER_TTL_DAYS must be a positive number of days",
+		)
+	}
+	return days * 24 * 60 * 60 * 1000
+}
+
+/** Process-lifetime reconciliation counters (R3: reconciler outcomes must
+ *  be observable without scraping logs). */
+const reconciliationCounters = { attempted: 0, completed: 0, failed: 0 }
+
+export function getMemoryDeliveryReconciliationCounters(): {
+	attempted: number
+	completed: number
+	failed: number
+} {
+	return { ...reconciliationCounters }
+}
+
+/** Test seam: resets the process-lifetime counters. */
+export function resetMemoryDeliveryReconciliationCounters(): void {
+	reconciliationCounters.attempted = 0
+	reconciliationCounters.completed = 0
+	reconciliationCounters.failed = 0
+}
 
 export type MemoryWriteReceipt = {
 	eventId: string
@@ -285,6 +326,7 @@ export async function deliverMemoryWrite(params: {
 }): Promise<MemoryWriteReceipt> {
 	const operationId = buildMemoryDeliveryOperationId(params)
 	const promotion = params.promotion
+	const ledgerTtlMs = memoryLedgerTtlMs()
 	const promote = async (): Promise<void> => {
 		if (!promotion) return
 		try {
@@ -295,6 +337,7 @@ export async function deliverMemoryWrite(params: {
 					promotion.key,
 					promotion.mutateWiki,
 					session,
+					ledgerTtlMs,
 				),
 			)
 		} catch (error) {
@@ -306,7 +349,14 @@ export async function deliverMemoryWrite(params: {
 			let state: MemoryDeliveryState = "promotion-pending"
 			try {
 				const failed = await withWikiTransaction((handle, session) =>
-					failMemoryPromotion(handle, operationId, errorCode, session),
+					failMemoryPromotion(
+						handle,
+						operationId,
+						errorCode,
+						session,
+						3,
+						ledgerTtlMs,
+					),
 				)
 				state = failed.state
 			} catch {
@@ -368,9 +418,18 @@ export async function deliverMemoryWrite(params: {
 		}
 		return recorded.intent.receipt as MemoryWriteReceipt
 	}
+	let leaseToken: string
 	try {
 		const begun = await withWikiTransaction((handle, session) =>
-			beginMemoryDelivery(handle, operationId, session),
+			beginMemoryDelivery(
+				handle,
+				operationId,
+				session,
+				3,
+				30_000,
+				5,
+				ledgerTtlMs,
+			),
 		)
 		if (begun.state !== "delivering") {
 			throw new MemoryDeliveryDispatchError(
@@ -379,6 +438,14 @@ export async function deliverMemoryWrite(params: {
 				"RECONCILIATION_EXHAUSTED",
 			)
 		}
+		if (!begun.leaseToken) {
+			throw new MemoryDeliveryDispatchError(
+				operationId,
+				begun.state,
+				"DISPATCH_CLAIM_WITHOUT_LEASE",
+			)
+		}
+		leaseToken = begun.leaseToken
 	} catch (error) {
 		if (error instanceof MemoryDeliveryDispatchError) throw error
 		if (error instanceof MemoryDeliveryStateError) {
@@ -397,9 +464,25 @@ export async function deliverMemoryWrite(params: {
 		const failure = classifyFailure(error)
 		try {
 			await withWikiTransaction((handle, session) =>
-				failMemoryDelivery(handle, operationId, failure, session),
+				failMemoryDelivery(
+					handle,
+					operationId,
+					failure,
+					leaseToken,
+					session,
+					ledgerTtlMs,
+				),
 			)
-		} catch {
+		} catch (ledgerError) {
+			// A lost lease means the reconciler owns the retry: the stale
+			// worker's classification must not mask that.
+			if (ledgerError instanceof MemoryDeliveryLeaseLostError) {
+				throw new MemoryDeliveryDispatchError(
+					operationId,
+					"delivering",
+					"LEASE_LOST",
+				)
+			}
 			// Preserve the dispatch classification when ledger recovery races.
 		}
 		throw new MemoryDeliveryDispatchError(
@@ -408,48 +491,39 @@ export async function deliverMemoryWrite(params: {
 			failure.code,
 		)
 	}
-	const confirmed = await withWikiTransaction((handle, session) =>
-		confirmMemoryDelivery(handle, operationId, receipt, session),
-	)
-	if (
-		promotion &&
-		confirmed.state === "promotion-pending" &&
-		params.promotionApproval !== "required"
-	) {
-		await promote()
+	try {
+		const confirmed = await withWikiTransaction((handle, session) =>
+			confirmMemoryDelivery(
+				handle,
+				operationId,
+				receipt,
+				leaseToken,
+				session,
+				ledgerTtlMs,
+			),
+		)
+		if (
+			promotion &&
+			confirmed.state === "promotion-pending" &&
+			params.promotionApproval !== "required"
+		) {
+			await promote()
+		}
+	} catch (error) {
+		if (error instanceof MemoryDeliveryDispatchError) throw error
+		// The dispatch already succeeded at the bridge, but the ledger no
+		// longer accepts our settlement (lease lost, or a reconciler
+		// recovered the claim mid-flight). The write's true outcome is
+		// owned by the recovery path — surface it as a typed conflict the
+		// client can safely retry, never an unclassified 500.
+		const leaseLost = error instanceof MemoryDeliveryLeaseLostError
+		throw new MemoryDeliveryDispatchError(
+			operationId,
+			"outcome-unknown",
+			leaseLost ? "LEASE_LOST" : "CONFIRM_LOST",
+		)
 	}
 	return receipt
-}
-
-const RECONCILABLE_STATES: MemoryDeliveryState[] = [
-	"recorded",
-	"delivering",
-	"retryable",
-	"outcome-unknown",
-	"promotion-pending",
-]
-
-function retryDelayMs(intent: MemoryDeliveryIntent): number {
-	const exponent = Math.max(0, Math.min(intent.attempts - 1, 6))
-	return Math.min(60_000, 1_000 * 2 ** exponent)
-}
-
-function isDueForReconciliation(
-	intent: MemoryDeliveryIntent,
-	now: number,
-): boolean {
-	const updatedAt = new Date(intent.updatedAt).getTime()
-	const age = Number.isFinite(updatedAt)
-		? now - updatedAt
-		: Number.POSITIVE_INFINITY
-	if (intent.state === "recorded") return true
-	if (intent.state === "delivering") {
-		const startedAt = intent.dispatchStartedAt
-			? new Date(intent.dispatchStartedAt).getTime()
-			: updatedAt
-		return now - startedAt >= 30_000
-	}
-	return age >= retryDelayMs(intent)
 }
 
 /** Resolves the replay principal for a recorded subject ID from the CURRENT
@@ -659,6 +733,7 @@ export async function approvePendingWikiPromotion(params: {
 				promotion!.key,
 				promotion!.mutateWiki,
 				session,
+				memoryLedgerTtlMs(),
 			)
 		})
 		return { ok: true, operationId: params.operationId, pageSlug }
@@ -677,6 +752,8 @@ export async function approvePendingWikiPromotion(params: {
 					params.operationId,
 					errorCode,
 					session,
+					3,
+					memoryLedgerTtlMs(),
 				),
 			)
 		} catch {
@@ -694,28 +771,25 @@ export async function approvePendingWikiPromotion(params: {
 export async function reconcileMemoryDeliveriesOnce(
 	options: {
 		now?: number
-		limitPerState?: number
+		limit?: number
 		resolvePrincipal?: (subjectId: string) => ApiPrincipal | null
 	} = {},
 ): Promise<{ attempted: number; completed: number; failed: number }> {
 	const handle = await getWikiStoreHandle()
-	const batches = await Promise.all(
-		RECONCILABLE_STATES.map((state) =>
-			listMemoryDeliveryIntents(handle, {
-				state,
-				limit: options.limitPerState ?? 20,
-			}),
-		),
-	)
 	const now = options.now ?? Date.now()
+	// Oldest-first due scan (state, nextDueAt): the most at-risk work is
+	// drained first, so young rows can never starve old ones (R1).
+	const due = await listDueMemoryDeliveryIntents(handle, {
+		now,
+		limit: options.limit ?? 100,
+	})
 	let attempted = 0
 	let completed = 0
 	let failed = 0
-	for (const intent of batches.flat()) {
+	for (const intent of due) {
 		// Approval-queued promotions wait for an explicit admin approval;
 		// auto-replay would defeat the queue (and starve other due intents).
 		if (intent.promotionApproval === "required") continue
-		if (!isDueForReconciliation(intent, now)) continue
 		attempted++
 		try {
 			const promotion = persistedPromotion(
@@ -734,11 +808,87 @@ export async function reconcileMemoryDeliveriesOnce(
 				dispatch: () => dispatchPersistedIntent(intent),
 			})
 			completed++
-		} catch {
+		} catch (error) {
 			failed++
+			// Per-intent structured outcome (R3): a swallowed failure must be
+			// attributable to a specific operation, not just a pass total.
+			log.warn(
+				`memory delivery reconciliation failed for ${intent.operationId}`,
+				{
+					operationId: intent.operationId,
+					state: intent.state,
+					code:
+						error instanceof MemoryDeliveryDispatchError
+							? error.code
+							: error instanceof Error
+								? error.name
+								: "UNKNOWN",
+					detail: error instanceof Error ? error.message : String(error),
+				},
+			)
 		}
 	}
+	reconciliationCounters.attempted += attempted
+	reconciliationCounters.completed += completed
+	reconciliationCounters.failed += failed
+	if (attempted > 0) {
+		log.info(`memory delivery reconciliation pass complete`, {
+			attempted,
+			completed,
+			failed,
+		})
+	}
 	return { attempted, completed, failed }
+}
+
+/**
+ * Requeues a dead-lettered delivery intent for a fresh lifecycle via the
+ * admin redrive route. The engine fences the transition on the
+ * dead-letter state; this wrapper maps engine errors to HTTP outcomes.
+ */
+export async function redriveDeadLetteredMemoryDelivery(params: {
+	operationId: string
+}): Promise<
+	| { ok: true; operationId: string; state: MemoryDeliveryState }
+	| { ok: false; status: 400 | 404 | 409 | 500; code: string; message: string }
+> {
+	try {
+		const intent = await withWikiTransaction((handle, session) =>
+			redriveMemoryDeliveryIntent(handle, params.operationId, session),
+		)
+		log.info(`memory delivery redriven`, {
+			operationId: params.operationId,
+			state: intent.state,
+		})
+		return { ok: true, operationId: params.operationId, state: intent.state }
+	} catch (error) {
+		if (error instanceof MemoryDeliveryStateError) {
+			if (error.message.includes("not found")) {
+				return {
+					ok: false,
+					status: 404,
+					code: "NOT_FOUND",
+					message: error.message,
+				}
+			}
+			return {
+				ok: false,
+				status: 409,
+				code: "INVALID_DELIVERY_STATE",
+				message: error.message,
+			}
+		}
+		log.error(`memory delivery redrive failed`, {
+			operationId: params.operationId,
+			detail: error instanceof Error ? error.message : String(error),
+		})
+		return {
+			ok: false,
+			status: 500,
+			code: "REDRIVE_FAILED",
+			message: error instanceof Error ? error.message : String(error),
+		}
+	}
 }
 
 export function startMemoryDeliveryReconciler(

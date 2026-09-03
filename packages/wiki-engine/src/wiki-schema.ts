@@ -616,6 +616,9 @@ const MEMORY_DELIVERY_INTENTS_SCHEMA: Document = {
 			receipt: { bsonType: "object" },
 			promotionKey: { bsonType: "string" },
 			lastErrorCode: { bsonType: "string" },
+			leaseToken: { bsonType: "string" },
+			nextDueAt: { bsonType: "date" },
+			expiresAt: { bsonType: "date" },
 			dispatchStartedAt: { bsonType: "date" },
 			confirmedAt: { bsonType: "date" },
 			promotedAt: { bsonType: "date" },
@@ -796,6 +799,20 @@ export async function ensureWikiStandardIndexes(
 		{
 			key: { state: 1, updatedAt: 1 },
 			name: "state_updatedAt",
+		},
+		{
+			// Oldest-first due scan for the reconciler: `{state, nextDueAt}`
+			// matches listDueMemoryDeliveryIntents' filter and sort exactly.
+			key: { state: 1, nextDueAt: 1 },
+			name: "state_nextDueAt",
+		},
+		{
+			// Retention: intents enter terminal states with expiresAt set;
+			// the TTL monitor deletes them once it passes. Non-terminal
+			// intents never carry expiresAt, so pending work is never GC'd.
+			key: { expiresAt: 1 },
+			name: "expiresAt_ttl",
+			expireAfterSeconds: 0,
 		},
 		{
 			key: { scope: 1, scopeRef: 1, createdAt: 1 },

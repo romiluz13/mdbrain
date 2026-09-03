@@ -223,6 +223,51 @@ describe("ensureWikiStandardIndexes", () => {
 			"slug",
 		])
 	})
+	it("creates due-scan and TTL indexes on memory_delivery_intents", async () => {
+		const db = mockDb()
+		await ensureWikiStandardIndexes(db, "test_")
+		const coll = db.collection("test_memory_delivery_intents")
+		const calls = (coll.createIndexes as unknown as ReturnType<typeof vi.fn>)
+			.mock.calls
+		expect(calls.length).toBe(1)
+		const indexes = calls[0][0] as Array<{
+			name: string
+			key: Record<string, number>
+			unique?: boolean
+			expireAfterSeconds?: number
+		}>
+		const byName = new Map(indexes.map((i) => [i.name, i]))
+		const opIdx = byName.get("operation_id_unique")
+		expect(opIdx?.unique).toBe(true)
+		expect(opIdx?.key).toEqual({ operationId: 1 })
+		const dueIdx = byName.get("state_nextDueAt")
+		expect(dueIdx?.key).toEqual({ state: 1, nextDueAt: 1 })
+		const ttlIdx = byName.get("expiresAt_ttl")
+		expect(ttlIdx?.key).toEqual({ expiresAt: 1 })
+		expect(ttlIdx?.expireAfterSeconds).toBe(0)
+	})
+	it("memory_delivery_intents validator accepts lease and due-time fields", async () => {
+		const db = mockDb([])
+		await ensureWikiCollections(db, "test_")
+		const createCalls = (
+			db.createCollection as unknown as ReturnType<typeof vi.fn>
+		).mock.calls
+		const deliveryCall = createCalls.find(
+			(c: unknown[]) => c[0] === "test_memory_delivery_intents",
+		)
+		expect(deliveryCall).toBeDefined()
+		const validator = deliveryCall[1].validator
+		const properties = validator.$jsonSchema.properties as Record<
+			string,
+			{ bsonType?: string }
+		>
+		for (const field of ["nextDueAt", "expiresAt"]) {
+			expect(properties[field]).toBeDefined()
+			expect(properties[field].bsonType).toBe("date")
+		}
+		expect(properties.leaseToken).toBeDefined()
+		expect(properties.leaseToken.bsonType).toBe("string")
+	})
 })
 
 // ---------------------------------------------------------------------------

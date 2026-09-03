@@ -12,8 +12,10 @@ const mocks = vi.hoisted(() => ({
 	failMemoryPromotion: vi.fn(),
 	promoteMemoryDelivery: vi.fn(),
 	listMemoryDeliveryIntents: vi.fn(),
+	listDueMemoryDeliveryIntents: vi.fn(),
 	getMemoryDeliveryIntent: vi.fn(),
 	setMemoryDeliveryPromotionApproval: vi.fn(),
+	redriveMemoryDeliveryIntent: vi.fn(),
 	getWikiStoreHandle: vi.fn(),
 	mdbrainBridgeAdd: vi.fn(),
 	mdbrainBridgeWriteConversationEvent: vi.fn(),
@@ -34,12 +36,22 @@ vi.mock("@mdbrain/wiki-engine", () => ({
 	failMemoryPromotion: mocks.failMemoryPromotion,
 	promoteMemoryDelivery: mocks.promoteMemoryDelivery,
 	listMemoryDeliveryIntents: mocks.listMemoryDeliveryIntents,
+	listDueMemoryDeliveryIntents: mocks.listDueMemoryDeliveryIntents,
 	getMemoryDeliveryIntent: mocks.getMemoryDeliveryIntent,
 	setMemoryDeliveryPromotionApproval: mocks.setMemoryDeliveryPromotionApproval,
+	redriveMemoryDeliveryIntent: mocks.redriveMemoryDeliveryIntent,
 	createWikiPage: mocks.createWikiPage,
 	recordWikiMutationIntent: mocks.recordWikiMutationIntent,
+	DEFAULT_MEMORY_LEDGER_TTL_MS: 30 * 24 * 60 * 60 * 1000,
 	MemoryDeliveryConflictError: class MemoryDeliveryConflictError extends Error {},
 	MemoryDeliveryStateError: class MemoryDeliveryStateError extends Error {},
+	MemoryDeliveryLeaseLostError: class MemoryDeliveryLeaseLostError extends Error {
+		constructor(readonly operationId: string) {
+			super(`delivery operation "${operationId}" is claimed by another worker`)
+			this.name = "MemoryDeliveryLeaseLostError"
+		}
+	},
+	MemoryDeliveryPayloadTooLargeError: class MemoryDeliveryPayloadTooLargeError extends Error {},
 }))
 
 vi.mock("@mdbrain/memory-bridge", () => ({
@@ -52,10 +64,17 @@ import {
 	approvePendingWikiPromotion,
 	buildMemoryWikiPromotion,
 	deliverMemoryWrite,
+	getMemoryDeliveryReconciliationCounters,
 	MemoryDeliveryDispatchError,
 	reconcileMemoryDeliveriesOnce,
+	redriveDeadLetteredMemoryDelivery,
+	resetMemoryDeliveryReconciliationCounters,
 	wikiPromotionApprovalRequired,
 } from "./memory-delivery-runtime.js"
+import {
+	MemoryDeliveryLeaseLostError,
+	MemoryDeliveryStateError,
+} from "@mdbrain/wiki-engine"
 import type { ApiPrincipal } from "./principal.js"
 
 const params = {
@@ -71,6 +90,7 @@ const params = {
 function resetRuntimeMocks() {
 	events.length = 0
 	stored = { state: "recorded" }
+	resetMemoryDeliveryReconciliationCounters()
 	for (const mock of Object.values(mocks)) mock.mockReset()
 	mocks.withWikiTransaction.mockImplementation(
 		async (operation: (handle: object, session: object) => Promise<unknown>) =>
@@ -78,13 +98,14 @@ function resetRuntimeMocks() {
 	)
 	mocks.getWikiStoreHandle.mockResolvedValue({})
 	mocks.listMemoryDeliveryIntents.mockResolvedValue([])
+	mocks.listDueMemoryDeliveryIntents.mockResolvedValue([])
 	mocks.recordMemoryDeliveryIntent.mockImplementation(async () => {
 		events.push("recorded")
 		return { intent: stored, replayed: false }
 	})
 	mocks.beginMemoryDelivery.mockImplementation(async () => {
 		events.push("delivering")
-		stored = { ...stored, state: "delivering" }
+		stored = { ...stored, state: "delivering", leaseToken: "lease-claim-1" }
 		return stored
 	})
 	mocks.confirmMemoryDelivery.mockImplementation(
@@ -98,6 +119,10 @@ function resetRuntimeMocks() {
 		events.push("failed")
 		return stored
 	})
+	mocks.redriveMemoryDeliveryIntent.mockImplementation(async () => ({
+		...stored,
+		state: "recorded",
+	}))
 	mocks.promoteMemoryDelivery.mockImplementation(
 		async (handle, _id, _key, mutateWiki, session) => {
 			events.push("promoting")
@@ -286,10 +311,7 @@ describe("deliverMemoryWrite", () => {
 			createdAt: updatedAt,
 			updatedAt,
 		}
-		mocks.listMemoryDeliveryIntents.mockImplementation(
-			async (_handle, options: { state: string }) =>
-				options.state === "retryable" ? [stored] : [],
-		)
+		mocks.listDueMemoryDeliveryIntents.mockResolvedValue([stored])
 		mocks.recordMemoryDeliveryIntent.mockResolvedValue({
 			intent: stored,
 			replayed: true,
@@ -312,6 +334,270 @@ describe("deliverMemoryWrite", () => {
 			}),
 		)
 		expect(events).toEqual(["delivering", "confirmed"])
+	})
+
+	it("settles the ledger with the claim's lease token", async () => {
+		await deliverMemoryWrite({
+			...params,
+			dispatch: async () => ({ eventId: "event-1", chunkCreated: true }),
+		})
+
+		expect(mocks.beginMemoryDelivery).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.anything(),
+			3,
+			30_000,
+			5,
+			30 * 24 * 60 * 60 * 1000,
+		)
+		expect(mocks.confirmMemoryDelivery).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.anything(),
+			"lease-claim-1",
+			expect.anything(),
+			expect.any(Number),
+		)
+	})
+
+	it("maps a lease lost at confirm to a typed conflict, never a raw 500", async () => {
+		mocks.confirmMemoryDelivery.mockRejectedValue(
+			new MemoryDeliveryLeaseLostError("write-event:persisted"),
+		)
+
+		await expect(
+			deliverMemoryWrite({
+				...params,
+				dispatch: async () => ({ eventId: "event-1", chunkCreated: true }),
+			}),
+		).rejects.toMatchObject({ state: "outcome-unknown", code: "LEASE_LOST" })
+	})
+
+	it("maps a lease lost at fail without masking the claimant's state", async () => {
+		mocks.failMemoryDelivery.mockRejectedValue(
+			new MemoryDeliveryLeaseLostError("write-event:persisted"),
+		)
+
+		await expect(
+			deliverMemoryWrite({
+				...params,
+				dispatch: vi.fn().mockRejectedValue({
+					code: "WRITE_FAILED",
+					outcome: "not-applied",
+					retryable: true,
+				}),
+			}),
+		).rejects.toMatchObject({ state: "delivering", code: "LEASE_LOST" })
+	})
+})
+
+describe("memory ledger TTL configuration", () => {
+	const original = process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS
+
+	beforeEach(() => {
+		resetRuntimeMocks()
+	})
+
+	afterEach(() => {
+		if (original === undefined) {
+			delete process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS
+		} else {
+			process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS = original
+		}
+	})
+
+	it("uses the 30-day default when no override is configured", async () => {
+		delete process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS
+
+		await deliverMemoryWrite({
+			...params,
+			dispatch: async () => ({ eventId: "event-1", chunkCreated: true }),
+		})
+
+		expect(mocks.beginMemoryDelivery).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.anything(),
+			3,
+			30_000,
+			5,
+			30 * 24 * 60 * 60 * 1000,
+		)
+	})
+
+	it("honors a positive day override", async () => {
+		process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS = "7"
+
+		await deliverMemoryWrite({
+			...params,
+			dispatch: async () => ({ eventId: "event-1", chunkCreated: true }),
+		})
+
+		expect(mocks.beginMemoryDelivery).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			expect.anything(),
+			3,
+			30_000,
+			5,
+			7 * 24 * 60 * 60 * 1000,
+		)
+	})
+
+	it("fails closed on an invalid override instead of guessing retention", async () => {
+		process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS = "soon"
+
+		await expect(
+			deliverMemoryWrite({
+				...params,
+				dispatch: async () => ({ eventId: "event-1", chunkCreated: true }),
+			}),
+		).rejects.toThrow(/MDBRAIN_MEMORY_LEDGER_TTL_DAYS/)
+	})
+})
+
+describe("reconciliation observability", () => {
+	beforeEach(() => {
+		resetRuntimeMocks()
+	})
+
+	/** A due retryable intent whose claim fails: the pass must count it,
+	 *  log it per-intent, and leave it attributable in the counters. */
+	function dueRetryableIntent() {
+		const updatedAt = new Date("2026-08-17T00:00:00.000Z")
+		return {
+			...params,
+			operationId: "write-event:persisted",
+			payloadFingerprint: "fingerprint",
+			promotionPolicy: "none",
+			state: "retryable",
+			attempts: 1,
+			reconciliationAttempts: 0,
+			promotionAttempts: 0,
+			createdAt: updatedAt,
+			updatedAt,
+		}
+	}
+
+	it("counts and logs per-intent reconciliation failures", async () => {
+		stored = dueRetryableIntent()
+		mocks.listDueMemoryDeliveryIntents.mockResolvedValue([stored])
+		mocks.beginMemoryDelivery.mockRejectedValue(new Error("claim exploded"))
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+		try {
+			const result = await reconcileMemoryDeliveriesOnce({})
+
+			expect(result).toEqual({ attempted: 1, completed: 0, failed: 1 })
+			expect(getMemoryDeliveryReconciliationCounters()).toEqual({
+				attempted: 1,
+				completed: 0,
+				failed: 1,
+			})
+			const lines = warnSpy.mock.calls.map((call) => String(call[0]))
+			const line = lines.find((value) =>
+				value.includes("write-event:persisted"),
+			)
+			expect(line).toContain("memory delivery reconciliation failed")
+			expect(line).toContain('"state":"retryable"')
+		} finally {
+			warnSpy.mockRestore()
+		}
+	})
+
+	it("accumulates counters across passes and resets on demand", async () => {
+		stored = dueRetryableIntent()
+		mocks.listDueMemoryDeliveryIntents.mockResolvedValue([stored])
+		mocks.beginMemoryDelivery.mockRejectedValue(new Error("claim exploded"))
+
+		await reconcileMemoryDeliveriesOnce({})
+		await reconcileMemoryDeliveriesOnce({})
+
+		expect(getMemoryDeliveryReconciliationCounters()).toEqual({
+			attempted: 2,
+			completed: 0,
+			failed: 2,
+		})
+		resetMemoryDeliveryReconciliationCounters()
+		expect(getMemoryDeliveryReconciliationCounters()).toEqual({
+			attempted: 0,
+			completed: 0,
+			failed: 0,
+		})
+	})
+})
+
+describe("redriveDeadLetteredMemoryDelivery", () => {
+	beforeEach(() => {
+		resetRuntimeMocks()
+	})
+
+	it("requeues through the engine and reports the requeued state", async () => {
+		mocks.redriveMemoryDeliveryIntent.mockResolvedValue({
+			...stored,
+			state: "recorded",
+		})
+
+		const result = await redriveDeadLetteredMemoryDelivery({
+			operationId: "write-event:dead",
+		})
+
+		expect(result).toEqual({
+			ok: true,
+			operationId: "write-event:dead",
+			state: "recorded",
+		})
+		expect(mocks.redriveMemoryDeliveryIntent).toHaveBeenCalledWith(
+			expect.anything(),
+			"write-event:dead",
+			expect.anything(),
+		)
+	})
+
+	it("maps a missing intent to 404", async () => {
+		mocks.redriveMemoryDeliveryIntent.mockRejectedValue(
+			new MemoryDeliveryStateError("delivery intent not found"),
+		)
+
+		const result = await redriveDeadLetteredMemoryDelivery({
+			operationId: "write-event:missing",
+		})
+
+		expect(result).toMatchObject({ ok: false, status: 404, code: "NOT_FOUND" })
+	})
+
+	it("maps a non-dead-letter state to 409", async () => {
+		mocks.redriveMemoryDeliveryIntent.mockRejectedValue(
+			new MemoryDeliveryStateError(
+				"delivery cannot be redriven from state recorded",
+			),
+		)
+
+		const result = await redriveDeadLetteredMemoryDelivery({
+			operationId: "write-event:alive",
+		})
+
+		expect(result).toMatchObject({
+			ok: false,
+			status: 409,
+			code: "INVALID_DELIVERY_STATE",
+		})
+	})
+
+	it("maps unexpected engine failures to 500", async () => {
+		mocks.redriveMemoryDeliveryIntent.mockRejectedValue(
+			new Error("transaction aborted"),
+		)
+
+		const result = await redriveDeadLetteredMemoryDelivery({
+			operationId: "write-event:dead",
+		})
+
+		expect(result).toMatchObject({
+			ok: false,
+			status: 500,
+			code: "REDRIVE_FAILED",
+		})
 	})
 })
 
@@ -377,10 +663,7 @@ describe("reconcileMemoryDeliveriesOnce wiki promotion replay", () => {
 	it("re-authorizes the replay principal and promotes with the live trust tier", async () => {
 		const intent = retryablePromotionIntent("standard")
 		stored = intent
-		mocks.listMemoryDeliveryIntents.mockImplementation(
-			async (_handle, options: { state: string }) =>
-				options.state === "retryable" ? [stored] : [],
-		)
+		mocks.listDueMemoryDeliveryIntents.mockResolvedValue([stored])
 		mocks.recordMemoryDeliveryIntent.mockResolvedValue({
 			intent: stored,
 			replayed: true,
@@ -435,10 +718,7 @@ describe("reconcileMemoryDeliveriesOnce wiki promotion replay", () => {
 	it("refuses to replay a promotion when the principal no longer resolves", async () => {
 		const intent = retryablePromotionIntent("standard")
 		stored = intent
-		mocks.listMemoryDeliveryIntents.mockImplementation(
-			async (_handle, options: { state: string }) =>
-				options.state === "retryable" ? [stored] : [],
-		)
+		mocks.listDueMemoryDeliveryIntents.mockResolvedValue([stored])
 
 		const result = await reconcileMemoryDeliveriesOnce({
 			now: intent.updatedAt.getTime() + 2_000,
@@ -460,10 +740,7 @@ describe("reconcileMemoryDeliveriesOnce wiki promotion replay", () => {
 		// payload tier must NOT authorize the replay.
 		const intent = retryablePromotionIntent("admin")
 		stored = intent
-		mocks.listMemoryDeliveryIntents.mockImplementation(
-			async (_handle, options: { state: string }) =>
-				options.state === "retryable" ? [stored] : [],
-		)
+		mocks.listDueMemoryDeliveryIntents.mockResolvedValue([stored])
 		const restrictedPrincipal: ApiPrincipal = {
 			...standardPrincipal,
 			trustTier: "restricted",
@@ -482,10 +759,7 @@ describe("reconcileMemoryDeliveriesOnce wiki promotion replay", () => {
 	it("refuses to replay when the principal no longer covers the recorded agent", async () => {
 		const intent = retryablePromotionIntent("standard")
 		stored = intent
-		mocks.listMemoryDeliveryIntents.mockImplementation(
-			async (_handle, options: { state: string }) =>
-				options.state === "retryable" ? [stored] : [],
-		)
+		mocks.listDueMemoryDeliveryIntents.mockResolvedValue([stored])
 		const agentRevokedPrincipal: ApiPrincipal = {
 			...standardPrincipal,
 			allowedAgentIds: ["some-other-agent"],
@@ -665,10 +939,7 @@ describe("wiki promotion approval queue", () => {
 			createdAt: updatedAt,
 			updatedAt,
 		}
-		mocks.listMemoryDeliveryIntents.mockImplementation(
-			async (_handle, options: { state: string }) =>
-				options.state === "promotion-pending" ? [queuedIntent] : [],
-		)
+		mocks.listDueMemoryDeliveryIntents.mockResolvedValue([queuedIntent])
 
 		const result = await reconcileMemoryDeliveriesOnce({
 			now: updatedAt.getTime() + 2_000,
