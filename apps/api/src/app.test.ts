@@ -605,6 +605,26 @@ describe("createApp", () => {
 		})
 	})
 
+	it("fails readiness when the wiki search probe fails (mongot outage)", async () => {
+		// Ping + transactions can succeed while mongot is dead — readiness
+		// must probe search or the node reports ready during search outages.
+		wikiStoreMocks.checkWikiStoreReadiness.mockRejectedValueOnce(
+			new Error("wiki search probe failed"),
+		)
+		const res = await createApp().request("/ready")
+
+		expect(res.status).toBe(503)
+		await expect(res.json()).resolves.toEqual({
+			ok: false,
+			service: "mdbrain-api",
+			error: {
+				code: "DEPENDENCY_NOT_READY",
+				message: "Memongo or the wiki store is not ready",
+				dependencies: ["wiki"],
+			},
+		})
+	})
+
 	it("serves the OpenAPI document without auth", async () => {
 		const res = await createApp().request("/openapi.json")
 		const json = (await res.json()) as { paths?: Record<string, unknown> }

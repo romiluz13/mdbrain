@@ -2306,6 +2306,10 @@ export const openApiSpec = {
 				responses: {
 					"200": { description: "Wiki search results" },
 					"500": { description: "Wiki search failed" },
+					"503": {
+						description:
+							"Search subsystem unavailable (mongot or search index outage) — retry, do not treat as no-matches",
+					},
 				},
 			},
 		},

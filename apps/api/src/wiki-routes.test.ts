@@ -62,6 +62,12 @@ vi.mock("@mdbrain/wiki-engine", () => ({
 			this.name = "WikiRevisionConflictError"
 		}
 	},
+	WikiSearchUnavailableError: class WikiSearchUnavailableError extends Error {
+		constructor(message = "wiki search unavailable") {
+			super(message)
+			this.name = "WikiSearchUnavailableError"
+		}
+	},
 }))
 
 vi.mock("./wiki-store-runtime.js", () => ({
@@ -72,6 +78,7 @@ import { createApp } from "./app.js"
 import {
 	WikiDuplicateSlugError,
 	WikiRevisionConflictError,
+	WikiSearchUnavailableError,
 } from "@mdbrain/wiki-engine"
 
 type WikiJson = {
@@ -1077,6 +1084,44 @@ describe("wiki routes", () => {
 			expect((await asJson(res)).error?.message).toMatch(
 				/scope and scopeRef are required/,
 			)
+		})
+
+		it("returns 503 SEARCH_UNAVAILABLE when the search subsystem is down", async () => {
+			// A search outage is NOT "no matches" — callers must be able to
+			// distinguish and retry instead of caching an empty answer.
+			wikiMocks.searchWikiPages.mockRejectedValueOnce(
+				new WikiSearchUnavailableError("wiki search failed"),
+			)
+			const res = await createApp().request("/v1/wiki/search", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					query: "accounts",
+					scope: "workspace",
+					scopeRef: "ws-1",
+				}),
+			})
+			expect(res.status).toBe(503)
+			const json = await asJson(res)
+			expect(json.error?.code).toBe("SEARCH_UNAVAILABLE")
+		})
+
+		it("keeps 500 WIKI_SEARCH_FAILED for non-outage errors", async () => {
+			wikiMocks.searchWikiPages.mockRejectedValueOnce(
+				new Error("unexpected failure"),
+			)
+			const res = await createApp().request("/v1/wiki/search", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					query: "accounts",
+					scope: "workspace",
+					scopeRef: "ws-1",
+				}),
+			})
+			expect(res.status).toBe(500)
+			const json = await asJson(res)
+			expect(json.error?.code).toBe("WIKI_SEARCH_FAILED")
 		})
 	})
 })

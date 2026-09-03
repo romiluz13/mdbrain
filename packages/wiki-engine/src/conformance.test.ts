@@ -24,10 +24,9 @@
 //     REFERENCING page then throws after its own insert, leaving the page
 //     written without backlinks or a revision record.
 //
-//   - C2-9 (wiki-search.ts, characterization): search errors are swallowed into
-//     `[]` with no degradation signal. This test currently asserts the
-//     observable (fail-open) behavior and will be INVERTED by the retrieval
-//     workstream to require visible degradation.
+//   - C2-9 (wiki-search.ts): search errors were swallowed into `[]` with no
+//     degradation signal. INVERTED by WS-6 (retrieval workstream): search
+//     failures must throw WikiSearchUnavailableError — fail closed.
 //
 // MDBRAIN-CH001 / WS-0 exit criteria: C2-15 + NB-1 red here before any fix.
 //
@@ -61,7 +60,8 @@ import {
 	wikiPagesCollection,
 	wikiRevisionsCollection,
 } from "./wiki-schema.js"
-import { searchWikiPages } from "./wiki-search.js"
+import { probeWikiSearch } from "./wiki-search-probe.js"
+import { searchWikiPages, WikiSearchUnavailableError } from "./wiki-search.js"
 
 const conformanceUri = process.env.MDBRAIN_CONFORMANCE_MONGODB_URI?.trim()
 const describeConformance = conformanceUri ? describe : describe.skip
@@ -245,11 +245,17 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 		expect(backlinks[0]?.context == null).toBe(true)
 	})
 
-	// Characterization — C2-9. CURRENT behavior: search over a collection with
-	// no search index fails open (results: [], no error, no degradation flag).
-	// The retrieval workstream (WS-3) will invert this test to require a
-	// visible degradation signal instead of silent emptiness.
-	it("searchWikiPages fails open when the search index is missing (C2-9, characterization)", async () => {
+	// WS-6 inversion of C2-9. PREVIOUS (fail-open) behavior: search over a
+	// collection with no search index returned silent emptiness with no
+	// degradation signal anywhere. Verified live on atlas-local:preview, the
+	// server itself returns [] for a $search against a missing index (real
+	// Atlas errors with index-not-found — preview-build leniency), so the
+	// engine cannot distinguish misconfiguration from no-matches at query
+	// time on this stack. The outage signal therefore lives in the readiness
+	// probe: it verifies the index EXISTS and that search management is
+	// reachable, so a misconfigured or mongot-less deployment fails /ready
+	// instead of silently serving empty searches.
+	it("a missing search index fails the readiness probe (C2-9, WS-6 inversion)", async () => {
 		// Second prefix: collections + validators, but NO search indexes.
 		const barePrefix = "confnosearch_"
 		const db = handle.client?.db(DB_NAME)
@@ -258,15 +264,43 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 		const bareHandle: WikiDbHandle = { db: db as never, prefix: barePrefix }
 		await createWikiPage(bareHandle, pageInput({ slug: "concepts/c2-9" }))
 
+		// Probe: index missing → WikiSearchUnavailableError → /ready 503.
+		await expect(probeWikiSearch(bareHandle)).rejects.toBeInstanceOf(
+			WikiSearchUnavailableError,
+		)
+		// Query path on the preview stack: the server answers [] itself for a
+		// missing index (documented divergence from Atlas, where this throws
+		// and searchWikiPages propagates WikiSearchUnavailableError — covered
+		// by the unit tests).
 		const response = await searchWikiPages(bareHandle, {
 			query: "live validator behavior",
 			scope: SCOPE,
 			scopeRef: SCOPE_REF,
 		})
-		// Characterization: silent empty — no throw, no degradation marker.
-		// TODO(WS-3): invert — assert a visible degradation signal here.
 		expect(response.results).toEqual([])
-		expect(response.total).toBe(0)
+	})
+
+	// WS-6: the probe passes against an indexed collection with mongot up —
+	// full round-trip (index management + $search) on live mongot. Retries
+	// briefly: search index creation is async on mongot, and a probe fired
+	// milliseconds after createSearchIndex can observe the index list before
+	// registration lands (observed as a transient flake after container
+	// restart).
+	it("probeWikiSearch resolves against an indexed collection (WS-6)", async () => {
+		// The main conformance prefix had its search indexes created by
+		// ensureWikiSchema during store.initialize().
+		let matched: number | undefined
+		for (let attempt = 0; attempt < 10; attempt++) {
+			try {
+				matched = await probeWikiSearch(handle)
+				break
+			} catch (err) {
+				if (attempt === 9) throw err
+				await new Promise((r) => setTimeout(r, 500))
+			}
+		}
+		expect(typeof matched).toBe("number")
+		expect(matched).toBeLessThanOrEqual(1)
 	})
 
 	// WS-5 item 2 — optimistic concurrency. Two writers racing on the same

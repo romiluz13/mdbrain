@@ -28,7 +28,7 @@ import {
 	type WikiDbHandle,
 	type WikiPageInput,
 } from "./wiki-bridge.js"
-import { searchWikiPages } from "./wiki-search.js"
+import { searchWikiPages, WikiSearchUnavailableError } from "./wiki-search.js"
 import { omitUndefined } from "./omit-undefined.js"
 
 // ---------------------------------------------------------------------------
@@ -307,9 +307,14 @@ export async function runDreamerPromotion(
 			if (!event.text || event.text.trim().length === 0) continue
 
 			// Phase 2: Similarity — search for an existing wiki page that
-			// semantically matches the event text. Uses the wiki search
-			// pipeline ($vectorSearch + $search + $rankFusion when available).
-			// Falls back to hash-based slug when search is unavailable.
+			// semantically matches the event text. Uses recipe "fast"
+			// (vector-only) so scores are cosine similarities in [0,1] and the
+			// 0.65 minScore floor is a real similarity gate: results below the
+			// floor are FILTERED OUT, so a non-empty result set here means a
+			// genuinely similar page (no unconditional top-1 adoption of
+			// unrelated pages). RRF-fused "hybrid" scores are orders of
+			// magnitude smaller and would never clear 0.65. Falls back to
+			// hash-based slug when search is unavailable or nothing clears.
 			let slug = eventToSlug(event.id)
 			let existing = null
 			try {
@@ -319,16 +324,21 @@ export async function runDreamerPromotion(
 					scopeRef: opts.scopeRef,
 					maxResults: 1,
 					minScore: 0.65,
+					recipe: "fast",
 				})
 				if (searchResult.results.length > 0) {
 					slug = searchResult.results[0].page.slug
 					existing = await getWikiPage(handle, slug, opts.scope, opts.scopeRef)
 				} else {
-					// No semantic match — fall back to hash slug lookup (backward compat)
+					// No semantic match above the floor — fall back to hash slug
+					// lookup (backward compat)
 					existing = await getWikiPage(handle, slug, opts.scope, opts.scopeRef)
 				}
-			} catch {
-				// Search unavailable (no mongot) — fall back to hash slug
+			} catch (err) {
+				// Search unavailable (WikiSearchUnavailableError: no mongot /
+				// index outage) — degrade to hash-slug consolidation instead of
+				// skipping the event entirely.
+				if (!(err instanceof WikiSearchUnavailableError)) throw err
 				existing = await getWikiPage(handle, slug, opts.scope, opts.scopeRef)
 			}
 

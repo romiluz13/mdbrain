@@ -39,6 +39,7 @@ import {
 	importOkfBundle,
 	exportOkfBundle,
 	searchWikiPages,
+	WikiSearchUnavailableError,
 	listUnresolvedContradictions,
 	listWikiPageRevisions,
 	listMemoryDeliveryIntents,
@@ -2766,6 +2767,17 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			})
 			return c.json(result)
 		} catch (err) {
+			// Search subsystem outage (mongot down, index missing) is NOT a
+			// query failure — surface it as 503 so callers retry instead of
+			// treating it as "no matches".
+			if (err instanceof WikiSearchUnavailableError) {
+				return jsonError(
+					c,
+					503,
+					"SEARCH_UNAVAILABLE",
+					"wiki search is currently unavailable",
+				)
+			}
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_SEARCH_FAILED", message)
 		}

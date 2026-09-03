@@ -1,5 +1,6 @@
 import {
 	WikiStore,
+	probeWikiSearch,
 	resolveWikiStoreConfig,
 	type WikiDbHandle,
 	type WikiTransactionSession,
@@ -28,6 +29,7 @@ export async function withWikiTransaction<T>(
 
 export async function checkWikiStoreReadiness(): Promise<{
 	transactional: true
+	search: true
 }> {
 	const handle = await getWikiStoreHandle()
 	if (!wikiStore) throw new Error("WikiStore is not initialized")
@@ -37,7 +39,12 @@ export async function checkWikiStoreReadiness(): Promise<{
 			.collection(`${handle.prefix}wiki_pages`)
 			.findOne({}, { projection: { _id: 1 }, session })
 	})
-	return { transactional: true }
+	// Probe the search subsystem (mongot + Atlas Search index): ping and the
+	// transactional findOne above succeed even while search is dead, which
+	// left the node reporting /ready during search outages. probeWikiSearch
+	// throws (→ readiness fails) when search cannot answer a query.
+	await probeWikiSearch(handle)
+	return { transactional: true, search: true }
 }
 
 export async function closeWikiStore(): Promise<void> {

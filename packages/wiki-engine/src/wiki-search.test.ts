@@ -4,12 +4,17 @@
 // (vector stage, text compound, $rankFusion, pre-filters, recipe modes) without
 // a live mongot. Verifies: empty query → empty result; vector-only (fast);
 // text-only (no vector); hybrid ($rankFusion); pre-filters applied to both
-// stages; returns empty (not error) on aggregate failure.
+// stages; aggregate failure throws WikiSearchUnavailableError (outage, NOT
+// no-matches); minScore filters results below the floor; rerank reorders
+// results by the reranker's own order with its own scores; probeWikiSearch
+// exercises the text search index.
 
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Collection, Db, Document } from "mongodb"
 import { describe, it, expect, vi } from "vitest"
-import { searchWikiPages } from "./wiki-search.js"
+import { probeWikiSearch } from "./wiki-search-probe.js"
+import { searchWikiPages, WikiSearchUnavailableError } from "./wiki-search.js"
+import { WIKI_PAGES_SEARCH_INDEX_TARGETS } from "./wiki-schema.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 
 function mockDb(capturedPipeline?: { push: (p: Document[]) => void }): {
@@ -60,6 +65,50 @@ function mockDb(capturedPipeline?: { push: (p: Document[]) => void }): {
 function handle(): WikiDbHandle {
 	const { db } = mockDb()
 	return { db, prefix: "test_" }
+}
+
+/** Fake wiki_pages doc with a searchScore, for scored-result assertions. */
+function makeDoc(slug: string, searchScore: number, title = slug): Document {
+	return {
+		_id: { toString: () => `id-${slug}` },
+		kind: "concept",
+		title,
+		slug,
+		aliases: [],
+		summary: `summary of ${slug}`,
+		body: `body of ${slug}`,
+		frontmatter: { type: "concept" },
+		claims: [],
+		contradictions: [],
+		questions: [],
+		relationships: [],
+		personCard: null,
+		scope: "workspace",
+		scopeRef: "ws-1",
+		trustTier: "standard",
+		permissions: {},
+		state: "active",
+		revision: 1,
+		validFrom: new Date(),
+		freshness: "fresh",
+		backlinks: [],
+		createdAt: new Date(),
+		updatedAt: new Date(),
+		searchScore,
+	}
+}
+
+function handleWithDocs(docs: Document[]): {
+	h: WikiDbHandle
+	aggregate: ReturnType<typeof vi.fn>
+} {
+	const aggregate = vi.fn(() => ({ toArray: async () => docs }))
+	const coll = {
+		collectionName: "test_wiki_pages",
+		aggregate,
+	} as unknown as Collection
+	const db = { collection: vi.fn(() => coll) } as unknown as Db
+	return { h: { db, prefix: "test_" }, aggregate }
 }
 
 describe("searchWikiPages", () => {
@@ -171,7 +220,9 @@ describe("searchWikiPages", () => {
 		).toBe(true)
 	})
 
-	it("returns empty (not error) when aggregate throws (no mongot)", async () => {
+	it("throws WikiSearchUnavailableError when aggregate throws (no mongot)", async () => {
+		// An outage must be distinguishable from "no matches" — the HTTP API
+		// maps this to 503 and the dreamer falls back to hash-slug promotion.
 		const coll = {
 			aggregate: vi.fn(() => ({
 				toArray: async () =>
@@ -180,9 +231,29 @@ describe("searchWikiPages", () => {
 		} as unknown as Collection
 		const db = { collection: vi.fn(() => coll) } as unknown as Db
 		const h: WikiDbHandle = { db, prefix: "test_" }
-		const res = await searchWikiPages(h, { query: "x" })
-		expect(res.results).toEqual([])
-		expect(res.total).toBe(0)
+		await expect(searchWikiPages(h, { query: "x" })).rejects.toBeInstanceOf(
+			WikiSearchUnavailableError,
+		)
+	})
+
+	it("throws WikiSearchUnavailableError when the $rerank retry also fails", async () => {
+		// nativeRerank degrades to unranked results when ONLY the $rerank stage
+		// is unsupported; if the retry without it also fails, that is a real
+		// outage, not "no matches".
+		const aggregate = vi.fn(() => ({
+			toArray: async () => Promise.reject(new Error("mongot down")),
+		}))
+		const coll = {
+			collectionName: "test_wiki_pages",
+			aggregate,
+		} as unknown as Collection
+		const db = { collection: vi.fn(() => coll) } as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		await expect(
+			searchWikiPages(h, { query: "x", nativeRerank: true }),
+		).rejects.toBeInstanceOf(WikiSearchUnavailableError)
+		// First call: pipeline with $rerank. Retry: pipeline without $rerank.
+		expect(aggregate).toHaveBeenCalledTimes(2)
 	})
 
 	it("caps maxResults at 100", async () => {
@@ -279,77 +350,72 @@ describe("searchWikiPages", () => {
 		const limitStage = captured[0].find((s) => "$limit" in s)
 		expect(limitStage?.$limit).toBe(3)
 	})
-})
 
-describe("searchWikiPages with reranking", () => {
-	it("reorders results when rerankFn is provided", async () => {
-		// Mock that returns 2 docs so reranking has multiple candidates
+	it("filters results below minScore (score floor is a real filter)", async () => {
+		// Dreamer-style gate: recipe "fast" (cosine similarity in [0,1]) with
+		// minScore 0.65. Before WS-6, minScore was set but never read — the
+		// low-score page was returned and adopted unconditionally.
+		const { h } = handleWithDocs([
+			makeDoc("accounts", 0.9),
+			makeDoc("unrelated", 0.5),
+		])
+		const res = await searchWikiPages(h, {
+			query: "accounts",
+			recipe: "fast",
+			minScore: 0.65,
+		})
+		expect(res.results).toHaveLength(1)
+		expect(res.results[0].page.slug).toBe("accounts")
+		expect(res.total).toBe(1)
+	})
+
+	it("returns empty when every result is below minScore (not an error)", async () => {
+		const { h } = handleWithDocs([makeDoc("weak", 0.02)])
+		const res = await searchWikiPages(h, {
+			query: "x",
+			recipe: "fast",
+			minScore: 0.65,
+		})
+		expect(res.results).toEqual([])
+		expect(res.total).toBe(0)
+	})
+
+	it("over-fetches 4x when minScore is set (floor must not shrink top-K)", async () => {
+		// The floor removes candidates AFTER the pipeline's $limit — with a
+		// plain top-K fetch, results could fall below K even though deeper
+		// candidates clear the floor.
+		const captured: Document[][] = []
 		const coll = {
 			collectionName: "test_wiki_pages",
-			aggregate: vi.fn(() => ({
-				toArray: async () => [
-					{
-						_id: { toString: () => "id1" },
-						kind: "concept",
-						title: "Accounts",
-						slug: "tables/accounts",
-						aliases: [],
-						summary: "s",
-						body: "b",
-						frontmatter: { type: "table" },
-						claims: [],
-						contradictions: [],
-						questions: [],
-						relationships: [],
-						personCard: null,
-						scope: "workspace",
-						scopeRef: "ws-1",
-						trustTier: "standard",
-						permissions: {},
-						state: "active",
-						revision: 1,
-						validFrom: new Date(),
-						freshness: "fresh",
-						backlinks: [],
-						createdAt: new Date(),
-						updatedAt: new Date(),
-						searchScore: 1.5,
-					},
-					{
-						_id: { toString: () => "id2" },
-						kind: "concept",
-						title: "Orders",
-						slug: "tables/orders",
-						aliases: [],
-						summary: "s2",
-						body: "b2",
-						frontmatter: { type: "table" },
-						claims: [],
-						contradictions: [],
-						questions: [],
-						relationships: [],
-						personCard: null,
-						scope: "workspace",
-						scopeRef: "ws-1",
-						trustTier: "standard",
-						permissions: {},
-						state: "active",
-						revision: 1,
-						validFrom: new Date(),
-						freshness: "fresh",
-						backlinks: [],
-						createdAt: new Date(),
-						updatedAt: new Date(),
-						searchScore: 0.8,
-					},
-				],
-			})),
+			aggregate: vi.fn((pipeline: Document[]) => {
+				captured.push(pipeline)
+				return { toArray: async () => [] }
+			}),
 		} as unknown as Collection
 		const db = { collection: vi.fn(() => coll) } as unknown as Db
 		const h: WikiDbHandle = { db, prefix: "test_" }
+		await searchWikiPages(h, { query: "x", maxResults: 3, minScore: 0.4 })
+		const limitStage = captured[0].find((s) => "$limit" in s)
+		expect(limitStage?.$limit).toBe(12)
+	})
+})
+
+describe("searchWikiPages with reranking", () => {
+	it("reorders results AND adopts the reranker's scores (no index mapping)", async () => {
+		// Regression guard: the reranker returns docs in ITS OWN order. The
+		// old code mapped scores by array position without reordering —
+		// every score landed on the wrong page.
+		const { h } = handleWithDocs([
+			makeDoc("tables/accounts", 1.5, "Accounts"),
+			makeDoc("tables/orders", 0.8, "Orders"),
+		])
 		const rerankFn = vi.fn(
 			async (_query: string, docs: Array<{ text: string; score: number }>) => {
-				return [...docs].reverse().map((d, i) => ({ ...d, score: 1 - i * 0.1 }))
+				// Reranker prefers Orders and assigns its own scores.
+				return [
+					{ text: docs[1].text, score: 0.95 },
+					{ text: docs[0].text, score: 0.42 },
+				]
 			},
 		)
 		const res = await searchWikiPages(h, {
@@ -358,7 +424,50 @@ describe("searchWikiPages with reranking", () => {
 		})
 		expect(rerankFn).toHaveBeenCalledTimes(1)
 		expect(rerankFn.mock.calls[0][0]).toBe("accounts")
-		expect(res.results.length).toBe(2)
+		expect(res.results).toHaveLength(2)
+		// Order follows the reranker; each score belongs to its own page.
+		expect(res.results[0].page.slug).toBe("tables/orders")
+		expect(res.results[0].score).toBe(0.95)
+		expect(res.results[1].page.slug).toBe("tables/accounts")
+		expect(res.results[1].score).toBe(0.42)
+	})
+
+	it("keeps reranker-dropped candidates after the reranked ones (no silent loss)", async () => {
+		const { h } = handleWithDocs([
+			makeDoc("a", 1.0),
+			makeDoc("b", 0.9),
+			makeDoc("c", 0.8),
+		])
+		const rerankFn = vi.fn(
+			async (_query: string, docs: Array<{ text: string; score: number }>) => {
+				// Reranker returns only its top pick.
+				return [{ text: docs[2].text, score: 0.99 }]
+			},
+		)
+		const res = await searchWikiPages(h, {
+			query: "x",
+			rerank: rerankFn,
+		})
+		expect(res.results).toHaveLength(3)
+		expect(res.results[0].page.slug).toBe("c")
+		expect(res.results[0].score).toBe(0.99)
+		// Dropped candidates keep their original order and search scores.
+		expect(res.results.slice(1).map((r) => r.page.slug)).toEqual(["a", "b"])
+		expect(res.results[1].score).toBe(1.0)
+	})
+
+	it("keeps original order and scores when the reranker throws", async () => {
+		const { h } = handleWithDocs([makeDoc("a", 1.0), makeDoc("b", 0.9)])
+		const rerankFn = vi.fn(async () => {
+			throw new Error("reranker outage")
+		})
+		const res = await searchWikiPages(h, {
+			query: "x",
+			rerank: rerankFn,
+		})
+		expect(res.results.map((r) => r.page.slug)).toEqual(["a", "b"])
+		expect(res.results[0].score).toBe(1.0)
+		expect(res.results[1].score).toBe(0.9)
 	})
 
 	it("does not call rerankFn when results are empty", async () => {
@@ -476,6 +585,32 @@ describe("searchWikiPages with graph expansion", () => {
 		expect(graphStage?.$graphLookup.connectToField).toBe("slug")
 		expect(graphStage?.$graphLookup.depthField).toBe("depth")
 	})
+
+	it("throws WikiSearchUnavailableError when graph expansion aggregation fails", async () => {
+		// Graph expansion runs on the same store — a failure must not be
+		// silently swallowed into partial results.
+		let call = 0
+		const coll = {
+			collectionName: "test_wiki_pages",
+			aggregate: vi.fn(() => {
+				call++
+				if (call === 1) {
+					return { toArray: async () => [makeDoc("tables/accounts", 1.5)] }
+				}
+				return {
+					toArray: async () => Promise.reject(new Error("graph lookup failed")),
+				}
+			}),
+		} as unknown as Collection
+		const db = { collection: vi.fn(() => coll) } as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		await expect(
+			searchWikiPages(h, {
+				query: "accounts",
+				graphExpansion: { maxDepth: 1 },
+			}),
+		).rejects.toBeInstanceOf(WikiSearchUnavailableError)
+	})
 })
 
 describe("searchWikiPages with native rerank", () => {
@@ -530,5 +665,96 @@ describe("searchWikiPages with native rerank", () => {
 		expect(rerankStage).toBeDefined()
 		expect(rerankStage?.$rerank.model).toBe("rerank-2.5")
 		expect(rerankStage?.$rerank.query).toBe("accounts")
+	})
+})
+
+describe("probeWikiSearch", () => {
+	const TEXT_INDEX = WIKI_PAGES_SEARCH_INDEX_TARGETS.text.name
+
+	function probeColl(opts: {
+		indexes?: Array<{ name?: unknown }>
+		indexError?: Error
+		aggregate?: ReturnType<typeof vi.fn>
+	}): Collection {
+		return {
+			collectionName: "test_wiki_pages",
+			listSearchIndexes: opts.indexError
+				? vi.fn(() => ({
+						toArray: async () => Promise.reject(opts.indexError),
+					}))
+				: vi.fn(() => ({
+						toArray: async () => opts.indexes ?? [{ name: TEXT_INDEX }],
+					})),
+			aggregate:
+				opts.aggregate ??
+				vi.fn(() => ({ toArray: async () => [makeDoc("any", 1)] })),
+		} as unknown as Collection
+	}
+
+	it("verifies the text index exists and answers a $search round-trip", async () => {
+		const aggregate = vi.fn(() => ({
+			toArray: async () => [makeDoc("any", 1)],
+		}))
+		const db = {
+			collection: vi.fn(() => probeColl({ aggregate })),
+		} as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const matched = await probeWikiSearch(h)
+		expect(matched).toBe(1)
+		// Round-trip pipeline: $search on the text index, $limit 1.
+		const call = aggregate.mock.calls[0][0] as Document[]
+		expect(call[0].$search.index).toBe(TEXT_INDEX)
+		expect(call.find((s) => "$limit" in s)?.$limit).toBe(1)
+	})
+
+	it("throws when the search index was never created (misconfiguration)", async () => {
+		const db = {
+			collection: vi.fn(() => probeColl({ indexes: [] })),
+		} as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		await expect(probeWikiSearch(h)).rejects.toBeInstanceOf(
+			WikiSearchUnavailableError,
+		)
+	})
+
+	it("throws when search index management is unreachable (mongot down)", async () => {
+		// Verified live: listSearchIndexes fails fast with a gRPC error when
+		// mongot is dead, while ping + transactional findOne still succeed —
+		// this is what flips /ready to 503 during search outages.
+		const db = {
+			collection: vi.fn(() =>
+				probeColl({
+					indexError: new Error("gRPC stream establishment was cancelled"),
+				}),
+			),
+		} as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		await expect(probeWikiSearch(h)).rejects.toBeInstanceOf(
+			WikiSearchUnavailableError,
+		)
+	})
+
+	it("throws when the probe $search hangs (client-side bound)", async () => {
+		// Verified live: $search can hang indefinitely when mongot dies
+		// mid-connection — the probe must cut it off, not block /ready.
+		vi.useFakeTimers()
+		try {
+			const aggregate = vi.fn(() =>
+				// Never resolves — simulates the hung $search.
+				({ toArray: () => new Promise<never>(() => {}) }),
+			)
+			const db = {
+				collection: vi.fn(() => probeColl({ aggregate })),
+			} as unknown as Db
+			const h: WikiDbHandle = { db, prefix: "test_" }
+			const probe = probeWikiSearch(h)
+			const expectation = expect(probe).rejects.toBeInstanceOf(
+				WikiSearchUnavailableError,
+			)
+			await vi.advanceTimersByTimeAsync(5000)
+			await expectation
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })

@@ -23,6 +23,24 @@ import {
 const log = createSubsystemLogger("wiki:search")
 
 // ---------------------------------------------------------------------------
+// Search-unavailable error + readiness probe
+// ---------------------------------------------------------------------------
+
+/** Thrown when wiki search cannot run because the search subsystem (mongot /
+ *  Atlas Search indexes) is genuinely unavailable. Callers must distinguish
+ *  this from "the query matched nothing": the former is a service outage
+ *  (the HTTP API maps it to 503), the latter is an ordinary empty result. */
+export class WikiSearchUnavailableError extends Error {
+	constructor(
+		message = "wiki search unavailable",
+		options?: { cause?: unknown },
+	) {
+		super(message, options)
+		this.name = "WikiSearchUnavailableError"
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Recipe profiles (fast/hybrid/deep) — mirrors memory-engine SearchRecipe.
 // ---------------------------------------------------------------------------
 
@@ -315,7 +333,7 @@ async function hybridSearch(
 		// If $rerank was requested but the server doesn't support it (MongoDB
 		// 8.3+ Public Preview), the whole aggregation throws. Retry without the
 		// $rerank stage so callers still get unranked results instead of an
-		// empty set. Do NOT blank the entire search for a rerank-only failure.
+		// outage. Only a rerank-only failure degrades; anything else is real.
 		if (rerankStageIndex >= 0) {
 			const msg = err instanceof Error ? err.message : String(err)
 			log.warn(
@@ -325,13 +343,19 @@ async function hybridSearch(
 			try {
 				const docs = await coll.aggregate(withoutRerank).toArray()
 				return mapResults(docs)
-			} catch {
-				// Search indexes genuinely unavailable (no mongot) → empty.
-				return []
+			} catch (err2) {
+				// Search indexes genuinely unavailable (no mongot) — this is an
+				// outage, not "no matches". Fail closed so callers (HTTP 503,
+				// readiness probe, dreamer fallback) can tell the difference.
+				throw new WikiSearchUnavailableError("wiki search failed", {
+					cause: err2,
+				})
 			}
 		}
 		// No rerank was requested → this is a genuine search-index failure.
-		return []
+		// Throwing (not returning []) keeps outages distinguishable from
+		// no-matches at every caller.
+		throw new WikiSearchUnavailableError("wiki search failed", { cause: err })
 	}
 }
 
@@ -387,8 +411,13 @@ async function expandGraph(
 			}
 		}
 		return result
-	} catch {
-		return []
+	} catch (err) {
+		// Graph expansion runs an aggregation on the same subsystem. A failure
+		// here is a genuine store error — silently returning partial results
+		// would under-serve without any signal. Fail closed.
+		throw new WikiSearchUnavailableError("wiki graph expansion failed", {
+			cause: err,
+		})
 	}
 }
 
@@ -396,8 +425,9 @@ async function expandGraph(
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Hybrid search over wiki_pages. Returns ranked results, or empty (never
- *  throws) when no results or search indexes are unavailable. */
+/** Hybrid search over wiki_pages. Returns ranked results; empty when the
+ *  query matches nothing. Throws WikiSearchUnavailableError when the search
+ *  subsystem is unavailable — callers must NOT treat that as "no matches". */
 export async function searchWikiPages(
 	handle: WikiDbHandle,
 	params: WikiSearchParams,
@@ -420,11 +450,16 @@ export async function searchWikiPages(
 	// more visible candidates existed past rank K. Fix: over-fetch 4x when a
 	// governance context is present (matching the per-stage limits of
 	// maxResults*4 the vector/text stages already use), filter the larger
-	// pool, then trim back to K. Residual risk, documented deliberately:
-	// if more than 3/4 of the top candidates are ACL-blocked, results can
-	// still fall below K — full MQL pre-filtering would need a dedicated
-	// governed index or post-$rankFusion $match stage (future work).
-	const fetchLimit = params.governance ? cfg.maxResults * 4 : cfg.maxResults
+	// pool, then trim back to K. The same over-fetch applies when minScore is
+	// set: the score floor removes candidates AFTER the pipeline's $limit, so
+	// a plain top-K fetch could return fewer than K results even though
+	// deeper candidates clear the floor. Residual risk, documented
+	// deliberately: if more than 3/4 of the top candidates are ACL-blocked or
+	// below the floor, results can still fall below K — full MQL
+	// pre-filtering would need a dedicated governed index or
+	// post-$rankFusion $match stage (future work).
+	const fetchLimit =
+		params.governance || cfg.minScore > 0 ? cfg.maxResults * 4 : cfg.maxResults
 	let results = await hybridSearch(handle, params, cfg, prefilter, fetchLimit)
 
 	// Post-filter the over-fetched pool through governance (roles/departments/
@@ -443,22 +478,53 @@ export async function searchWikiPages(
 		results = results.filter((r) => allowedSlugs.has(r.page.slug))
 	}
 
+	// minScore: caller-supplied score floor, applied AFTER the governance
+	// filter (ACL visibility does not change scores) and BEFORE reranking and
+	// the top-K trim, so floor-rejected candidates cannot be resurrected from
+	// the over-fetched tail. Score scale is recipe-dependent: 'fast'
+	// (vector-only) exposes cosine similarity in [0,1]; 'hybrid'/'deep' fuse
+	// scores via RRF, which are typically orders of magnitude smaller (a
+	// 0.65-style threshold is only meaningful with the vector-only recipe).
+	if (cfg.minScore > 0) {
+		results = results.filter((r) => r.score >= cfg.minScore)
+	}
+
 	// Reranking: cross-encoder re-ranks search results (e.g. Voyage rerank-2.5).
 	// Mirrors memory-engine's rerankResults pattern (mongodb-manager.ts:2644).
 	if (params.rerank && results.length > 1) {
 		try {
+			const resultText = (r: WikiSearchResult) =>
+				`${r.page.title} ${r.page.summary} ${r.page.body}`
 			const docs = results.map((r) => ({
-				text: `${r.page.title} ${r.page.summary} ${r.page.body}`,
+				text: resultText(r),
 				score: r.score,
 			}))
 			const reranked = await params.rerank(params.query, docs)
-			// Reorder results to match reranked order, update scores.
-			results = results.map((r, i) => ({
-				...r,
-				score: reranked[i]?.score ?? r.score,
-			}))
-		} catch {
-			// Reranking failure → keep original results (never crash search)
+			// The reranker returns candidates in ITS OWN relevance order with
+			// ITS scores. Reorder results by pairing on the exact text sent to
+			// the reranker. Mapping scores by array index corrupts both order
+			// and score-to-page association whenever the reranker reorders,
+			// drops, or duplicates docs. Duplicate texts pair FIFO (buckets).
+			const byText = new Map<string, WikiSearchResult[]>()
+			for (const r of results) {
+				const bucket = byText.get(resultText(r))
+				if (bucket) bucket.push(r)
+				else byText.set(resultText(r), [r])
+			}
+			const reordered: WikiSearchResult[] = []
+			for (const doc of reranked) {
+				const bucket = byText.get(doc.text)
+				const match = bucket?.shift()
+				if (match) reordered.push({ ...match, score: doc.score })
+			}
+			// Keep candidates the reranker dropped, in original order, after
+			// the reranked ones (preserves result count; no silent loss).
+			results = [...reordered, ...[...byText.values()].flat()]
+		} catch (err) {
+			// Reranking is an enhancement, not a dependency — a reranker outage
+			// degrades to unreranked results (logged), unlike a search outage.
+			const msg = err instanceof Error ? err.message : String(err)
+			log.warn(`wiki search rerank failed (${msg}); keeping search order`)
 		}
 	}
 
@@ -470,30 +536,27 @@ export async function searchWikiPages(
 	}
 
 	// Graph expansion: traverse relationships[] to find related pages.
-	// Uses BFS over wiki relationships (same graph as $graphLookup would traverse).
+	// expandGraph throws WikiSearchUnavailableError on store failure —
+	// partial results would silently under-serve (fail closed).
 	if (params.graphExpansion && results.length > 0) {
-		try {
-			const expanded = await expandGraph(handle, results, params, prefilter)
-			const governedExpanded = params.governance
-				? filterPagesByGovernance(
-						expanded as unknown as Document[],
-						params.governance,
-					).map((page) => page as unknown as WikiPageView)
-				: expanded
-			// Merge expanded pages, avoiding duplicates from search results.
-			const existingSlugs = new Set(results.map((r) => r.page.slug))
-			for (const page of governedExpanded) {
-				if (!existingSlugs.has(page.slug)) {
-					results.push({
-						page,
-						score: 0, // graph-expanded pages have no search score
-						source: "graph",
-					})
-					existingSlugs.add(page.slug)
-				}
+		const expanded = await expandGraph(handle, results, params, prefilter)
+		const governedExpanded = params.governance
+			? filterPagesByGovernance(
+					expanded as unknown as Document[],
+					params.governance,
+				).map((page) => page as unknown as WikiPageView)
+			: expanded
+		// Merge expanded pages, avoiding duplicates from search results.
+		const existingSlugs = new Set(results.map((r) => r.page.slug))
+		for (const page of governedExpanded) {
+			if (!existingSlugs.has(page.slug)) {
+				results.push({
+					page,
+					score: 0, // graph-expanded pages have no search score
+					source: "graph",
+				})
+				existingSlugs.add(page.slug)
 			}
-		} catch {
-			// Graph expansion failure → keep search results only
 		}
 	}
 

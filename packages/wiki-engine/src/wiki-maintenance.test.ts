@@ -311,4 +311,120 @@ describe("runDreamerPromotion", () => {
 		expect(result.pagesRegenerated).toBe(0)
 		expect(result.claimsAdded).toBe(0)
 	})
+
+	it("uses the vector-only recipe so the 0.65 floor is a cosine gate", async () => {
+		const store = makeStore()
+		const { db, coll } = mockDb(store)
+		const h = { db, prefix: "test_" } as WikiDbHandle
+		const captured: Document[][] = []
+		;(coll as { aggregate: ReturnType<typeof vi.fn> }).aggregate = vi.fn(
+			(pipeline: Document[]) => {
+				captured.push(pipeline)
+				return { toArray: async () => [] }
+			},
+		)
+		await runDreamerPromotion(
+			h,
+			[{ id: "evt-1", text: "The user prefers dark mode" }],
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+		expect(captured.length).toBeGreaterThan(0)
+		// Vector-only recipe: first stage is $vectorSearch (cosine scores in
+		// [0,1]); RRF-fused hybrid scores would never clear a 0.65 floor.
+		expect(captured[0][0]).toHaveProperty("$vectorSearch")
+	})
+
+	it("adopts the top page only when it clears the similarity floor", async () => {
+		const store = makeStore()
+		const { db, coll } = mockDb(store)
+		const h = { db, prefix: "test_" } as WikiDbHandle
+		// Seed an existing similar page.
+		store.docs.set(store.key("concepts/dark-mode", SCOPE, SCOPE_REF), {
+			_id: { toString: () => "1" },
+			slug: "concepts/dark-mode",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			title: "Dark mode",
+			summary: "User prefers dark mode.",
+			body: "",
+			frontmatter: { type: "concept" },
+			claims: [],
+			revision: 1,
+		})
+		// Search returns the similar page with cosine similarity 0.9 — above
+		// the 0.65 floor.
+		;(coll as { aggregate: ReturnType<typeof vi.fn> }).aggregate = vi.fn(
+			() => ({
+				toArray: async () => [
+					{
+						_id: { toString: () => "1" },
+						slug: "concepts/dark-mode",
+						scope: SCOPE,
+						scopeRef: SCOPE_REF,
+						title: "Dark mode",
+						summary: "User prefers dark mode.",
+						body: "",
+						frontmatter: { type: "concept" },
+						claims: [],
+						searchScore: 0.9,
+					},
+				],
+			}),
+		)
+		const result = await runDreamerPromotion(
+			h,
+			[{ id: "evt-1", text: "The user prefers dark mode" }],
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+		expect(result.claimsAdded).toBe(1)
+		// The claim landed on the similar page, not a fresh events/ page.
+		const page = store.docs.get(
+			store.key("concepts/dark-mode", SCOPE, SCOPE_REF),
+		)
+		expect(page?.claims).toHaveLength(1)
+		expect(
+			store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF)),
+		).toBeUndefined()
+	})
+
+	it("falls back to the hash slug when the top result is below the floor", async () => {
+		const store = makeStore()
+		const { db, coll } = mockDb(store)
+		const h = { db, prefix: "test_" } as WikiDbHandle
+		// Search returns an UNRELATED page with cosine similarity 0.02 — well
+		// below the 0.65 floor. Before WS-6 the floor was inert and this page
+		// was adopted unconditionally (cross-topic contamination).
+		;(coll as { aggregate: ReturnType<typeof vi.fn> }).aggregate = vi.fn(
+			() => ({
+				toArray: async () => [
+					{
+						_id: { toString: () => "1" },
+						slug: "concepts/graphql-schema",
+						scope: SCOPE,
+						scopeRef: SCOPE_REF,
+						title: "GraphQL schema",
+						summary: "Schema design.",
+						body: "",
+						frontmatter: { type: "concept" },
+						claims: [],
+						searchScore: 0.02,
+					},
+				],
+			}),
+		)
+		const result = await runDreamerPromotion(
+			h,
+			[{ id: "evt-1", text: "The user prefers dark mode" }],
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+		expect(result.claimsAdded).toBe(1)
+		// The event went to its own hash-slug page; the unrelated page was
+		// neither created nor contaminated.
+		expect(
+			store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF)),
+		).toBeDefined()
+		expect(
+			store.docs.get(store.key("concepts/graphql-schema", SCOPE, SCOPE_REF)),
+		).toBeUndefined()
+	})
 })

@@ -121,12 +121,15 @@ export {
 
 export {
 	searchWikiPages,
+	WikiSearchUnavailableError,
 	type WikiSearchRecipe,
 	type WikiSearchParams,
 	type WikiSearchResult,
 	type WikiRerankFn,
 	type WikiSearchResponse,
 } from "./wiki-search.js"
+
+export { probeWikiSearch } from "./wiki-search-probe.js"
 
 export {
 	buildWikiMapBlock,
