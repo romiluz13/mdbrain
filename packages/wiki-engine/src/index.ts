@@ -77,6 +77,7 @@ export {
 	getWikiPageRevision,
 	type WikiRevisionEditKind,
 	type WikiPageRevisionRecord,
+	type WikiPageEditor,
 } from "./wiki-revisions.js"
 
 export {
@@ -94,6 +95,7 @@ export {
 	renderHtml,
 	WikiDuplicateSlugError,
 	WikiNotFoundError,
+	WikiRevisionConflictError,
 	type WikiPageInput,
 	type WikiClaimInput,
 	type WikiQuestionInput,
@@ -208,3 +210,5 @@ export {
 	type SlackConnectorConfig,
 	type CrmConnectorConfig,
 } from "./wiki-connectors.js"
+
+export { omitUndefined } from "./omit-undefined.js"

@@ -93,6 +93,13 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 			store.docs.delete(k)
 			return { deletedCount: 1 }
 		}),
+		findOneAndDelete: vi.fn(async (filter: Document) => {
+			const k = store.key(filter.slug, filter.scope, filter.scopeRef)
+			const existing = store.docs.get(k)
+			if (!existing) return null
+			store.docs.delete(k)
+			return existing
+		}),
 		aggregate: vi.fn((pipeline: Document[]) => {
 			// Emulate the $match + $project pipeline used by backlinks.
 			const stage = pipeline[0]

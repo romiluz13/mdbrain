@@ -49,6 +49,19 @@ vi.mock("@mdbrain/wiki-engine", () => ({
 			this.name = "WikiDuplicateSlugError"
 		}
 	},
+	WikiRevisionConflictError: class WikiRevisionConflictError extends Error {
+		constructor(
+			public slug: string,
+			public scope: string,
+			public scopeRef: string,
+			public expectedRevision: number,
+		) {
+			super(
+				`wiki page "${slug}" in scope ${scope}:${scopeRef} moved past revision ${expectedRevision} — concurrent update, re-read and retry`,
+			)
+			this.name = "WikiRevisionConflictError"
+		}
+	},
 }))
 
 vi.mock("./wiki-store-runtime.js", () => ({
@@ -56,7 +69,10 @@ vi.mock("./wiki-store-runtime.js", () => ({
 }))
 
 import { createApp } from "./app.js"
-import { WikiDuplicateSlugError } from "@mdbrain/wiki-engine"
+import {
+	WikiDuplicateSlugError,
+	WikiRevisionConflictError,
+} from "@mdbrain/wiki-engine"
 
 type WikiJson = {
 	slug?: string
@@ -456,6 +472,52 @@ describe("wiki routes", () => {
 			expect(res.status).toBe(404)
 		})
 
+		it("maps a revision conflict (concurrent writer) to 409 REVISION_CONFLICT", async () => {
+			wikiMocks.updateWikiPage.mockRejectedValue(
+				new WikiRevisionConflictError(
+					"tables/accounts",
+					"workspace",
+					"ws-1",
+					3,
+				),
+			)
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ summary: "stale" }),
+				},
+			)
+			expect(res.status).toBe(409)
+			const json = await asJson(res)
+			expect(json.error?.code).toBe("REVISION_CONFLICT")
+		})
+
+		it("passes the calling principal as the revision editor", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			wikiMocks.updateWikiPage.mockResolvedValue({
+				...SAMPLE_PAGE,
+				revision: 2,
+			})
+			await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ summary: "Updated summary" }),
+				},
+			)
+			const opts = wikiMocks.updateWikiPage.mock.calls[0][5]
+			// The default test principal — not a payload-supplied agent string.
+			// The development principal carries a displayName; the editor name
+			// uses it, falling back to subjectId when absent.
+			expect(opts.editor).toEqual({
+				id: "development:anonymous",
+				name: "Unauthenticated local development",
+			})
+		})
+
 		it("requires change-permissions capability for ACL or trust edits", async () => {
 			process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
 				{
@@ -834,32 +896,32 @@ describe("wiki routes", () => {
 		})
 
 		it("does NOT fall through to the GET /wiki/* get-by-slug handler — confirms no route collision with the wildcard", async () => {
-			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
 			wikiMocks.listWikiPageRevisions.mockResolvedValue([])
 			await createApp().request(
 				"/v1/wiki/revisions?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
 			)
-			// getWikiPage IS called (for the governance check), but with the real
-			// requested slug — never with slug="revisions", which is what would
-			// happen if GET /wiki/* had swallowed this request instead.
-			expect(wikiMocks.getWikiPage).toHaveBeenCalledWith(
+			// The revisions handler resolves history WITHOUT a current-page read
+			// (governance is per revision snapshot). A fall-through to
+			// GET /wiki/* would instead call getWikiPage with slug="revisions".
+			expect(wikiMocks.getWikiPage).not.toHaveBeenCalled()
+			expect(wikiMocks.listWikiPageRevisions).toHaveBeenCalledWith(
 				expect.anything(),
-				"tables/accounts",
-				"workspace",
-				"ws-1",
-				expect.anything(),
+				expect.objectContaining({ pageSlug: "tables/accounts" }),
 			)
 			expect(wikiMocks.renderMarkdown).not.toHaveBeenCalled()
 			expect(wikiMocks.renderHtml).not.toHaveBeenCalled()
 		})
 
-		it("returns 404 when the caller cannot read the live page (governance-gated)", async () => {
+		it("authorizes per revision — an unreadable CURRENT page no longer hides history", async () => {
+			// The live page is gone (hard-deleted) or restricted; the engine
+			// decides visibility per revision snapshot and returns [] here.
 			wikiMocks.getWikiPage.mockResolvedValue(undefined)
+			wikiMocks.listWikiPageRevisions.mockResolvedValue([])
 			const res = await createApp().request(
 				"/v1/wiki/revisions?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
 			)
-			expect(res.status).toBe(404)
-			expect(wikiMocks.listWikiPageRevisions).not.toHaveBeenCalled()
+			expect(res.status).toBe(200)
+			expect(wikiMocks.listWikiPageRevisions).toHaveBeenCalledTimes(1)
 		})
 
 		it("rejects missing slug", async () => {
@@ -906,13 +968,24 @@ describe("wiki routes", () => {
 			expect(res.status).toBe(404)
 		})
 
-		it("returns 404 when the caller cannot read the live page", async () => {
+		it("authorizes per revision — an unreadable CURRENT page no longer hides a readable revision", async () => {
+			// The live page is gone (hard-deleted) or restricted; the revision's
+			// own snapshot still permits this caller, so the engine returns it.
 			wikiMocks.getWikiPage.mockResolvedValue(undefined)
+			wikiMocks.getWikiPageRevision.mockResolvedValue({
+				pageSlug: "tables/accounts",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				revision: 1,
+				editKind: "create",
+				snapshot: { title: "Accounts Table (original)" },
+				createdAt: "2026-07-09T00:00:00.000Z",
+			})
 			const res = await createApp().request(
 				"/v1/wiki/revisions/1?slug=tables/accounts&scope=workspace&scopeRef=ws-1",
 			)
-			expect(res.status).toBe(404)
-			expect(wikiMocks.getWikiPageRevision).not.toHaveBeenCalled()
+			expect(res.status).toBe(200)
+			expect(wikiMocks.getWikiPageRevision).toHaveBeenCalledTimes(1)
 		})
 
 		it("rejects a non-numeric revision", async () => {

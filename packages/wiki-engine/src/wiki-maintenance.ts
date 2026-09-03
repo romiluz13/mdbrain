@@ -29,6 +29,7 @@ import {
 	type WikiPageInput,
 } from "./wiki-bridge.js"
 import { searchWikiPages } from "./wiki-search.js"
+import { omitUndefined } from "./omit-undefined.js"
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -435,11 +436,11 @@ async function updateMaintenanceMetadata(
 	await coll.updateOne(
 		{ slug, scope, scopeRef },
 		{
-			$set: {
+			$set: omitUndefined({
 				lastMaintainedAt: new Date(),
 				lastMaintenanceSource: source,
 				freshness: "fresh",
-			} as Document,
+			}) as Document,
 		},
 	)
 }

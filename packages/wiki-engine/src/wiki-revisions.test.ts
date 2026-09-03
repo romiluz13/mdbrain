@@ -6,6 +6,7 @@ import {
 	recordWikiPageRevision,
 } from "./wiki-revisions.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
+import type { GovernanceContext } from "./wiki-governance.js"
 
 function mockCollection(): Collection {
 	return {
@@ -190,5 +191,181 @@ describe("getWikiPageRevision", () => {
 		})
 		expect(revision?.snapshot).toEqual({ title: "X", body: "content" })
 		expect(revision?.createdAt).toBe("2026-01-01T00:00:00.000Z")
+	})
+})
+
+// ---------------------------------------------------------------------------
+// Governed reads — per-revision snapshot metadata, not current-page state.
+// WS-5 item 5: a page that was later restricted or hard-deleted must not
+// hide its earlier history from readers who could see those revisions, and
+// must not leak them to readers who could not.
+// ---------------------------------------------------------------------------
+
+const GOVERNED_CTX: GovernanceContext = {
+	scope: "workspace",
+	scopeRef: "ws-1",
+	subjectId: "api-key:me",
+	groups: [],
+	trustTier: "standard",
+	roles: [],
+	departments: [],
+	capabilities: ["read", "write"],
+}
+
+describe("listWikiPageRevisions (governed)", () => {
+	it("authorizes each revision against its own snapshot, not the current page", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(coll.find as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+			sort: vi.fn(() => ({
+				limit: vi.fn(() => ({
+					toArray: async () => [
+						{
+							// Restricted AFTER this caller's access — but the
+							// snapshot at revision 2 was open; revision 2 stays
+							// visible.
+							pageSlug: "x",
+							scope: "workspace",
+							scopeRef: "ws-1",
+							revision: 2,
+							editKind: "update",
+							createdAt: new Date("2026-01-02T00:00:00.000Z"),
+							snapshot: {
+								slug: "x",
+								scope: "workspace",
+								scopeRef: "ws-1",
+								permissions: {},
+							},
+						},
+						{
+							// Written while restricted to another subject —
+							// hidden from this caller even though the page is
+							// now open.
+							pageSlug: "x",
+							scope: "workspace",
+							scopeRef: "ws-1",
+							revision: 1,
+							editKind: "create",
+							createdAt: new Date("2026-01-01T00:00:00.000Z"),
+							snapshot: {
+								slug: "x",
+								scope: "workspace",
+								scopeRef: "ws-1",
+								permissions: {
+									allowedSubjects: ["api-key:someone-else"],
+								},
+							},
+						},
+					],
+				})),
+			})),
+		})
+		const revisions = await listWikiPageRevisions(h, {
+			pageSlug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			governance: GOVERNED_CTX,
+		})
+		// Only the revision whose own snapshot permits this caller survives —
+		// and no pages-collection read ever happens (the current page state,
+		// including hard deletion, is irrelevant).
+		expect(revisions.map((r) => r.revision)).toEqual([2])
+	})
+
+	it("returns [] when no revision's snapshot permits the caller", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(coll.find as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+			sort: vi.fn(() => ({
+				limit: vi.fn(() => ({
+					toArray: async () => [
+						{
+							pageSlug: "x",
+							scope: "workspace",
+							scopeRef: "ws-1",
+							revision: 1,
+							editKind: "create",
+							createdAt: new Date("2026-01-01T00:00:00.000Z"),
+							snapshot: {
+								slug: "x",
+								scope: "workspace",
+								scopeRef: "ws-1",
+								permissions: {
+									allowedSubjects: ["api-key:someone-else"],
+								},
+							},
+						},
+					],
+				})),
+			})),
+		})
+		const revisions = await listWikiPageRevisions(h, {
+			pageSlug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			governance: GOVERNED_CTX,
+		})
+		expect(revisions).toEqual([])
+	})
+})
+
+describe("getWikiPageRevision (governed)", () => {
+	it("returns a revision whose snapshot permits the caller, even if the current page is gone", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			pageSlug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 3,
+			editKind: "delete", // the hard-delete revision itself
+			createdAt: new Date("2026-01-03T00:00:00.000Z"),
+			snapshot: {
+				slug: "x",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				permissions: {},
+			},
+		} as Document)
+		const revision = await getWikiPageRevision(h, {
+			pageSlug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 3,
+			governance: GOVERNED_CTX,
+		})
+		expect(revision?.revision).toBe(3)
+		expect(revision?.editKind).toBe("delete")
+	})
+
+	it("returns undefined when the revision's own snapshot denies the caller", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			pageSlug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 1,
+			editKind: "create",
+			createdAt: new Date("2026-01-01T00:00:00.000Z"),
+			snapshot: {
+				slug: "x",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				permissions: { allowedSubjects: ["api-key:someone-else"] },
+			},
+		} as Document)
+		const revision = await getWikiPageRevision(h, {
+			pageSlug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 1,
+			governance: GOVERNED_CTX,
+		})
+		expect(revision).toBeUndefined()
 	})
 })

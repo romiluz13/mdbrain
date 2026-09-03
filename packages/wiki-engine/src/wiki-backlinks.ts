@@ -10,6 +10,7 @@
 import type { ClientSession } from "mongodb"
 import { wikiPagesCollection } from "./wiki-schema.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
+import { omitUndefined } from "./omit-undefined.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -83,10 +84,12 @@ export async function recomputeBacklinksFor(
 			sourceTitle: p.title,
 		}))
 
-	// Write the backlinks[] to the target page.
+	// Write the backlinks[] to the target page. omitUndefined guards against
+	// a future backlink field being optional-and-absent (context today is
+	// omitted at construction — NB-1 — the helper is belt-and-braces).
 	const result = await coll.updateOne(
 		{ slug: targetSlug, scope, scopeRef },
-		{ $set: { backlinks } },
+		{ $set: omitUndefined({ backlinks }) },
 		opts.session ? { session: opts.session } : undefined,
 	)
 	if (result.matchedCount === 0) return null

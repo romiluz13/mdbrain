@@ -25,8 +25,12 @@ import {
 	buildGovernanceFilter,
 	type GovernanceContext,
 } from "./wiki-governance.js"
-import { recordWikiPageRevision } from "./wiki-revisions.js"
+import {
+	recordWikiPageRevision,
+	type WikiPageEditor,
+} from "./wiki-revisions.js"
 import { extractTransclusionTargets } from "./wiki-transclusion.js"
+import { omitUndefined } from "./omit-undefined.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -331,10 +335,16 @@ export type WikiEmbedFn = (text: string) => Promise<number[]>
 export async function createWikiPage(
 	handle: WikiDbHandle,
 	input: WikiPageInput,
-	opts: { embed?: WikiEmbedFn; session?: ClientSession } = {},
+	opts: {
+		embed?: WikiEmbedFn
+		session?: ClientSession
+		/** The actual calling principal; recorded on the revision instead of
+		 *  the payload-supplied sourceAgent when present. */
+		editor?: WikiPageEditor
+	} = {},
 ): Promise<WikiPageView> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
-	const doc = normalizeInput(input)
+	const doc = omitUndefined(normalizeInput(input))
 	if (opts.embed) {
 		const text = `${input.summary}\n${input.body}`
 		doc.embedding = await opts.embed(text)
@@ -389,7 +399,7 @@ export async function createWikiPage(
 				scopeRef: input.scopeRef,
 				revision: 1,
 				editKind: "create",
-				editor: input.sourceAgent,
+				editor: opts.editor ?? input.sourceAgent,
 				snapshot: inserted,
 			},
 			{
@@ -489,15 +499,43 @@ export async function listWikiPages(
 	}
 }
 
+/** Merges new claims into existing claims BY CLAIM ID: a new claim whose id
+ *  already exists replaces the existing entry in place (preserving the
+ *  original position); novel ids are appended. Guarantees the resulting
+ *  array contains no duplicate claim ids, regardless of what a caller
+ *  submits. */
+function upsertClaimsById(
+	existing: Record<string, unknown>[],
+	incoming: Record<string, unknown>[],
+): Record<string, unknown>[] {
+	const merged = [...existing]
+	for (const claim of incoming) {
+		const index = merged.findIndex((m) => m.id === claim.id)
+		if (index >= 0) merged[index] = claim
+		else merged.push(claim)
+	}
+	return merged
+}
+
 /** Updates a wiki page by slug within a scope. Bumps revision + updatedAt.
- *  Returns the updated view, or undefined if not found. */
+ *  Returns the updated view, or undefined if not found.
+ *
+ *  Concurrency: the update is a compare-and-swap on the page's revision —
+ *  the filter includes the revision observed when this update was built, so
+ *  a concurrent writer landing in between causes a WikiRevisionConflictError
+ *  (stale-read RMW eliminated: the merged claims/relationships/text are
+ *  applied against a known revision or not at all).
+ *
+ *  Claims: patch claims are merged into the existing claims by claim id —
+ *  a patch claim whose id already exists REPLACES that claim (upsert-by-id),
+ *  so no write can accumulate duplicate claim ids on a page. */
 export async function updateWikiPage(
 	handle: WikiDbHandle,
 	slug: string,
 	scope: string,
 	scopeRef: string,
 	patch: Partial<Omit<WikiPageInput, "slug" | "scope" | "scopeRef">>,
-	opts: { session?: ClientSession } = {},
+	opts: { session?: ClientSession; editor?: WikiPageEditor } = {},
 ): Promise<WikiPageView | undefined> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const now = new Date()
@@ -517,27 +555,10 @@ export async function updateWikiPage(
 	if (patch.trustTier !== undefined) setFields.trustTier = patch.trustTier
 	if (patch.permissions !== undefined) setFields.permissions = patch.permissions
 	if (patch.personCard !== undefined) setFields.personCard = patch.personCard
-	// Claims are processed by the pipeline gate below (after fetching the
-	// old page for existing-claim dedup checks).
-	if (patch.questions !== undefined) {
-		// Normalize like the create path: default status + createdAt so the
-		// $jsonSchema validator (requires id/text/status/createdAt per question)
-		// does not reject the update. answeredByClaimId is optional — set it
-		// only when present: the driver serializes undefined as BSON null,
-		// which fails the bsonType "string" validator (C2-15).
-		setFields.questions = (patch.questions ?? []).map((q) => {
-			const question: Record<string, unknown> = {
-				id: q.id,
-				text: q.text,
-				status: q.status ?? "open",
-				createdAt: now,
-			}
-			if (q.answeredByClaimId) {
-				question.answeredByClaimId = q.answeredByClaimId
-			}
-			return question
-		})
-	}
+	// Claims AND questions are processed below (after fetching the old page):
+	// claims need the existing-claims merge, questions need existing-question
+	// preservation (status/createdAt survive a patch that re-submits the
+	// array without them).
 	if (patch.relationships !== undefined) {
 		// Normalize like the create path: default weight/confidence and omit
 		// optional string/enum fields when absent — undefined values serialize
@@ -556,6 +577,27 @@ export async function updateWikiPage(
 		})
 	}
 
+	// Single read of the old page, used for (a) auto-embed text merge,
+	// (b) removed-relationship-target detection, (c) the existing-claims
+	// merge below, and (d) the compare-and-swap revision predicate.
+	const oldPage = (await coll.findOne(
+		{ slug, scope, scopeRef },
+		opts.session ? { session: opts.session } : undefined,
+	)) as {
+		title?: string
+		summary?: string
+		body?: string
+		revision?: number
+		relationships?: Array<{ targetPageSlug: string }>
+		claims?: WikiClaimInput[]
+		questions?: Array<{
+			id: string
+			status?: string
+			createdAt?: Date
+			answeredByClaimId?: string
+		}>
+	} | null
+
 	// Recompute the auto-embed text field when title/summary/body changes.
 	// Uses merged old + new values so partial patches still produce correct text.
 	if (
@@ -563,30 +605,37 @@ export async function updateWikiPage(
 		patch.summary !== undefined ||
 		patch.body !== undefined
 	) {
-		const oldPageForText = (await coll.findOne(
-			{ slug, scope, scopeRef },
-			opts.session ? { session: opts.session } : undefined,
-		)) as {
-			title?: string
-			summary?: string
-			body?: string
-		} | null
-		const mergedTitle = patch.title ?? oldPageForText?.title ?? ""
-		const mergedSummary = patch.summary ?? oldPageForText?.summary ?? ""
-		const mergedBody = patch.body ?? oldPageForText?.body ?? ""
+		const mergedTitle = patch.title ?? oldPage?.title ?? ""
+		const mergedSummary = patch.summary ?? oldPage?.summary ?? ""
+		const mergedBody = patch.body ?? oldPage?.body ?? ""
 		setFields.text = `${mergedTitle} ${mergedSummary} ${mergedBody}`
 	}
 
-	// Fetch the old page to compute which relationship targets are being removed
-	// (so their backlinks can be cleaned).
-	const oldPage = (await coll.findOne(
-		{ slug, scope, scopeRef },
-		opts.session ? { session: opts.session } : undefined,
-	)) as {
-		relationships?: Array<{ targetPageSlug: string }>
-		claims?: WikiClaimInput[]
-	} | null
 	const oldTargets = oldPage?.relationships?.map((r) => r.targetPageSlug) ?? []
+
+	if (patch.questions !== undefined) {
+		// WS-5 item 4: a questions patch is merged against the page's
+		// EXISTING questions by id. Callers re-submitting the array they read
+		// (read-modify-write) cannot clobber an existing question's status or
+		// createdAt by omitting them, and answeredByClaimId is written only
+		// when truthy — never undefined→BSON null (C2-15). Novel questions
+		// get the create-path defaults (status "open", createdAt now).
+		const existingQuestions = new Map(
+			(oldPage?.questions ?? []).map((q) => [q.id, q]),
+		)
+		setFields.questions = (patch.questions ?? []).map((q) => {
+			const existing = existingQuestions.get(q.id)
+			const question: Record<string, unknown> = {
+				id: q.id,
+				text: q.text,
+				status: q.status ?? existing?.status ?? "open",
+				createdAt: existing?.createdAt ?? now,
+			}
+			const answeredBy = q.answeredByClaimId ?? existing?.answeredByClaimId
+			if (answeredBy) question.answeredByClaimId = answeredBy
+			return question
+		})
+	}
 
 	// Process claims through the write pipeline gate: contradiction detection
 	// FIRST (cross-page), then dedup (same-page near-duplicate). Claims rejected
@@ -625,7 +674,6 @@ export async function updateWikiPage(
 					acceptedNewClaims.push(newClaim)
 				}
 			}
-			// Final claims = existing claims (preserved) + accepted new claims.
 			const newClaimsNormalized = acceptedNewClaims.map((c) => ({
 				id: c.id,
 				text: c.text,
@@ -642,20 +690,54 @@ export async function updateWikiPage(
 				...(c.sourceMemId ? { sourceMemId: c.sourceMemId } : {}),
 				...(c.validTo ? { validTo: c.validTo } : {}),
 			}))
-			setFields.claims = [
-				...existingClaims,
-				...newClaimsNormalized,
-			] as unknown as typeof setFields.claims
+			// Final claims = existing claims with patch claims upserted BY ID:
+			// a patch claim whose id matches an existing claim replaces it in
+			// place; novel ids are appended. The page can never accumulate two
+			// claims with the same id.
+			setFields.claims = upsertClaimsById(
+				existingClaims as unknown as Record<string, unknown>[],
+				newClaimsNormalized as unknown as Record<string, unknown>[],
+			) as unknown as typeof setFields.claims
 		}
 	}
 
+	// Compare-and-swap: the update filter pins the revision observed in
+	// oldPage. If a concurrent writer changed the page in between, the filter
+	// matches nothing and we surface a conflict instead of silently writing
+	// a stale merge (stale-read RMW).
+	const updateFilter: Record<string, unknown> = { slug, scope, scopeRef }
+	if (oldPage !== null) {
+		updateFilter.revision = Number(oldPage.revision ?? 1)
+	}
 	const result = await coll.findOneAndUpdate(
-		{ slug, scope, scopeRef },
-		{ $set: setFields, $inc: { revision: 1 } },
+		updateFilter,
+		{ $set: omitUndefined(setFields), $inc: { revision: 1 } },
 		{ returnDocument: "after", session: opts.session },
 	)
 	const value = result ?? null
-	if (!value) return undefined
+	if (!value) {
+		// Distinguish "page gone" (not found) from "revision moved" (conflict).
+		if (oldPage !== null) {
+			const stillExists = await coll.findOne(
+				{ slug, scope, scopeRef },
+				opts.session
+					? {
+							session: opts.session,
+							projection: { _id: 1 },
+						}
+					: { projection: { _id: 1 } },
+			)
+			if (stillExists) {
+				throw new WikiRevisionConflictError(
+					slug,
+					scope,
+					scopeRef,
+					Number(oldPage.revision ?? 1),
+				)
+			}
+		}
+		return undefined
+	}
 	// Recompute backlinks for gained/lost relationship targets.
 	const newTargets = (patch.relationships ?? []).map((r) => r.targetPageSlug)
 	await recomputeBacklinksAfterChange(handle, slug, scope, scopeRef, {
@@ -672,9 +754,12 @@ export async function updateWikiPage(
 			scopeRef,
 			revision: valueRecord.revision as number,
 			editKind: "update",
-			editor: valueRecord.sourceAgent as
-				| { id: string; name: string; runId?: string }
-				| undefined,
+			// The revision records the ACTUAL calling principal when the
+			// caller supplies one (routes always do); sourceAgent — the
+			// payload-supplied agent string — is only a fallback for
+			// engine-internal callers (OKF import, maintenance).
+			editor:
+				opts.editor ?? (valueRecord.sourceAgent as WikiPageEditor | undefined),
 			snapshot: valueRecord,
 		},
 		{
@@ -688,28 +773,32 @@ export async function updateWikiPage(
 /** Deletes a wiki page (hard delete) OR marks state=superseded (soft).
  *  Default is soft (preserves audit trail per arXiv:2606.24535 temporal
  *  supersession). Pass { hard: true } for a real delete.
- *  Returns true if a page was matched, false otherwise. */
+ *  Returns true if a page was matched, false otherwise.
+ *
+ *  Hard-delete snapshot consistency: the snapshot and the delete are ONE
+ *  atomic operation (findOneAndDelete) — the recorded revision is exactly
+ *  the document that was removed, never a read that raced a concurrent
+ *  write between snapshot and delete. */
 export async function deleteWikiPage(
 	handle: WikiDbHandle,
 	slug: string,
 	scope: string,
 	scopeRef: string,
-	opts: { hard?: boolean; session?: ClientSession } = {},
+	opts: {
+		hard?: boolean
+		session?: ClientSession
+		/** The actual calling principal; recorded on the delete revision. */
+		editor?: WikiPageEditor
+	} = {},
 ): Promise<boolean> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	let deleted = false
 	if (opts.hard) {
-		const beforeDelete = (await coll.findOne(
+		const beforeDelete = (await coll.findOneAndDelete(
 			{ slug, scope, scopeRef },
-			opts.session ? { session: opts.session } : undefined,
+			{ session: opts.session },
 		)) as Record<string, unknown> | null
-		const result = opts.session
-			? await coll.deleteOne(
-					{ slug, scope, scopeRef },
-					{ session: opts.session },
-				)
-			: await coll.deleteOne({ slug, scope, scopeRef })
-		deleted = result.deletedCount > 0
+		deleted = beforeDelete !== null
 		if (deleted && beforeDelete) {
 			await recordWikiPageRevision(
 				handle,
@@ -719,6 +808,7 @@ export async function deleteWikiPage(
 					scopeRef,
 					revision: Number(beforeDelete.revision ?? 0) + 1,
 					editKind: "delete",
+					editor: opts.editor,
 					snapshot: beforeDelete,
 				},
 				{
@@ -732,7 +822,11 @@ export async function deleteWikiPage(
 		const result = await coll.findOneAndUpdate(
 			{ slug, scope, scopeRef, state: { $ne: "superseded" } },
 			{
-				$set: { state: "superseded", updatedAt: now, validTo: now },
+				$set: omitUndefined({
+					state: "superseded",
+					updatedAt: now,
+					validTo: now,
+				}),
 				$inc: { revision: 1 },
 			},
 			{ returnDocument: "after", session: opts.session },
@@ -749,6 +843,9 @@ export async function deleteWikiPage(
 					scopeRef,
 					revision: valueRecord.revision as number,
 					editKind: "delete",
+					editor:
+						opts.editor ??
+						(valueRecord.sourceAgent as WikiPageEditor | undefined),
 					snapshot: valueRecord,
 				},
 				{
@@ -804,5 +901,23 @@ export class WikiNotFoundError extends Error {
 	) {
 		super(`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`)
 		this.name = "WikiNotFoundError"
+	}
+}
+
+/** Thrown when updateWikiPage's compare-and-swap misses: the page's revision
+ *  moved between the read that built the patch merge and the write, meaning
+ *  a concurrent writer landed first. The caller should re-read and retry
+ *  (the HTTP API surfaces this as 409 REVISION_CONFLICT). */
+export class WikiRevisionConflictError extends Error {
+	constructor(
+		readonly slug: string,
+		readonly scope: string,
+		readonly scopeRef: string,
+		readonly expectedRevision: number,
+	) {
+		super(
+			`wiki page "${slug}" in scope ${scope}:${scopeRef} moved past revision ${expectedRevision} — concurrent update, re-read and retry`,
+		)
+		this.name = "WikiRevisionConflictError"
 	}
 }

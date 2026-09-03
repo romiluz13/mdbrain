@@ -18,6 +18,7 @@ import {
 } from "./wiki-governance.js"
 import { wikiPagesCollection } from "./wiki-schema.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
+import { omitUndefined } from "./omit-undefined.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -328,7 +329,10 @@ export async function listUnresolvedContradictions(
 // ---------------------------------------------------------------------------
 
 /** Resolves a contradiction by ID. Updates the resolution state, resolvedBy,
- *  and resolvedAt. */
+ *  and resolvedAt. resolvedBy/note are optional strings in the $jsonSchema
+ *  validator — they are $set only when supplied and $unset otherwise, never
+ *  written as undefined (the driver would serialize undefined to BSON null,
+ *  failing the bsonType "string" validator — same class as C2-15/NB-1). */
 export async function resolveContradiction(
 	handle: WikiDbHandle,
 	pageSlug: string,
@@ -339,6 +343,21 @@ export async function resolveContradiction(
 	opts: { resolvedBy?: string; note?: string } = {},
 ): Promise<boolean> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
+	const set: Record<string, unknown> = {
+		"contradictions.$.resolution": resolution,
+		"contradictions.$.resolvedAt": new Date(),
+	}
+	if (opts.resolvedBy) set["contradictions.$.resolvedBy"] = opts.resolvedBy
+	if (opts.note) set["contradictions.$.note"] = opts.note
+	// Clear any previously-recorded optional fields that this resolution
+	// doesn't supply, so a re-resolution can't leave a stale resolvedBy/note.
+	const unset: Record<string, unknown> = {}
+	if (!opts.resolvedBy) unset["contradictions.$.resolvedBy"] = ""
+	if (!opts.note) unset["contradictions.$.note"] = ""
+	const update: Document = { $set: omitUndefined(set) as Document }
+	if (Object.keys(unset).length > 0) {
+		update.$unset = unset as Document
+	}
 	const result = await coll.updateOne(
 		{
 			slug: pageSlug,
@@ -346,14 +365,7 @@ export async function resolveContradiction(
 			scopeRef,
 			"contradictions.id": contradictionId,
 		},
-		{
-			$set: {
-				"contradictions.$.resolution": resolution,
-				"contradictions.$.resolvedBy": opts.resolvedBy,
-				"contradictions.$.resolvedAt": new Date(),
-				"contradictions.$.note": opts.note,
-			} as Document,
-		},
+		update,
 	)
 	return result.modifiedCount > 0
 }

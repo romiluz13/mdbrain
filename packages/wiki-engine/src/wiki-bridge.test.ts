@@ -15,6 +15,7 @@ import {
 	updateWikiPage,
 	deleteWikiPage,
 	WikiDuplicateSlugError,
+	WikiRevisionConflictError,
 	type WikiDbHandle,
 	type WikiPageView,
 } from "./wiki-bridge.js"
@@ -39,6 +40,7 @@ function mockCollection(): Collection {
 		})),
 		countDocuments: vi.fn(async () => 0),
 		findOneAndUpdate: vi.fn(async () => null),
+		findOneAndDelete: vi.fn(async () => null),
 		updateOne: vi.fn(async () => ({ matchedCount: 0, modifiedCount: 0 })),
 		deleteOne: vi.fn(async () => ({ deletedCount: 0 })),
 		aggregate: vi.fn(() => ({ toArray: async () => [] })),
@@ -143,6 +145,23 @@ describe("createWikiPage", () => {
 		expect(revisionDoc.pageSlug).toBe("tables/accounts")
 	})
 
+	it("records the ACTUAL principal as editor on create (overrides sourceAgent)", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const revisionsColl = mockCollection()
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) =>
+				name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		)
+		await createWikiPage(h, VALID_INPUT, {
+			editor: { id: "api-key:ops", name: "Ops Key" },
+		})
+		const [revisionDoc] = (
+			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		expect(revisionDoc.editor).toEqual({ id: "api-key:ops", name: "Ops Key" })
+	})
+
 	it("throws WikiDuplicateSlugError on E11000", async () => {
 		const { db, coll } = mockDb()
 		;(
@@ -245,6 +264,77 @@ describe("updateWikiPage", () => {
 		expect(q.createdAt).toBeInstanceOf(Date)
 	})
 
+	it("preserves existing question status/createdAt/answeredByClaimId across a re-submitted patch (WS-5 item 4)", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const originalCreatedAt = new Date("2026-01-01T00:00:00.000Z")
+		// The old page already has q1 answered; the patch re-submits the
+		// questions array read from the page WITHOUT status/answeredByClaimId
+		// (read-modify-write) — those fields must survive, not reset.
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 3,
+			claims: [],
+			relationships: [],
+			questions: [
+				{
+					id: "q1",
+					text: "Who owns this?",
+					status: "answered",
+					createdAt: originalCreatedAt,
+					answeredByClaimId: "c9",
+				},
+			],
+		})
+		await updateWikiPage(h, "x", "workspace", "ws-1", {
+			questions: [
+				{ id: "q1", text: "Who owns this?" },
+				{ id: "q2", text: "A brand new question?" },
+			],
+		})
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		const [q1, q2] = update.$set.questions
+		// Existing question: status/createdAt/answeredByClaimId preserved.
+		expect(q1.status).toBe("answered")
+		expect(q1.createdAt).toBe(originalCreatedAt)
+		expect(q1.answeredByClaimId).toBe("c9")
+		// Explicit patch values still win over the stored ones.
+		expect(q1.text).toBe("Who owns this?")
+		// Novel question: create-path defaults apply.
+		expect(q2.status).toBe("open")
+		expect(q2.createdAt).toBeInstanceOf(Date)
+		expect(q2.answeredByClaimId).toBeUndefined()
+	})
+
+	it("lets an explicit patch override a preserved question status", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 1,
+			claims: [],
+			relationships: [],
+			questions: [{ id: "q1", text: "Who owns this?", status: "open" }],
+		})
+		await updateWikiPage(h, "x", "workspace", "ws-1", {
+			questions: [{ id: "q1", text: "Who owns this?", status: "answered" }],
+		})
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		expect(update.$set.questions[0].status).toBe("answered")
+	})
+
 	it("recomputes text field when title/summary/body is patched", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
@@ -335,6 +425,166 @@ describe("updateWikiPage", () => {
 		).mock.calls[0][1]
 		expect(update.$set.claims).toEqual([])
 	})
+
+	it("pins the observed revision in the update filter (compare-and-swap)", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			title: "Old Title",
+			revision: 4,
+			claims: [],
+			relationships: [],
+		})
+		await updateWikiPage(h, "x", "workspace", "ws-1", { summary: "new" })
+		const [filter] = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		expect(filter).toEqual({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 4,
+		})
+	})
+
+	it("throws WikiRevisionConflictError when the revision moved (stale-read RMW)", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const findOne = coll.findOne as unknown as ReturnType<typeof vi.fn>
+		// First read: the page as this update was built against (revision 4).
+		findOne.mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 4,
+			claims: [],
+			relationships: [],
+		})
+		// findOneAndUpdate misses (a concurrent writer bumped the revision),
+		// and the follow-up existence probe finds the page still there.
+		findOne.mockResolvedValueOnce({ _id: 1 })
+		await expect(
+			updateWikiPage(h, "x", "workspace", "ws-1", { summary: "stale merge" }),
+		).rejects.toBeInstanceOf(WikiRevisionConflictError)
+	})
+
+	it("returns undefined (not a conflict) when the page vanished entirely", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const findOne = coll.findOne as unknown as ReturnType<typeof vi.fn>
+		findOne.mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 4,
+			claims: [],
+			relationships: [],
+		})
+		findOne.mockResolvedValueOnce(null) // existence probe: gone
+		const result = await updateWikiPage(h, "x", "workspace", "ws-1", {
+			summary: "late",
+		})
+		expect(result).toBeUndefined()
+	})
+
+	it("upserts patch claims BY ID — a matching id replaces, never duplicates", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			claims: [
+				{ id: "c1", text: "Original text", status: "active", confidence: 0.5 },
+				{ id: "c2", text: "Kept claim", status: "active", confidence: 0.5 },
+			],
+			relationships: [],
+		})
+		await updateWikiPage(h, "x", "workspace", "ws-1", {
+			claims: [
+				{ id: "c1", text: "Corrected text" },
+				{ id: "c3", text: "Novel claim" },
+			],
+		})
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		const ids = update.$set.claims.map((c: { id: string }) => c.id)
+		expect(ids).toEqual(["c1", "c2", "c3"]) // no duplicate c1
+		const c1 = update.$set.claims.find((c: { id: string }) => c.id === "c1")
+		expect(c1.text).toBe("Corrected text") // replaced in place
+	})
+
+	it("records the ACTUAL calling principal as the revision editor", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const revisionsColl = mockCollection()
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) =>
+				name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		)
+		;(
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			_id: { toString: () => "id-x" },
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 7,
+			// A payload-supplied sourceAgent that must NOT be misattributed as
+			// the editor when a real principal is supplied.
+			sourceAgent: { id: "agent-from-body", name: "Spoofed" },
+		})
+		await updateWikiPage(
+			h,
+			"x",
+			"workspace",
+			"ws-1",
+			{ summary: "new" },
+			{
+				editor: { id: "api-key:ops", name: "Ops Key" },
+			},
+		)
+		const [revisionDoc] = (
+			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		expect(revisionDoc.editor).toEqual({ id: "api-key:ops", name: "Ops Key" })
+	})
+
+	it("falls back to sourceAgent for engine-internal callers with no editor", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const revisionsColl = mockCollection()
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) =>
+				name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		)
+		;(
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			_id: { toString: () => "id-x" },
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 7,
+			sourceAgent: { id: "dreamer-run", name: "Dreamer" },
+		})
+		await updateWikiPage(h, "x", "workspace", "ws-1", { summary: "new" })
+		const [revisionDoc] = (
+			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		expect(revisionDoc.editor).toEqual({
+			id: "dreamer-run",
+			name: "Dreamer",
+		})
+	})
 })
 
 describe("deleteWikiPage", () => {
@@ -381,15 +631,58 @@ describe("deleteWikiPage", () => {
 		expect(revisionDoc.revision).toBe(2)
 	})
 
-	it("hard-deletes when hard=true", async () => {
+	it("hard-deletes atomically via findOneAndDelete and snapshots the deleted doc", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
-		await deleteWikiPage(h, "x", "workspace", "ws-1", { hard: true })
-		expect(coll.deleteOne).toHaveBeenCalledWith({
+		const revisionsColl = mockCollection()
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) =>
+				name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		)
+		;(
+			coll.findOneAndDelete as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			_id: { toString: () => "id-x" },
 			slug: "x",
 			scope: "workspace",
 			scopeRef: "ws-1",
+			revision: 5,
+			state: "active",
 		})
+		const deleted = await deleteWikiPage(h, "x", "workspace", "ws-1", {
+			hard: true,
+			editor: { id: "api-key:admin", name: "Admin" },
+		})
+		expect(deleted).toBe(true)
+		expect(coll.findOneAndDelete).toHaveBeenCalledWith(
+			{ slug: "x", scope: "workspace", scopeRef: "ws-1" },
+			{ session: undefined },
+		)
+		const [revisionDoc] = (
+			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		// The delete revision snapshot is EXACTLY the atomically-returned
+		// document (no separate read that could race a concurrent write).
+		expect(revisionDoc.editKind).toBe("delete")
+		expect(revisionDoc.revision).toBe(6)
+		expect(revisionDoc.editor).toEqual({ id: "api-key:admin", name: "Admin" })
+		expect(revisionDoc.snapshot.slug).toBe("x")
+		expect(revisionDoc.snapshot.revision).toBe(5)
+	})
+
+	it("hard-delete with no match returns false and records no revision", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const revisionsColl = mockCollection()
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) =>
+				name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		)
+		const deleted = await deleteWikiPage(h, "x", "workspace", "ws-1", {
+			hard: true,
+		})
+		expect(deleted).toBe(false)
+		expect(revisionsColl.insertOne).not.toHaveBeenCalled()
 	})
 })
 

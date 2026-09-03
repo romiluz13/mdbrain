@@ -47,7 +47,9 @@ import {
 	resolveTransclusions,
 	recordWikiMutationIntent,
 	WikiDuplicateSlugError,
+	WikiRevisionConflictError,
 	type WikiDbHandle,
+	type WikiPageEditor,
 	type WikiPageInput,
 	type GovernanceContext,
 } from "@mdbrain/wiki-engine"
@@ -2105,6 +2107,20 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		return getApiPrincipal(c).capabilities.includes("change-permissions")
 	}
 
+	// The editor recorded on wiki revision snapshots: the ACTUAL calling
+	// principal, not the payload-supplied sourceAgent (which a caller could
+	// set to any string). Falls back to the subjectId when the credential
+	// configures no displayName.
+	function principalEditor(
+		c: Parameters<typeof getApiPrincipal>[0],
+	): WikiPageEditor {
+		const principal = getApiPrincipal(c)
+		return {
+			id: principal.subjectId,
+			name: principal.displayName?.trim() || principal.subjectId,
+		}
+	}
+
 	v1.post("/wiki", async (c) => {
 		const body = (await c.req.json().catch(() => ({}))) as Record<
 			string,
@@ -2180,7 +2196,10 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			}
 			const input = body as unknown as WikiPageInput
 			const page = await withWikiTransaction(async (handle, session) => {
-				const created = await createWikiPage(handle, input, { session })
+				const created = await createWikiPage(handle, input, {
+					session,
+					editor: principalEditor(c),
+				})
 				await recordWikiMutationIntent(
 					handle,
 					{
@@ -2281,9 +2300,12 @@ export function createV1Router(): Hono<ApiEnvironment> {
 	})
 
 	// Wiki revision history (/v1/wiki/revisions, /v1/wiki/revisions/:revision).
-	// Gated behind the same governed read a caller would need for the live
-	// page — revision history must never be a side channel around governance
-	// (a caller who can't currently read a page can't read its history either).
+	// Each revision is authorized against its OWN snapshot metadata — the
+	// permissions/trustTier the page had at that revision. Revision history
+	// is never a side channel around governance (a caller who couldn't see a
+	// revision when it was written can't read it now), and later restricting
+	// or hard-deleting a page never hides the history from readers who could
+	// see it: authorization is per revision, not per current page state.
 	v1.get("/wiki/revisions", async (c) => {
 		const slug = c.req.query("slug")
 		const scope = c.req.query("scope")
@@ -2302,14 +2324,6 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				String(c.req.query("agentId") ?? ""),
 			)
 			const governance = buildWikiGovContext(c, scope, scopeRef)
-			const page = await getWikiPage(handle, slug, scope, scopeRef, governance)
-			if (!page)
-				return jsonError(
-					c,
-					404,
-					"WIKI_NOT_FOUND",
-					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
-				)
 			const revisions = await listWikiPageRevisions(handle, {
 				pageSlug: slug,
 				scope,
@@ -2349,14 +2363,6 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				String(c.req.query("agentId") ?? ""),
 			)
 			const governance = buildWikiGovContext(c, scope, scopeRef)
-			const page = await getWikiPage(handle, slug, scope, scopeRef, governance)
-			if (!page)
-				return jsonError(
-					c,
-					404,
-					"WIKI_NOT_FOUND",
-					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
-				)
 			const record = await getWikiPageRevision(handle, {
 				pageSlug: slug,
 				scope,
@@ -2499,7 +2505,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					scope,
 					scopeRef,
 					patch as Partial<WikiPageInput>,
-					{ session },
+					{ session, editor: principalEditor(c) },
 				)
 				if (!result) return undefined
 				await recordWikiMutationIntent(
@@ -2526,6 +2532,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				)
 			return c.json(updated)
 		} catch (err) {
+			if (err instanceof WikiRevisionConflictError) {
+				return jsonError(c, 409, "REVISION_CONFLICT", err.message)
+			}
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_UPDATE_FAILED", message)
 		}
@@ -2558,6 +2567,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				const result = await deleteWikiPage(handle, slug, scope, scopeRef, {
 					hard,
 					session,
+					editor: principalEditor(c),
 				})
 				if (!result) return false
 				await recordWikiMutationIntent(

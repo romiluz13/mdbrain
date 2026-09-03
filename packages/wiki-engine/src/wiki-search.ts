@@ -13,7 +13,7 @@ import {
 	wikiPagesCollection,
 	WIKI_PAGES_SEARCH_INDEX_TARGETS,
 } from "./wiki-schema.js"
-import { type WikiDbHandle, type WikiPageView } from "./wiki-bridge.js"
+import type { WikiDbHandle, WikiPageView } from "./wiki-bridge.js"
 import { createSubsystemLogger } from "@mdbrain/lib"
 import {
 	filterPagesByGovernance,

@@ -14,15 +14,24 @@ import { createSubsystemLogger } from "@mdbrain/lib"
 import type { ClientSession, Document } from "mongodb"
 import {
 	filterPagesByGovernance,
-	getWikiPageGoverned,
 	type GovernanceContext,
 } from "./wiki-governance.js"
 import { wikiRevisionsCollection } from "./wiki-schema.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
+import { omitUndefined } from "./omit-undefined.js"
 
 const log = createSubsystemLogger("wiki:revisions")
 
 export type WikiRevisionEditKind = "create" | "update" | "delete"
+
+/** Who performed a write. Recorded on every revision snapshot so history
+ *  reflects the actual calling principal rather than a caller-supplied
+ *  sourceAgent string. */
+export interface WikiPageEditor {
+	id: string
+	name: string
+	runId?: string
+}
 
 export interface WikiPageRevisionRecord {
 	pageSlug: string
@@ -30,7 +39,7 @@ export interface WikiPageRevisionRecord {
 	scopeRef: string
 	revision: number
 	editKind: WikiRevisionEditKind
-	editor?: { id: string; name: string; runId?: string }
+	editor?: WikiPageEditor
 	snapshot: Record<string, unknown>
 	createdAt: string
 }
@@ -47,7 +56,7 @@ export async function recordWikiPageRevision(
 		scopeRef: string
 		revision: number
 		editKind: WikiRevisionEditKind
-		editor?: { id: string; name: string; runId?: string }
+		editor?: WikiPageEditor
 		// The stored page document as of this revision. embedding is stripped
 		// (large, not meaningful for content history/diffing).
 		snapshot: Record<string, unknown>
@@ -59,7 +68,7 @@ export async function recordWikiPageRevision(
 		const { embedding, ...snapshot } = params.snapshot
 		void embedding
 		await coll.insertOne(
-			{
+			omitUndefined({
 				pageSlug: params.pageSlug,
 				scope: params.scope,
 				scopeRef: params.scopeRef,
@@ -68,7 +77,7 @@ export async function recordWikiPageRevision(
 				...(params.editor ? { editor: params.editor } : {}),
 				snapshot,
 				createdAt: new Date(),
-			},
+			}),
 			options.session ? { session: options.session } : undefined,
 		)
 	} catch (err) {
@@ -82,7 +91,14 @@ export async function recordWikiPageRevision(
 
 /** Lists revision metadata for a page, newest first. Excludes the snapshot
  *  body — callers that need full content should use getWikiPageRevision for
- *  a specific revision, keeping the list cheap to fetch/render. */
+ *  a specific revision, keeping the list cheap to fetch/render.
+ *
+ *  Governed mode: each revision is authorized against its OWN snapshot
+ *  metadata (the permissions/trustTier the page had at that revision), not
+ *  against the page's current state — so restricting or hard-deleting a page
+ *  later never hides or leaks its earlier history: readers who could see a
+ *  revision when it was written still can, and readers who could not,
+ *  cannot. */
 export async function listWikiPageRevisions(
 	handle: WikiDbHandle,
 	params: {
@@ -93,14 +109,31 @@ export async function listWikiPageRevisions(
 		governance?: GovernanceContext
 	},
 ): Promise<Array<Omit<WikiPageRevisionRecord, "snapshot">>> {
-	if (
-		params.governance &&
-		!(await getWikiPageGoverned(handle, params.pageSlug, params.governance))
-	) {
-		return []
-	}
 	const coll = wikiRevisionsCollection(handle.db, handle.prefix)
 	const limit = Math.min(Math.max(params.limit ?? 50, 1), 200)
+	if (params.governance) {
+		// Governed mode: fetch full docs (the snapshot carries the governance
+		// metadata), authorize each revision individually, then reduce the
+		// surviving revisions to summaries.
+		const docs = await coll
+			.find({
+				pageSlug: params.pageSlug,
+				scope: params.scope,
+				scopeRef: params.scopeRef,
+			})
+			.sort({ revision: -1 })
+			.limit(limit)
+			.toArray()
+		return docs
+			.filter(
+				(doc) =>
+					filterPagesByGovernance(
+						[(doc as Record<string, unknown>).snapshot ?? {}],
+						params.governance as GovernanceContext,
+					).length > 0,
+			)
+			.map((doc) => toRevisionSummary(doc as Record<string, unknown>))
+	}
 	const docs = await coll
 		.find(
 			{
@@ -116,7 +149,9 @@ export async function listWikiPageRevisions(
 	return docs.map((doc) => toRevisionSummary(doc as Record<string, unknown>))
 }
 
-/** Fetches one full revision snapshot, or undefined if not found. */
+/** Fetches one full revision snapshot, or undefined if not found. Governed
+ *  mode authorizes against the revision's OWN snapshot metadata — see
+ *  listWikiPageRevisions. */
 export async function getWikiPageRevision(
 	handle: WikiDbHandle,
 	params: {
@@ -127,12 +162,6 @@ export async function getWikiPageRevision(
 		governance?: GovernanceContext
 	},
 ): Promise<WikiPageRevisionRecord | undefined> {
-	if (
-		params.governance &&
-		!(await getWikiPageGoverned(handle, params.pageSlug, params.governance))
-	) {
-		return undefined
-	}
 	const coll = wikiRevisionsCollection(handle.db, handle.prefix)
 	const doc = await coll.findOne({
 		pageSlug: params.pageSlug,

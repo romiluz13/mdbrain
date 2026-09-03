@@ -30,19 +30,37 @@
 //     workstream to require visible degradation.
 //
 // MDBRAIN-CH001 / WS-0 exit criteria: C2-15 + NB-1 red here before any fix.
+//
+// WS-5 (dom-storage write-path integrity) also validates live here:
+//   - item 2: same-revision concurrent updates → exactly one CAS winner,
+//     the loser gets WikiRevisionConflictError
+//   - items 1+3: revision documents (with the editor principal) pass the
+//     live wiki_revisions validator
+//   - item 5: hard delete is atomic and the delete revision stays readable
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { Document } from "mongodb"
 import { WikiStore } from "./wiki-store.js"
 import {
 	createWikiPage,
+	deleteWikiPage,
 	getWikiPage,
 	updateWikiPage,
 	WikiDuplicateSlugError,
+	WikiRevisionConflictError,
 	type WikiDbHandle,
 	type WikiPageInput,
 } from "./wiki-bridge.js"
-import { ensureWikiCollections, wikiPagesCollection } from "./wiki-schema.js"
+import {
+	listWikiPageRevisions,
+	getWikiPageRevision,
+	type WikiPageEditor,
+} from "./wiki-revisions.js"
+import {
+	ensureWikiCollections,
+	wikiPagesCollection,
+	wikiRevisionsCollection,
+} from "./wiki-schema.js"
 import { searchWikiPages } from "./wiki-search.js"
 
 const conformanceUri = process.env.MDBRAIN_CONFORMANCE_MONGODB_URI?.trim()
@@ -249,5 +267,175 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 		// TODO(WS-3): invert — assert a visible degradation signal here.
 		expect(response.results).toEqual([])
 		expect(response.total).toBe(0)
+	})
+
+	// WS-5 item 2 — optimistic concurrency. Two writers racing on the same
+	// revision cannot both win: the CAS predicate (slug + scope + scopeRef +
+	// revision) admits exactly one update; the loser observes that the page
+	// still exists and gets WikiRevisionConflictError (409 at the API).
+	it("concurrent same-revision updates: exactly one wins, the loser gets WikiRevisionConflictError (WS-5 item 2)", async () => {
+		const slug = "concepts/ws5-cas"
+		await createWikiPage(handle, pageInput({ slug }))
+		let observedConflict = false
+		// The two reads inside updateWikiPage race the two writes; on a
+		// localhost mongod both reads virtually always land before either
+		// write completes. Retry a few times so a slow first roundtrip can
+		// never flake the suite.
+		for (let attempt = 0; attempt < 5 && !observedConflict; attempt++) {
+			const results = await Promise.allSettled([
+				updateWikiPage(handle, slug, SCOPE, SCOPE_REF, {
+					summary: `writer A, attempt ${attempt}`,
+				}),
+				updateWikiPage(handle, slug, SCOPE, SCOPE_REF, {
+					summary: `writer B, attempt ${attempt}`,
+				}),
+			])
+			for (const r of results) {
+				if (r.status === "rejected") {
+					expect(r.reason).toBeInstanceOf(WikiRevisionConflictError)
+					expect(r.reason.expectedRevision).toBeGreaterThanOrEqual(1)
+					observedConflict = true
+				}
+			}
+		}
+		expect(observedConflict).toBe(true)
+		// The winner's write survived and the revision counter moved past the
+		// conflicting one — the page is never lost or double-applied.
+		const page = await getWikiPage(handle, slug, SCOPE, SCOPE_REF)
+		expect(page?.revision).toBeGreaterThanOrEqual(2)
+	})
+
+	// WS-5 items 1 + 3 — revision history records the actual calling
+	// principal (editor), and the revision documents pass the live
+	// wiki_revisions $jsonSchema validator (no BSON-null optional fields).
+	it("revisions record the calling principal as editor and pass the live validator (WS-5 items 1+3)", async () => {
+		const slug = "concepts/ws5-editor"
+		const editor: WikiPageEditor = {
+			id: "user:conformance",
+			name: "Conformance Runner",
+			runId: "run-42",
+		}
+		await createWikiPage(handle, pageInput({ slug }), { editor })
+		await updateWikiPage(
+			handle,
+			slug,
+			SCOPE,
+			SCOPE_REF,
+			{ summary: "edited under a named principal" },
+			{ editor },
+		)
+		const revisions = await listWikiPageRevisions(handle, {
+			pageSlug: slug,
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+		})
+		expect(revisions.map((r) => r.revision)).toEqual([2, 1])
+		for (const r of revisions) {
+			// Editor is the authenticated principal — not the payload's
+			// sourceAgent ("agent:payload" in pageInput's sourceAgent default).
+			expect(r.editor).toEqual(editor)
+		}
+		// Raw stored document: the live validator (bsonType constraints on
+		// every field) accepted it, and the editor subdocument is intact.
+		const doc = (await wikiRevisionsCollection(
+			handle.db,
+			handle.prefix,
+		).findOne({ pageSlug: slug, revision: 2 })) as Document | null
+		expect(doc).toBeDefined()
+		expect(doc?.editor).toMatchObject({
+			id: "user:conformance",
+			name: "Conformance Runner",
+			runId: "run-42",
+		})
+	})
+
+	// WS-5 item 5 — hard delete is atomic (findOneAndDelete) and the delete
+	// revision remains readable after the page itself is gone: history is
+	// neither lost nor hidden by the deletion.
+	it("hard delete snapshots the final state and the delete revision stays readable (WS-5 item 5)", async () => {
+		const slug = "concepts/ws5-harddelete"
+		const editor: WikiPageEditor = {
+			id: "user:conformance",
+			name: "Conformance Runner",
+		}
+		await createWikiPage(handle, pageInput({ slug }), { editor })
+		await updateWikiPage(
+			handle,
+			slug,
+			SCOPE,
+			SCOPE_REF,
+			{ summary: "final content before hard delete" },
+			{ editor },
+		)
+		await deleteWikiPage(handle, slug, SCOPE, SCOPE_REF, {
+			hard: true,
+			editor,
+		})
+		await expect(
+			getWikiPage(handle, slug, SCOPE, SCOPE_REF),
+		).resolves.toBeUndefined()
+		const del = await getWikiPageRevision(handle, {
+			pageSlug: slug,
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			revision: 3,
+		})
+		expect(del?.editKind).toBe("delete")
+		expect(del?.editor).toEqual(editor)
+		// The snapshot is the full final page state captured atomically with
+		// the delete — no torn snapshot from a separate read-then-delete.
+		expect(del?.snapshot).toMatchObject({
+			slug,
+			summary: "final content before hard delete",
+		})
+		const list = await listWikiPageRevisions(handle, {
+			pageSlug: slug,
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+		})
+		expect(list.map((r) => r.editKind)).toEqual(["delete", "update", "create"])
+	})
+
+	// WS-5 item 4 — question patches merge against the page's existing
+	// questions by id: a read-modify-write caller re-submitting the array it
+	// read cannot clobber status/createdAt/answeredByClaimId, and the writes
+	// pass the live wiki_pages validator throughout.
+	it("question patches preserve existing status/createdAt/answeredByClaimId (WS-5 item 4)", async () => {
+		const slug = "concepts/ws5-q-preserve"
+		await createWikiPage(handle, pageInput({ slug }))
+		const coll = wikiPagesCollection(handle.db, handle.prefix)
+		const readQuestions = async () =>
+			((await coll.findOne({ slug, scope: SCOPE, scopeRef: SCOPE_REF }))
+				?.questions ?? []) as Array<{
+				id: string
+				status?: string
+				createdAt?: Date
+				answeredByClaimId?: string
+			}>
+		// Explicit patch values win: answer the question.
+		await updateWikiPage(handle, slug, SCOPE, SCOPE_REF, {
+			questions: [
+				{
+					id: "q1",
+					text: "Who owns billing?",
+					status: "answered",
+					answeredByClaimId: "claim-billing",
+				},
+			],
+		})
+		const answered = await readQuestions()
+		expect(answered[0]?.status).toBe("answered")
+		expect(answered[0]?.answeredByClaimId).toBe("claim-billing")
+		const answeredAt = answered[0]?.createdAt
+		expect(answeredAt).toBeInstanceOf(Date)
+		// Read-modify-write: re-submit q1 exactly as a caller that read the
+		// page would — no status, no answeredByClaimId. Nothing may reset.
+		await updateWikiPage(handle, slug, SCOPE, SCOPE_REF, {
+			questions: [{ id: "q1", text: "Who owns billing?" }],
+		})
+		const afterRmw = await readQuestions()
+		expect(afterRmw[0]?.status).toBe("answered")
+		expect(afterRmw[0]?.answeredByClaimId).toBe("claim-billing")
+		expect(afterRmw[0]?.createdAt).toEqual(answeredAt)
 	})
 })
