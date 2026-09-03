@@ -226,6 +226,7 @@ async function hybridSearch(
 	params: WikiSearchParams,
 	cfg: RecipeConfig,
 	prefilter: Document,
+	fetchLimit: number,
 ): Promise<WikiSearchResult[]> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const vsStage = buildVectorStage(params, cfg, prefilter)
@@ -289,11 +290,11 @@ async function hybridSearch(
 			$rerank: {
 				query: params.query,
 				model: "rerank-2.5",
-				top_k: cfg.maxResults,
+				top_k: fetchLimit,
 			},
 		})
 	}
-	pipeline.push({ $limit: cfg.maxResults })
+	pipeline.push({ $limit: fetchLimit })
 
 	const mapResults = (docs: Document[]): WikiSearchResult[] =>
 		docs.map((doc) => ({
@@ -411,11 +412,26 @@ export async function searchWikiPages(
 		return { results: [], total: 0, recipe, mode: cfg.mode }
 	}
 
-	let results = await hybridSearch(handle, params, cfg, prefilter)
+	// Governance ACL filtering (roles/departments/privacyTier visibility)
+	// cannot be expressed in Atlas Search compound filters ($exists and $or
+	// are unsupported there), so it runs post-search via
+	// filterPagesByGovernance. Applying the final top-K limit BEFORE that
+	// filter let ACL-blocked pages shrink the result set below K even when
+	// more visible candidates existed past rank K. Fix: over-fetch 4x when a
+	// governance context is present (matching the per-stage limits of
+	// maxResults*4 the vector/text stages already use), filter the larger
+	// pool, then trim back to K. Residual risk, documented deliberately:
+	// if more than 3/4 of the top candidates are ACL-blocked, results can
+	// still fall below K — full MQL pre-filtering would need a dedicated
+	// governed index or post-$rankFusion $match stage (future work).
+	const fetchLimit = params.governance ? cfg.maxResults * 4 : cfg.maxResults
+	let results = await hybridSearch(handle, params, cfg, prefilter, fetchLimit)
 
-	// Post-filter results through governance (roles/departments check that
-	// can't be expressed in Atlas Search compound). Scope + privacyTier are
-	// already pre-filtered at the index level via buildPrefilter.
+	// Post-filter the over-fetched pool through governance (roles/departments/
+	// privacyTier visibility checks that can't be expressed in Atlas Search
+	// compound). Scope + the exact privacyTier param are already pre-filtered
+	// at the index level via buildPrefilter; the visibility filter runs here
+	// on the 4x pool so blocked pages cannot shrink results below top-K.
 	if (params.governance) {
 		const govDocs = filterPagesByGovernance(
 			results.map((r) => r.page as unknown as Document),
@@ -444,6 +460,13 @@ export async function searchWikiPages(
 		} catch {
 			// Reranking failure → keep original results (never crash search)
 		}
+	}
+
+	// Trim the filtered + reranked pool back to the requested top-K. Without
+	// a governance context the pipeline already limited to K; with one, the
+	// 4x over-fetched pool is trimmed here.
+	if (results.length > maxResults) {
+		results = results.slice(0, maxResults)
 	}
 
 	// Graph expansion: traverse relationships[] to find related pages.

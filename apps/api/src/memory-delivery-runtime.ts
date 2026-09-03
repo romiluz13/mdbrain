@@ -21,7 +21,11 @@ import {
 	mdbrainBridgeWriteConversationEvent,
 } from "@mdbrain/memory-bridge"
 import type { MemoryScope } from "@mdbrain/lib/types/memory"
-import type { ApiPrincipal, PrincipalTrustTier } from "./principal.js"
+import {
+	authorizePrincipalRequest,
+	resolvePrincipalBySubjectId,
+	type ApiPrincipal,
+} from "./principal.js"
 import {
 	getWikiStoreHandle,
 	withWikiTransaction,
@@ -68,7 +72,6 @@ export function buildMemoryWikiPromotion(params: {
 	scope: string
 	scopeRef: string
 	principal: Pick<ApiPrincipal, "subjectId" | "trustTier" | "capabilities">
-	trustedPersisted?: boolean
 }): { promotion?: MemoryWikiPromotion; error?: string } {
 	const policy = params.body.promotionPolicy
 	if (policy === undefined || policy === "none") return {}
@@ -108,14 +111,12 @@ export function buildMemoryWikiPromotion(params: {
 	}
 	if (
 		!WIKI_VALID_TRUST_TIERS.includes(String(page.trustTier)) ||
-		(!params.trustedPersisted &&
-			page.trustTier !== params.principal.trustTier &&
+		(page.trustTier !== params.principal.trustTier &&
 			!params.principal.capabilities.includes("change-permissions"))
 	) {
 		return { error: "wikiPromotion.page trust tier is not permitted" }
 	}
 	if (
-		!params.trustedPersisted &&
 		page.permissions &&
 		!params.principal.capabilities.includes("change-permissions")
 	) {
@@ -416,36 +417,55 @@ function isDueForReconciliation(
 	return age >= retryDelayMs(intent)
 }
 
-function persistedTrustTier(intent: MemoryDeliveryIntent): PrincipalTrustTier {
-	const promotion = intent.payload.wikiPromotion
-	const page =
-		promotion && typeof promotion === "object" && !Array.isArray(promotion)
-			? (promotion as Record<string, unknown>).page
-			: undefined
-	const trustTier =
-		page && typeof page === "object" && !Array.isArray(page)
-			? (page as Record<string, unknown>).trustTier
-			: undefined
-	return trustTier === "restricted" || trustTier === "admin"
-		? trustTier
-		: "standard"
-}
+/** Resolves the replay principal for a recorded subject ID from the CURRENT
+ *  credential configuration — never from the request payload. A trust tier
+ *  captured in the caller-controlled wikiPromotion payload must not stand in
+ *  for the principal's live tier: a revoked or downgraded key must fail its
+ *  pending promotion on replay. */
+const defaultResolveReplayPrincipal = (
+	subjectId: string,
+): ApiPrincipal | null =>
+	resolvePrincipalBySubjectId(subjectId, {
+		adminSubjectId:
+			process.env.MDBRAIN_API_ADMIN_SUBJECT_ID?.trim() || undefined,
+	})
 
 function persistedPromotion(
 	intent: MemoryDeliveryIntent,
+	resolvePrincipal: (
+		subjectId: string,
+	) => ApiPrincipal | null = defaultResolveReplayPrincipal,
 ): MemoryWikiPromotion | undefined {
 	if (intent.promotionPolicy !== "wiki") return undefined
+	// Re-authorize the replay at the current principal. The original HTTP
+	// request validated the promotion against the live principal; replay
+	// must re-run the same checks (identity active, agent/scope grants,
+	// trust tier, change-permissions) so credential changes between record
+	// and reconciliation cannot smuggle a promotion through.
+	const principal = resolvePrincipal(intent.principalSubjectId)
+	if (!principal) {
+		throw new Error(
+			`principal "${intent.principalSubjectId}" no longer resolves; ` +
+				"refusing to replay wiki promotion",
+		)
+	}
+	const authzError = authorizePrincipalRequest(principal, {
+		agentId: intent.agentId ?? undefined,
+		scope: intent.scope,
+		scopeRef: intent.scopeRef,
+	})
+	if (authzError) {
+		throw new Error(
+			`principal "${intent.principalSubjectId}" is no longer authorized ` +
+				`(${authzError}); refusing to replay wiki promotion`,
+		)
+	}
 	const result = buildMemoryWikiPromotion({
 		body: intent.payload,
 		operationId: intent.operationId,
 		scope: intent.scope,
 		scopeRef: intent.scopeRef,
-		principal: {
-			subjectId: intent.principalSubjectId,
-			trustTier: persistedTrustTier(intent),
-			capabilities: [],
-		},
-		trustedPersisted: true,
+		principal,
 	})
 	if (!result.promotion) {
 		throw new Error(result.error ?? "persisted wiki promotion is invalid")
@@ -510,7 +530,11 @@ async function dispatchPersistedIntent(
 }
 
 export async function reconcileMemoryDeliveriesOnce(
-	options: { now?: number; limitPerState?: number } = {},
+	options: {
+		now?: number
+		limitPerState?: number
+		resolvePrincipal?: (subjectId: string) => ApiPrincipal | null
+	} = {},
 ): Promise<{ attempted: number; completed: number; failed: number }> {
 	const handle = await getWikiStoreHandle()
 	const batches = await Promise.all(
@@ -529,7 +553,10 @@ export async function reconcileMemoryDeliveriesOnce(
 		if (!isDueForReconciliation(intent, now)) continue
 		attempted++
 		try {
-			const promotion = persistedPromotion(intent)
+			const promotion = persistedPromotion(
+				intent,
+				options.resolvePrincipal ?? defaultResolveReplayPrincipal,
+			)
 			await deliverMemoryWrite({
 				operation: intent.operation,
 				idempotencyKey: intent.idempotencyKey,
@@ -550,7 +577,11 @@ export async function reconcileMemoryDeliveriesOnce(
 }
 
 export function startMemoryDeliveryReconciler(
-	options: { intervalMs?: number; onError?: (error: unknown) => void } = {},
+	options: {
+		intervalMs?: number
+		onError?: (error: unknown) => void
+		resolvePrincipal?: (subjectId: string) => ApiPrincipal | null
+	} = {},
 ): { stop: () => Promise<void> } {
 	const configuredInterval = options.intervalMs ?? 5_000
 	if (!Number.isFinite(configuredInterval) || configuredInterval < 1_000) {
@@ -567,7 +598,9 @@ export function startMemoryDeliveryReconciler(
 	}
 	const run = () => {
 		if (stopped) return
-		active = reconcileMemoryDeliveriesOnce()
+		active = reconcileMemoryDeliveriesOnce({
+			resolvePrincipal: options.resolvePrincipal,
+		})
 			.then(() => undefined)
 			.catch((error) => options.onError?.(error))
 			.finally(schedule)

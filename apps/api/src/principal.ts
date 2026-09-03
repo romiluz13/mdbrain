@@ -359,6 +359,41 @@ export function resolveBearerPrincipal(options: {
 	)
 }
 
+/** Resolves the CURRENT principal for a subject ID from the given (or
+ *  freshly-parsed) credential configuration: scoped API keys, the admin
+ *  principal, and the local development principal. Used by background replay
+ *  paths (e.g. memory-delivery reconciliation) to re-authorize persisted
+ *  intents against the live credential set instead of trusting identity or
+ *  trust-tier data captured in the request payload at record time.
+ *
+ *  Returns null when the subject no longer resolves — key removed, env
+ *  changed, or the credential config itself fails to parse. Callers must
+ *  treat null as an authorization failure, never as "keep the old tier". */
+export function resolvePrincipalBySubjectId(
+	subjectId: string,
+	options: {
+		scopedCredentials?: ScopedApiKeyCredential[]
+		adminSubjectId?: string
+	} = {},
+): ApiPrincipal | null {
+	let scoped = options.scopedCredentials
+	if (scoped === undefined) {
+		try {
+			scoped = parseScopedApiKeyPolicies()
+		} catch {
+			return null
+		}
+	}
+	const admin = createAdminPrincipal(options.adminSubjectId)
+	if (admin.subjectId === subjectId) return admin
+	const development = createDevelopmentPrincipal()
+	if (development.subjectId === subjectId) return development
+	return (
+		scoped.find((credential) => credential.principal.subjectId === subjectId)
+			?.principal ?? null
+	)
+}
+
 export function authorizePrincipalRequest(
 	principal: ApiPrincipal,
 	request: PrincipalRequestAuthority,

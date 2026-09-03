@@ -55,6 +55,7 @@ import {
 	filterPagesByGovernance,
 	type GovernanceContext,
 } from "./wiki-governance.js"
+import { WIKI_PRIVACY_TIER_VALUES as PRIVACY_TIER_VALUES } from "./wiki-schema.js"
 import {
 	type ContainedFile,
 	writeContainedFiles,
@@ -76,6 +77,41 @@ function isPathWithinRoot(candidate: string, root: string): boolean {
 	)
 }
 
+/** Resolves symlinks for a path that may not exist yet (export outDir):
+ *  realpath the nearest existing ancestor, then re-join the not-yet-created
+ *  remainder. Mirrors nearestExistingPath in filesystem-containment.ts. */
+function realpathOfNearestExisting(candidate: string): string {
+	let current = candidate
+	const pending: string[] = []
+	while (!fs.existsSync(current)) {
+		const parent = path.dirname(current)
+		if (parent === current) break
+		pending.unshift(path.basename(current))
+		current = parent
+	}
+	const real = fs.realpathSync(current)
+	return pending.length > 0 ? path.join(real, ...pending) : real
+}
+
+/** Parses MDBRAIN_OKF_ALLOWED_ROOTS into allowed root entries. Rejects empty
+ *  entries: a stray or trailing comma ("a,,b", "a,") must not silently yield
+ *  an empty-string root, because path.resolve("") is process.cwd() — the
+ *  server's working directory would become an allowed import (read) or
+ *  export (write) root without anyone configuring it. */
+export function parseOkfAllowedRoots(
+	raw = process.env.MDBRAIN_OKF_ALLOWED_ROOTS,
+): string[] {
+	if (!raw) return []
+	const entries = raw.split(",").map((entry) => entry.trim())
+	if (entries.some((entry) => !entry)) {
+		throw new Error(
+			"MDBRAIN_OKF_ALLOWED_ROOTS must not contain empty entries " +
+				"(check for stray or trailing commas)",
+		)
+	}
+	return entries
+}
+
 /** Resolves and validates a directory path against allowed roots. Throws if
  *  the path escapes all allowed roots or contains parent-directory traversal.
  *
@@ -85,7 +121,14 @@ function isPathWithinRoot(candidate: string, root: string): boolean {
  *  write (export) reachable by any authenticated API caller. Local-first dev
  *  can opt back into the old unrestricted behavior explicitly via
  *  MDBRAIN_OKF_ALLOW_UNRESTRICTED=true; production deployments must set
- *  MDBRAIN_OKF_ALLOWED_ROOTS. */
+ *  MDBRAIN_OKF_ALLOWED_ROOTS.
+ *
+ *  Containment is checked on realpath-resolved paths on BOTH sides: the
+ *  candidate and the configured roots. path.resolve() is purely lexical, so
+ *  a symlink inside an allowed root pointing outside it (or a symlinked
+ *  root) would pass the lexical check and hand an arbitrary directory to
+ *  import (read) or export (write). Same realpath-based containment as
+ *  filesystem-containment.ts. */
 function validateOkfPath(dir: string, allowedRoots: string[]): string {
 	if (!dir.trim()) {
 		throw new Error("directory path is required")
@@ -99,7 +142,7 @@ function validateOkfPath(dir: string, allowedRoots: string[]): string {
 	const resolved = path.resolve(dir)
 	if (allowedRoots.length === 0) {
 		if (process.env.MDBRAIN_OKF_ALLOW_UNRESTRICTED === "true") {
-			return resolved
+			return realpathOfNearestExisting(resolved)
 		}
 		throw new Error(
 			"OKF import/export requires MDBRAIN_OKF_ALLOWED_ROOTS to be configured " +
@@ -108,15 +151,16 @@ function validateOkfPath(dir: string, allowedRoots: string[]): string {
 				"to resolve an unrestricted filesystem path.",
 		)
 	}
+	const realDir = realpathOfNearestExisting(resolved)
 	const allowed = allowedRoots.some((root) =>
-		isPathWithinRoot(resolved, path.resolve(root)),
+		isPathWithinRoot(realDir, realpathOfNearestExisting(path.resolve(root))),
 	)
 	if (!allowed) {
 		throw new Error(
 			"directory path must resolve inside the workspace or a configured OKF root",
 		)
 	}
-	return resolved
+	return realDir
 }
 
 // ---------------------------------------------------------------------------
@@ -453,9 +497,7 @@ export async function importOkfBundle(
 		session?: ClientSession
 	},
 ): Promise<OkfImportResult> {
-	const allowedRoots = process.env.MDBRAIN_OKF_ALLOWED_ROOTS
-		? process.env.MDBRAIN_OKF_ALLOWED_ROOTS.split(",").map((r) => r.trim())
-		: []
+	const allowedRoots = parseOkfAllowedRoots()
 	const safeBundleDir = validateOkfPath(bundleDir, allowedRoots)
 	const { concepts, skipped } = await readBundleConcepts(safeBundleDir)
 	const indexRelationships = parseIndexRelationships(safeBundleDir)
@@ -511,6 +553,11 @@ export async function importOkfBundle(
 							okfConceptId: input.okfConceptId,
 							okfBundleId: input.okfBundleId,
 							relationships: input.relationships,
+							// Keep the governance SSOT in step with the imported
+							// frontmatter tier on re-import; without this, a
+							// restricted bundle re-imported over an old open-access
+							// page would stay open access.
+							...(input.permissions ? { permissions: input.permissions } : {}),
 						},
 						{ session },
 					)
@@ -692,6 +739,26 @@ function conceptToWikiInput(
 				`(keys may not start with "$" or contain ".")`,
 		)
 	}
+	// permissions is the governance SSOT: privacy tiers gate reads via
+	// filterPagesByGovernance / buildPermissionsFilter, which look ONLY at
+	// page.permissions — a frontmatter-only privacyTier would silently import
+	// as open access. Import maps frontmatter.privacyTier into permissions so
+	// an imported "restricted" bundle is actually restricted. Unknown tier
+	// values fail the concept loudly rather than degrading to open access.
+	const fmPrivacyTier =
+		typeof fm.privacyTier === "string" ? fm.privacyTier.trim() : undefined
+	if (fmPrivacyTier) {
+		if (
+			!PRIVACY_TIER_VALUES.includes(
+				fmPrivacyTier as (typeof PRIVACY_TIER_VALUES)[number],
+			)
+		) {
+			throw new Error(
+				`frontmatter.privacyTier "${fmPrivacyTier}" must be one of ` +
+					`${PRIVACY_TIER_VALUES.join("|")}`,
+			)
+		}
+	}
 	return {
 		kind: okfTypeToKind(fm.type),
 		title: fm.title ?? concept.conceptId.split("/").pop() ?? concept.conceptId,
@@ -715,10 +782,9 @@ function conceptToWikiInput(
 			entityTypes: Array.isArray(fm.entityTypes)
 				? (fm.entityTypes as string[])
 				: undefined,
-			privacyTier:
-				typeof fm.privacyTier === "string"
-					? (fm.privacyTier as WikiPageInput["frontmatter"]["privacyTier"])
-					: undefined,
+			privacyTier: fmPrivacyTier
+				? (fmPrivacyTier as WikiPageInput["frontmatter"]["privacyTier"])
+				: undefined,
 			status: isOkfStatus(fm.status) ? fm.status : undefined,
 			generated: coerceOkfActorEvent(fm.generated),
 			// Spec §5.2: consumers MUST treat a bare mapping as a one-element list.
@@ -743,6 +809,18 @@ function conceptToWikiInput(
 		scope: opts.scope,
 		scopeRef: opts.scopeRef,
 		trustTier: opts.trustTier,
+		// Map the OKF interchange privacy tier into the governance SSOT. Never
+		// set optional fields to undefined (MongoDB $jsonSchema rejects
+		// undefined-valued fields) — conditional spread only.
+		...(fmPrivacyTier
+			? {
+					permissions: {
+						privacyTier: fmPrivacyTier as NonNullable<
+							WikiPageInput["permissions"]
+						>["privacyTier"],
+					},
+				}
+			: {}),
 	}
 }
 
@@ -986,9 +1064,7 @@ export async function exportOkfBundle(
 		allPages as unknown as Document[],
 		opts.governance,
 	) as unknown as WikiPageView[]
-	const allowedRoots = process.env.MDBRAIN_OKF_ALLOWED_ROOTS
-		? process.env.MDBRAIN_OKF_ALLOWED_ROOTS.split(",").map((r) => r.trim())
-		: []
+	const allowedRoots = parseOkfAllowedRoots()
 	const safeOutDir = validateOkfPath(opts.outDir, allowedRoots)
 	const files: string[] = []
 	const fileContents: Record<string, string> | undefined = opts.returnContent

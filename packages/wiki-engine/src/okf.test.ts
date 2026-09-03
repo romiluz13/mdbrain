@@ -10,8 +10,13 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { importOkfBundle, exportOkfBundle } from "./okf.js"
+import {
+	importOkfBundle,
+	exportOkfBundle,
+	parseOkfAllowedRoots,
+} from "./okf.js"
 import { getWikiPage, type WikiDbHandle } from "./wiki-bridge.js"
+import { filterPagesByGovernance } from "./wiki-governance.js"
 
 // In-memory wiki_pages store keyed by slug+scope+scopeRef.
 function makeStore() {
@@ -385,6 +390,190 @@ User records.
 			}),
 		).rejects.toThrow(/outside|symlink|root|path/i)
 		expect(fs.existsSync(path.join(outsideDir, "new-export"))).toBe(false)
+	})
+
+	it("maps frontmatter.privacyTier into permissions on import so governance enforces it", async () => {
+		const srcDir = path.join(tmpDir, "src-restricted")
+		writeBundle(srcDir, {
+			"secret.md": `---
+type: concept
+title: Secret
+privacyTier: restricted
+---
+
+Classified content.
+`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		expect(result.imported).toBe(1)
+
+		const doc = store.docs.get(store.key("secret", "workspace", "ws-1"))
+		expect(doc).toBeDefined()
+		// The OKF interchange tier is mapped into the governance SSOT...
+		expect((doc as Record<string, unknown>).permissions).toMatchObject({
+			privacyTier: "restricted",
+		})
+		// ...while still round-tripping in frontmatter for export.
+		expect(
+			((doc as Record<string, unknown>).frontmatter as Record<string, unknown>)
+				.privacyTier,
+		).toBe("restricted")
+
+		// Unauthorized governed read returns EMPTY: governance reads only
+		// page.permissions, and the imported tier now gates the page.
+		const standardCtx = {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard" as const,
+		}
+		expect(filterPagesByGovernance([doc as Document], standardCtx)).toEqual([])
+		// Admin still sees it.
+		expect(
+			filterPagesByGovernance([doc as Document], {
+				...standardCtx,
+				trustTier: "admin" as const,
+			}),
+		).toHaveLength(1)
+
+		// Export under the standard context must not leak the restricted page.
+		const stdExportDir = path.join(tmpDir, "export-std")
+		const stdExport = await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			outDir: stdExportDir,
+			governance: standardCtx,
+		})
+		expect(stdExport.exported).toBe(0)
+		// Admin export round-trips the frontmatter tier.
+		const adminExportDir = path.join(tmpDir, "export-admin")
+		await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			outDir: adminExportDir,
+			governance: { ...standardCtx, trustTier: "admin" as const },
+		})
+		const exported = fs.readFileSync(
+			path.join(adminExportDir, "secret.md"),
+			"utf-8",
+		)
+		expect(exported).toContain("privacyTier: restricted")
+	})
+
+	it("rejects an unknown frontmatter.privacyTier instead of importing it as open access", async () => {
+		const srcDir = path.join(tmpDir, "src-bad-tier")
+		writeBundle(srcDir, {
+			"weird.md": `---
+type: concept
+title: Weird
+privacyTier: top-secret
+---
+
+Content.
+`,
+		})
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		expect(result.imported).toBe(0)
+		expect(result.skipped).toBe(1)
+		expect(result.errors[0]?.error).toMatch(/privacyTier/)
+		expect(store.docs.size).toBe(0)
+	})
+
+	it("keeps permissions in step with the frontmatter tier on re-import (update path)", async () => {
+		const dir = path.join(tmpDir, "src-reimport")
+		writeBundle(dir, {
+			"concept.md": `---
+type: concept
+title: V1
+---
+
+V1 body.
+`,
+		})
+		await importOkfBundle(handle, dir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b",
+		})
+		const v1 = store.docs.get(store.key("concept", "workspace", "ws-1"))
+		expect((v1 as Record<string, unknown>).permissions).toEqual({})
+
+		// Re-import the same slug, now declaring a restricted tier. The update
+		// path must carry the mapped permissions or the page would stay open
+		// access despite the restricted frontmatter.
+		writeBundle(dir, {
+			"concept.md": `---
+type: concept
+title: V2
+privacyTier: restricted
+---
+
+V2 body.
+`,
+		})
+		await importOkfBundle(handle, dir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "b2",
+		})
+		const v2 = store.docs.get(store.key("concept", "workspace", "ws-1"))
+		expect((v2 as Record<string, unknown>).permissions).toMatchObject({
+			privacyTier: "restricted",
+		})
+	})
+
+	it("rejects empty entries in MDBRAIN_OKF_ALLOWED_ROOTS", () => {
+		expect(() => parseOkfAllowedRoots("a,,b")).toThrow(/empty entries/)
+		expect(() => parseOkfAllowedRoots("a,")).toThrow(/empty entries/)
+		expect(() => parseOkfAllowedRoots(" ,b")).toThrow(/empty entries/)
+		expect(parseOkfAllowedRoots("a, b")).toEqual(["a", "b"])
+		expect(parseOkfAllowedRoots("")).toEqual([])
+		// The undefined default reads the live env, which sibling tests in
+		// this file set — isolate it to assert the unset behavior.
+		const prev = process.env.MDBRAIN_OKF_ALLOWED_ROOTS
+		delete process.env.MDBRAIN_OKF_ALLOWED_ROOTS
+		try {
+			expect(parseOkfAllowedRoots(undefined)).toEqual([])
+		} finally {
+			if (prev !== undefined) process.env.MDBRAIN_OKF_ALLOWED_ROOTS = prev
+		}
+	})
+
+	it("rejects an import directory reached through an allowed-root symlink", async () => {
+		const allowedRoot = path.join(tmpDir, "allowed-import")
+		const outsideDir = path.join(tmpDir, "outside-import")
+		fs.mkdirSync(allowedRoot)
+		fs.mkdirSync(outsideDir)
+		writeBundle(outsideDir, {
+			"a.md": "---\ntype: concept\ntitle: A\n---\n\nBody.\n",
+		})
+		fs.symlinkSync(
+			outsideDir,
+			path.join(allowedRoot, "linked"),
+			process.platform === "win32" ? "junction" : "dir",
+		)
+		process.env.MDBRAIN_OKF_ALLOWED_ROOTS = allowedRoot
+
+		await expect(
+			importOkfBundle(handle, path.join(allowedRoot, "linked"), {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				okfBundleId: "b",
+			}),
+		).rejects.toThrow(/outside|root|path/i)
+		expect(store.docs.size).toBe(0)
 	})
 
 	it("imports a bundle, exports it, re-imports, and preserves structure", async () => {

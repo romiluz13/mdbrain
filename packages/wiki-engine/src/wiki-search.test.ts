@@ -197,6 +197,88 @@ describe("searchWikiPages", () => {
 		const limitStage = captured[0].find((s) => "$limit" in s)
 		expect(limitStage?.$limit).toBe(100)
 	})
+
+	it("over-fetches 4x before governance filtering and trims back to top-K", async () => {
+		// Governance visibility filtering runs post-search (Atlas Search
+		// compound can't express $exists/$or). Without over-fetch, the final
+		// $limit landed BEFORE the filter, so ACL-blocked pages shrank the
+		// result set below K even when more visible candidates existed.
+		const captured: Document[][] = []
+		const makeDoc = (slug: string, privacyTier?: string): Document => ({
+			_id: { toString: () => `id-${slug}` },
+			kind: "concept",
+			title: slug,
+			slug,
+			aliases: [],
+			summary: "s",
+			body: "b",
+			frontmatter: { type: "concept" },
+			claims: [],
+			contradictions: [],
+			questions: [],
+			relationships: [],
+			personCard: null,
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			permissions: privacyTier ? { privacyTier } : {},
+			state: "active",
+			revision: 1,
+			validFrom: new Date(),
+			freshness: "fresh",
+			backlinks: [],
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			searchScore: 1,
+		})
+		// 6 ACL-blocked candidates outrank 2 visible ones: the blocked pages
+		// would consume the entire top-2 without the 4x over-fetch.
+		const docs = [
+			...Array.from({ length: 6 }, (_, i) =>
+				makeDoc(`confidential-${i}`, "confidential"),
+			),
+			makeDoc("open-1"),
+			makeDoc("open-2"),
+		]
+		const coll = {
+			collectionName: "test_wiki_pages",
+			aggregate: vi.fn((pipeline: Document[]) => {
+				captured.push(pipeline)
+				return { toArray: async () => docs }
+			}),
+		} as unknown as Collection
+		const db = { collection: vi.fn(() => coll) } as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+
+		const res = await searchWikiPages(h, {
+			query: "x",
+			maxResults: 2,
+			governance: {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+			},
+		})
+
+		// The pipeline's final $limit must be the 4x over-fetch pool (2*4),
+		// NOT top-K — the trim happens after governance filtering.
+		const limitStage = captured[0].find((s) => "$limit" in s)
+		expect(limitStage?.$limit).toBe(8)
+		// The visible pages fill top-K despite 6 blocked candidates ranking
+		// above them.
+		expect(res.results).toHaveLength(2)
+		expect(res.results.map((r) => r.page.slug)).toEqual(["open-1", "open-2"])
+		expect(res.total).toBe(2)
+	})
+
+	it("keeps the plain top-K $limit when no governance context is present", async () => {
+		const captured: Document[][] = []
+		const { db } = mockDb({ push: (p) => captured.push(p) })
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		await searchWikiPages(h, { query: "x", maxResults: 3 })
+		const limitStage = captured[0].find((s) => "$limit" in s)
+		expect(limitStage?.$limit).toBe(3)
+	})
 })
 
 describe("searchWikiPages with reranking", () => {

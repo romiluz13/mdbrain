@@ -30,11 +30,15 @@
 		"compare-memory-eval": "bun scripts/compare-memory-eval.ts",
 		"agent-smoke": "bun scripts/real-agent-smoke.ts",
 		"wiki:init": "bun run scripts/mdbrain-init.ts",
+		"wiki:backfill-permissions": "node --import tsx scripts/backfill-okf-permissions.ts",
 		"stress-test": "bun run scripts/stress-test.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.0",
+		"@mdbrain/wiki-engine": "workspace:*",
 		"fast-check": "^4.8.0",
+		"mongodb": "^7.0.0",
+		"tsx": "^4.19.0",
 		"turbo": "^2.5.0",
 		"typescript": "^5.8.0"
 	}
