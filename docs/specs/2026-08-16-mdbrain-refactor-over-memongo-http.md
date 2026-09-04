@@ -2,7 +2,7 @@
 
 **Status:** Accepted for implementation  
 **Date:** 2026-08-16  
-**Source of truth:** `docs/handoff/2026-08-14-mdbrain-refactor-over-memongo-http.md`
+**Source of truth:** this specification
 
 ## Problem Statement
 
@@ -356,7 +356,7 @@ Prior art includes the existing bridge/API contract tests, API contract fixtures
 12. Contract: delete the copied engine only after no-caller and live-cutover gates.
 13. Run integrated proof, rollback rehearsal, and final documentation.
 
-The ticket files under `.scratch/mdbrain-over-memongo-http/issues/` are the executable dependency graph for this map.
+The original workstream tickets were internal planning artifacts and are not part of the public repository; ongoing work is tracked in GitHub Issues.
 
 ## Out of Scope
 

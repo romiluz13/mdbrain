@@ -23,7 +23,6 @@
 			"!**/archive",
 			"!coverage",
 			"!**/coverage",
-			"!docs/research/evidence/**/*.json",
 			"!docker",
 			"!**/docker"
 		]

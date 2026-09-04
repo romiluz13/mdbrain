@@ -48,6 +48,10 @@ docs/audit/
 # ddd assurance workflow state (local-only, never publish)
 .ddd/
 
+# Internal planning/research scratch (local-only, never publish)
+.scratch/
+docs/research/
+
 # Pi subagent scratch
 .pi-subagents/
 .pi/
