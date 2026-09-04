@@ -20,6 +20,10 @@ jobs:
           git config --global user.name "Droid Wiki Bot"
           git config --global user.email "actions@github.com"
 
+      # Model endpoint details live in repository variables (never in the repo):
+      #   vars.GROVE_MODEL_ID   e.g. custom:<your-model-id>
+      #   vars.GROVE_MODEL      e.g. <your-backend-model-name>
+      #   vars.GROVE_BASE_URL   e.g. https://<your-gateway-host>/openai/v1
       - name: Configure Grove model
         run: |
           mkdir -p ~/.factory
@@ -27,12 +31,12 @@ jobs:
           {
             "customModels": [
               {
-                "id": "custom:Grove-GLM-5.2-Fireworks-0",
+                "id": "${{ vars.GROVE_MODEL_ID }}",
                 "index": 0,
-                "displayName": "Grove GLM 5.2 Fireworks",
+                "displayName": "Grove model",
                 "provider": "generic-chat-completion-api",
-                "baseUrl": "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/openai/v1",
-                "model": "FW-GLM-5.2",
+                "baseUrl": "${{ vars.GROVE_BASE_URL }}",
+                "model": "${{ vars.GROVE_MODEL }}",
                 "apiKey": "${{ secrets.GROVE_API_KEY }}",
                 "extraHeaders": {
                   "api-key": "${{ secrets.GROVE_API_KEY }}"
@@ -50,7 +54,7 @@ jobs:
           droid exec
           --output-format stream-json
           --skip-permissions-unsafe
-          --model "custom:Grove-GLM-5.2-Fireworks-0"
+          --model "${{ vars.GROVE_MODEL_ID }}"
           --reasoning-effort off
           "/wiki Refresh the existing droid-wiki baseline. Upload to GitHub Wiki only. Skip Factory Cloud upload and video generation."
         env:

@@ -45,6 +45,9 @@ archive/
 # Audit scratch (local-only)
 docs/audit/
 
+# ddd assurance workflow state (local-only, never publish)
+.ddd/
+
 # Pi subagent scratch
 .pi-subagents/
 .pi/
