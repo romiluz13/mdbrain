@@ -292,4 +292,233 @@ describe("MdbrainClient public contract", () => {
 		).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" })
 		expect(fetchMock).toHaveBeenCalledTimes(0)
 	})
+
+	it("wikiApply update fallback sends the observed revision as a CAS precondition", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				Response.json(
+					{
+						error: {
+							code: "DUPLICATE_SLUG",
+							message: 'wiki page slug "cas" already exists',
+						},
+					},
+					{ status: 409 },
+				),
+			)
+			.mockResolvedValueOnce(Response.json({ slug: "cas", revision: 3 }))
+			.mockResolvedValueOnce(Response.json({ slug: "cas", revision: 4 }))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const result = await client.wikiApply({
+			kind: "note",
+			title: "CAS",
+			slug: "cas",
+			summary: "CAS",
+			body: "CAS",
+			frontmatter: { type: "note" },
+			scope: "workspace",
+			scopeRef: "test",
+			trustTier: "standard",
+		})
+
+		expect(result).toMatchObject({ revision: 4 })
+		expect(fetchMock).toHaveBeenCalledTimes(3)
+		// Call 0 is the create attempt (409 DUPLICATE_SLUG); the fallback then
+		// GETs the observed state and PATCHes with it as the precondition.
+		const getUrl = fetchMock.mock.calls[1]?.[0]
+		const patchUrl = fetchMock.mock.calls[2]?.[0]
+		const patchInit = fetchMock.mock.calls[2]?.[1]
+		expect(String(getUrl)).toContain("/v1/wiki/cas?scope=workspace")
+		expect(String(patchUrl)).toContain("/v1/wiki/cas")
+		expect(patchInit?.method).toBe("PATCH")
+		expect(JSON.parse(String(patchInit?.body))).toMatchObject({
+			expectedRevision: 3,
+			title: "CAS",
+		})
+	})
+
+	it("wikiApply surfaces REVISION_CONFLICT from the update fallback instead of overwriting", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				Response.json(
+					{
+						error: {
+							code: "DUPLICATE_SLUG",
+							message: 'wiki page slug "cas" already exists',
+						},
+					},
+					{ status: 409 },
+				),
+			)
+			.mockResolvedValueOnce(Response.json({ slug: "cas", revision: 3 }))
+			.mockResolvedValueOnce(
+				Response.json(
+					{
+						error: {
+							code: "REVISION_CONFLICT",
+							message:
+								'wiki page "cas" moved past revision 3 — concurrent update',
+						},
+					},
+					{ status: 409 },
+				),
+			)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await expect(
+			client.wikiApply({
+				kind: "note",
+				title: "Stale",
+				slug: "cas",
+				summary: "Stale",
+				body: "Stale",
+				frontmatter: { type: "note" },
+				scope: "workspace",
+				scopeRef: "test",
+				trustTier: "standard",
+			}),
+		).rejects.toMatchObject({
+			status: 409,
+			envelope: { code: "REVISION_CONFLICT" },
+		})
+		expect(fetchMock).toHaveBeenCalledTimes(3)
+	})
+
+	it("wikiApply treats only DUPLICATE_SLUG as the update trigger", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			Response.json(
+				{
+					error: {
+						code: "REVISION_CONFLICT",
+						message: "stale precondition",
+					},
+				},
+				{ status: 409 },
+			),
+		)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await expect(
+			client.wikiApply({
+				kind: "note",
+				title: "X",
+				slug: "x",
+				summary: "X",
+				body: "X",
+				frontmatter: { type: "note" },
+				scope: "workspace",
+				scopeRef: "test",
+				trustTier: "standard",
+			}),
+		).rejects.toMatchObject({ status: 409 })
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it("wikiApply falls back to a plain update when the GET hits a 404 (page vanished mid-upsert)", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				Response.json(
+					{
+						error: {
+							code: "DUPLICATE_SLUG",
+							message: 'wiki page slug "ghost" already exists',
+						},
+					},
+					{ status: 409 },
+				),
+			)
+			.mockResolvedValueOnce(
+				Response.json(
+					{ error: { code: "WIKI_NOT_FOUND", message: "no page" } },
+					{ status: 404 },
+				),
+			)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await expect(
+			client.wikiApply({
+				kind: "note",
+				title: "Ghost",
+				slug: "ghost",
+				summary: "Ghost",
+				body: "Ghost",
+				frontmatter: { type: "note" },
+				scope: "workspace",
+				scopeRef: "test",
+				trustTier: "standard",
+			}),
+		).rejects.toMatchObject({ status: 404 })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it("wikiGet URL-encodes path-unsafe slugs and forwards transclude", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json({ slug: "tables/a b" }))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await client.wikiGet({
+			slug: "tables/a b?c",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			transclude: true,
+		})
+
+		const url = String(fetchMock.mock.calls[0]?.[0])
+		expect(url).toContain(`/v1/wiki/${encodeURIComponent("tables/a b?c")}?`)
+		expect(url).toContain("transclude=true")
+		expect(url).toContain("scope=workspace")
+	})
+
+	it("wikiGet with format=markdown resolves to the raw rendered string", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			new Response("# Accounts Table\n\n- id: uuid", {
+				status: 200,
+				headers: { "Content-Type": "text/markdown" },
+			}),
+		)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const out = await client.wikiGet({
+			slug: "tables/accounts",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			format: "markdown",
+		})
+
+		expect(out).toBe("# Accounts Table\n\n- id: uuid")
+	})
+
+	it("wikiDelete URL-encodes path-unsafe slugs", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			Response.json({
+				ok: true,
+				slug: "x",
+				scope: "s",
+				scopeRef: "r",
+				hard: false,
+			}),
+		)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await client.wikiDelete({
+			slug: "tables/a b",
+			scope: "workspace",
+			scopeRef: "ws-1",
+		})
+
+		const url = String(fetchMock.mock.calls[0]?.[0])
+		expect(url).toContain(`/v1/wiki/${encodeURIComponent("tables/a b")}?`)
+	})
 })

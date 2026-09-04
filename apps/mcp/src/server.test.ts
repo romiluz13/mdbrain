@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { MdbrainClientError } from "@mdbrain/client"
 import { handleToolCall, toolList } from "./server.js"
 
 function parseTextPayload(result: { content: Array<{ text: string }> }) {
@@ -321,8 +322,11 @@ describe("wiki MCP tools", () => {
 			scopeRef: "ws-1",
 			kind: undefined,
 			trustTier: undefined,
+			state: undefined,
+			privacyTier: undefined,
 			recipe: undefined,
 			maxResults: undefined,
+			minScore: undefined,
 			agentId: undefined,
 		})
 		expect(parseTextPayload(out)).toEqual({
@@ -331,6 +335,34 @@ describe("wiki MCP tools", () => {
 			recipe: "hybrid",
 			mode: "hybrid",
 		})
+	})
+
+	it("wiki_search forwards state, privacyTier and minScore filters", async () => {
+		const wikiSearch = vi.fn().mockResolvedValue({
+			results: [],
+			total: 0,
+			recipe: "fast",
+			mode: "vector-only",
+		})
+		await handleToolCall(
+			"mdbrain_wiki_search",
+			{
+				query: "accounts",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				state: "published",
+				privacyTier: "internal",
+				minScore: 0.25,
+			},
+			{ wikiSearch } as any,
+		)
+		expect(wikiSearch).toHaveBeenCalledWith(
+			expect.objectContaining({
+				state: "published",
+				privacyTier: "internal",
+				minScore: 0.25,
+			}),
+		)
 	})
 
 	it("wiki_get calls the client with slug+scope+scopeRef", async () => {
@@ -350,7 +382,96 @@ describe("wiki MCP tools", () => {
 			scope: "workspace",
 			scopeRef: "ws-1",
 			format: "markdown",
+			transclude: undefined,
 			agentId: undefined,
+		})
+	})
+
+	it("wiki_get forwards transclude to the client", async () => {
+		const wikiGet = vi.fn().mockResolvedValue({ slug: "x", body: "b" })
+		await handleToolCall(
+			"mdbrain_wiki_get",
+			{
+				slug: "tables/users",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				transclude: true,
+			},
+			{ wikiGet } as any,
+		)
+		expect(wikiGet).toHaveBeenCalledWith(
+			expect.objectContaining({ transclude: true }),
+		)
+	})
+
+	it("wiki_get with format=markdown returns the rendered text verbatim, not JSON-quoted", async () => {
+		const wikiGet = vi.fn().mockResolvedValue("# Accounts Table\n\n...")
+		const out = await handleToolCall(
+			"mdbrain_wiki_get",
+			{
+				slug: "tables/accounts",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				format: "markdown",
+			},
+			{ wikiGet } as any,
+		)
+		expect(out.content[0]?.text).toBe("# Accounts Table\n\n...")
+	})
+
+	it("forwards structured API error envelopes instead of flattening them", async () => {
+		// REV-07 C14: agents must be able to branch on machine codes like
+		// REVISION_CONFLICT and RATE_LIMITED (retryAfterMs) — the MCP error
+		// result carries the envelope fields through.
+		const wikiApply = vi.fn().mockRejectedValue(
+			new MdbrainClientError(
+				409,
+				JSON.stringify({
+					error: {
+						code: "REVISION_CONFLICT",
+						message:
+							'wiki page "test" in scope workspace:ws-1 moved past revision 3 — concurrent update, re-read and retry',
+					},
+				}),
+			),
+		)
+		const out = await handleToolCall(
+			"mdbrain_wiki_apply",
+			{
+				kind: "concept",
+				title: "T",
+				slug: "test",
+				summary: "S.",
+				body: "B.",
+				frontmatter: { type: "concept" },
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+			},
+			{ wikiApply } as any,
+		)
+		expect("isError" in out ? out.isError : undefined).toBe(true)
+		expect(parseTextPayload(out)).toEqual({
+			error: {
+				code: "REVISION_CONFLICT",
+				message: expect.stringContaining("revision 3"),
+				status: 409,
+			},
+		})
+	})
+
+	it("keeps the plain message fallback for non-envelope client errors", async () => {
+		const wikiGet = vi
+			.fn()
+			.mockRejectedValue(new MdbrainClientError(500, "Internal Server Error"))
+		const out = await handleToolCall(
+			"mdbrain_wiki_get",
+			{ slug: "x", scope: "workspace", scopeRef: "ws-1" },
+			{ wikiGet } as any,
+		)
+		expect("isError" in out ? out.isError : undefined).toBe(true)
+		expect(parseTextPayload(out)).toEqual({
+			error: "Mdbrain API 500: Internal Server Error",
 		})
 	})
 

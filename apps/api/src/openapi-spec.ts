@@ -396,7 +396,10 @@ const lifecycleHistoryEntrySchema = {
 	],
 } as const
 
-export const openApiSpec = {
+// REV-07 C2: kept as a private literal; the exported `openApiSpec` (bottom of
+// file) runs `withStandardResponses` over it to add the cross-cutting auth
+// and middleware responses so they cannot drift out of sync with app.ts.
+const openApiDocument = {
 	openapi: "3.0.3",
 	info: {
 		title: "Mdbrain API",
@@ -405,10 +408,15 @@ export const openApiSpec = {
 			"HTTP API for the Mdbrain wiki and the versioned Memongo memory gateway.",
 	},
 	servers: [{ url: "/", description: "Default" }],
+	// Every /v1/* operation requires a bearer credential (see app.ts; the
+	// auth middleware is mounted ahead of the v1 router). /health, /ready and
+	// /openapi.json opt out per-operation with `security: []`.
+	security: [{ bearerAuth: [] }],
 	paths: {
 		"/health": {
 			get: {
 				summary: "Health check",
+				security: [],
 				responses: { "200": { description: "OK" } },
 			},
 		},
@@ -416,6 +424,7 @@ export const openApiSpec = {
 			get: {
 				summary:
 					"Memongo contract and transactional wiki-store dependency readiness",
+				security: [],
 				responses: {
 					"200": { description: "All required dependencies are ready" },
 					"503": {
@@ -428,6 +437,7 @@ export const openApiSpec = {
 		"/openapi.json": {
 			get: {
 				summary: "OpenAPI document",
+				security: [],
 				responses: { "200": { description: "OpenAPI JSON" } },
 			},
 		},
@@ -435,6 +445,7 @@ export const openApiSpec = {
 			post: {
 				summary: "Search memory",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -497,6 +508,7 @@ export const openApiSpec = {
 				summary:
 					"Advanced search with CRAG corrective retrieval, MMR diversity, constraint relaxation, and multi-source fusion",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -885,6 +897,7 @@ export const openApiSpec = {
 				summary:
 					"Hydrate a tiny active-memory slate for recall-heavy turns and debugging surfaces",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -970,6 +983,7 @@ export const openApiSpec = {
 				summary:
 					"Build a rebuildable discovery projection such as an entity brief, topic brief, what-changed brief, or contradiction report",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -1093,6 +1107,7 @@ export const openApiSpec = {
 				summary:
 					"Build a prompt-ready context bundle from active memory, durable evidence, summaries, and recent events",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -1309,6 +1324,7 @@ export const openApiSpec = {
 				summary:
 					"Recall prior conversation events by content, session, role, and exact time range",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -1695,6 +1711,7 @@ export const openApiSpec = {
 			post: {
 				summary: "Search imported knowledge base documents",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -1729,6 +1746,7 @@ export const openApiSpec = {
 					},
 				],
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -1888,6 +1906,7 @@ export const openApiSpec = {
 			post: {
 				summary: "Synthesize a profile for a scope",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -1987,25 +2006,94 @@ export const openApiSpec = {
 				},
 			},
 		},
+		// REV-07 route-parity fix: this admin route existed in the router but
+		// was never documented.
+		"/v1/admin/wiki-promotions/{operationId}/approve": {
+			post: {
+				summary:
+					"Approve a promotion-pending wiki promotion and promote its page",
+				parameters: [
+					{
+						in: "path",
+						name: "operationId",
+						required: true,
+						schema: { type: "string" },
+						description: "Durable memory delivery operation identifier",
+					},
+				],
+				responses: {
+					"200": { description: "Promotion approved and page promoted" },
+					"400": { description: "Missing operationId path parameter" },
+					"404": { description: "No promotion found for operationId" },
+					"409": { description: "Promotion is not pending approval" },
+					"500": { description: "Approval failed" },
+				},
+			},
+		},
 		"/v1/wiki": {
 			post: {
 				summary: "Create a wiki page",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
 								type: "object",
-								required: ["kind", "title", "slug", "scope", "scopeRef"],
+								// REV-07 C5/C6 parity fix: matches the runtime contract
+								// (routes/v1.ts POST /wiki) — summary, trustTier and
+								// frontmatter.type are required at runtime, and
+								// kind/scope/trustTier are enum-validated there.
+								required: [
+									"kind",
+									"title",
+									"slug",
+									"summary",
+									"scope",
+									"scopeRef",
+									"trustTier",
+									"frontmatter",
+								],
 								properties: {
-									kind: { type: "string" },
+									kind: {
+										type: "string",
+										enum: [
+											"entity",
+											"concept",
+											"synthesis",
+											"source",
+											"report",
+											"procedure",
+										],
+									},
 									title: { type: "string" },
-									slug: { type: "string" },
+									slug: {
+										type: "string",
+										description:
+											"OKF concept ID; may contain slashes (e.g. tables/users). Must not start with a reserved segment (lint, revisions).",
+									},
 									summary: { type: "string" },
 									body: { type: "string" },
-									frontmatter: { type: "object" },
-									scope: { type: "string" },
+									frontmatter: {
+										type: "object",
+										required: ["type"],
+										properties: { type: { type: "string" } },
+									},
+									scope: {
+										type: "string",
+										enum: [
+											"session",
+											"user",
+											"agent",
+											"workspace",
+											"tenant",
+											"global",
+										],
+									},
 									scopeRef: { type: "string" },
-									trustTier: { type: "string" },
+									trustTier: {
+										type: "string",
+										enum: ["restricted", "standard", "admin"],
+									},
 									agentId: { type: "string" },
 								},
 							},
@@ -2035,6 +2123,19 @@ export const openApiSpec = {
 					},
 					{ name: "kind", in: "query", schema: { type: "string" } },
 					{ name: "state", in: "query", schema: { type: "string" } },
+					{
+						name: "trustTier",
+						in: "query",
+						schema: {
+							type: "string",
+							enum: ["restricted", "standard", "admin"],
+						},
+					},
+					{
+						name: "skip",
+						in: "query",
+						schema: { type: "integer", minimum: 0 },
+					},
 					{ name: "limit", in: "query", schema: { type: "integer" } },
 					{ name: "agentId", in: "query", schema: { type: "string" } },
 				],
@@ -2071,10 +2172,18 @@ export const openApiSpec = {
 							enum: ["json", "markdown", "html"],
 						},
 					},
+					{
+						name: "transclude",
+						in: "query",
+						schema: { type: "boolean" },
+						description:
+							"Include inline dependents in the response (parity with the SDK and MCP surfaces).",
+					},
 					{ name: "agentId", in: "query", schema: { type: "string" } },
 				],
 				responses: {
 					"200": { description: "Wiki page" },
+					"400": { description: "Validation error" },
 					"404": { description: "Wiki page not found" },
 				},
 			},
@@ -2089,6 +2198,7 @@ export const openApiSpec = {
 					},
 				],
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -2102,7 +2212,16 @@ export const openApiSpec = {
 									frontmatter: { type: "object" },
 									scope: { type: "string" },
 									scopeRef: { type: "string" },
-									trustTier: { type: "string" },
+									trustTier: {
+										type: "string",
+										enum: ["restricted", "standard", "admin"],
+									},
+									permissions: { type: "object" },
+									expectedRevision: {
+										type: "integer",
+										description:
+											"Optional compare-and-swap precondition: apply the patch only if the page is still at this revision. Mismatch returns 409 REVISION_CONFLICT instead of a last-writer-wins overwrite.",
+									},
 									agentId: { type: "string" },
 								},
 							},
@@ -2111,7 +2230,12 @@ export const openApiSpec = {
 				},
 				responses: {
 					"200": { description: "Wiki page updated" },
+					"400": { description: "Validation error" },
 					"404": { description: "Wiki page not found" },
+					"409": {
+						description:
+							"Revision conflict (expectedRevision mismatch) or duplicate slug",
+					},
 				},
 			},
 			delete: {
@@ -2214,6 +2338,7 @@ export const openApiSpec = {
 			post: {
 				summary: "Import an OKF bundle into wiki pages",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -2251,6 +2376,7 @@ export const openApiSpec = {
 			post: {
 				summary: "Export wiki pages to an OKF bundle",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
@@ -2261,6 +2387,11 @@ export const openApiSpec = {
 									scopeRef: { type: "string" },
 									outDir: { type: "string" },
 									okfBundleId: { type: "string" },
+									trustTier: {
+										type: "string",
+										enum: ["restricted", "standard", "admin"],
+									},
+									returnContent: { type: "boolean" },
 									agentId: { type: "string" },
 								},
 							},
@@ -2278,11 +2409,14 @@ export const openApiSpec = {
 			post: {
 				summary: "Hybrid wiki search (vector + text + rank fusion)",
 				requestBody: {
+					required: true,
 					content: {
 						"application/json": {
 							schema: {
 								type: "object",
-								required: ["query"],
+								// REV-07 C11 parity fix: scope and scopeRef are required at
+								// runtime (routes/v1.ts POST /wiki/search rejects empty).
+								required: ["query", "scope", "scopeRef"],
 								properties: {
 									query: { type: "string" },
 									scope: { type: "string" },
@@ -2330,16 +2464,33 @@ export const openApiSpec = {
 						required: true,
 						schema: { type: "string" },
 					},
+					// REV-07 placebo-parameter fix: the route now honors kind and
+					// limit (clamped 1..100), matching the SDK and MCP surfaces.
+					{ name: "kind", in: "query", schema: { type: "string" } },
+					{
+						name: "limit",
+						in: "query",
+						schema: { type: "integer", minimum: 1, maximum: 100 },
+					},
 					{ name: "agentId", in: "query", schema: { type: "string" } },
 				],
 				responses: {
 					"200": { description: "Wiki lint report" },
+					"400": { description: "Validation error" },
 					"500": { description: "Wiki lint failed" },
 				},
 			},
 		},
 	},
 	components: {
+		securitySchemes: {
+			bearerAuth: {
+				type: "http",
+				scheme: "bearer",
+				description:
+					"MDBRAIN_API_KEY (or a scoped key from MDBRAIN_API_SCOPED_KEYS) sent as an Authorization: Bearer token.",
+			},
+		},
 		schemas: {
 			ApiError: {
 				type: "object",
@@ -2361,3 +2512,113 @@ export const openApiSpec = {
 		},
 	},
 } as const
+
+type OpenApiResponses = Record<
+	string,
+	{
+		description?: string
+		headers?: Record<string, unknown>
+		content?: Record<string, { schema?: { $ref?: string } }>
+	}
+>
+
+type OpenApiOperation = {
+	requestBody?: unknown
+	responses?: OpenApiResponses
+	[key: string]: unknown
+}
+
+type OpenApiPathItem = Record<string, OpenApiOperation | unknown>
+
+type OpenApiDocument = {
+	paths: Record<string, OpenApiPathItem>
+	[key: string]: unknown
+}
+
+const HTTP_METHODS = [
+	"get",
+	"post",
+	"put",
+	"patch",
+	"delete",
+	"head",
+	"options",
+] as const
+
+// REV-07 C3/C12: every /v1/* operation can actually emit these two responses
+// (app.ts mounts the content-type guard and the rate limiter on /v1/*), so
+// every /v1/* operation must document them. Merging them here, once, keeps
+// the per-operation literals readable and drift-free.
+const RATE_LIMITED_RESPONSE = {
+	description:
+		"Rate limited (RATE_LIMITED). Honor Retry-After before retrying; safe to retry the same request afterwards.",
+	headers: {
+		"Retry-After": {
+			description:
+				"Seconds (or HTTP-date) until the next allowed request; set on every 429.",
+			schema: { type: "string" },
+		},
+	},
+	content: {
+		"application/json": {
+			schema: { $ref: "#/components/schemas/ApiError" },
+		},
+	},
+} as const
+
+const UNSUPPORTED_MEDIA_TYPE_RESPONSE = {
+	description:
+		"Unsupported media type (UNSUPPORTED_MEDIA_TYPE). Requests with a body must send Content-Type: application/json.",
+	content: {
+		"application/json": {
+			schema: { $ref: "#/components/schemas/ApiError" },
+		},
+	},
+} as const
+
+function operationOf(
+	item: OpenApiPathItem,
+	method: string,
+): OpenApiOperation | undefined {
+	const op = item[method]
+	return op !== null && typeof op === "object" && "responses" in op
+		? (op as OpenApiOperation)
+		: undefined
+}
+
+/**
+ * Deep-copies the base document and stamps the cross-cutting middleware
+ * responses onto every /v1/* operation: 429 RATE_LIMITED (rate limiter is
+ * mounted on all of /v1) and 415 UNSUPPORTED_MEDIA_TYPE (content-type guard
+ * covers non-GET/HEAD requests that carry a body). Each references the
+ * shared ApiError envelope schema instead of a bare description.
+ */
+function withStandardResponses(doc: OpenApiDocument): OpenApiDocument {
+	const out = JSON.parse(JSON.stringify(doc)) as OpenApiDocument
+	for (const [path, item] of Object.entries(out.paths)) {
+		if (item === null || typeof item !== "object") continue
+		for (const method of HTTP_METHODS) {
+			const op = operationOf(item as OpenApiPathItem, method)
+			if (!op) continue
+			const responses: OpenApiResponses = op.responses ?? {}
+			op.responses = responses
+			if (!responses["429"] && path.startsWith("/v1/")) {
+				responses["429"] = RATE_LIMITED_RESPONSE
+			}
+			if (
+				!responses["415"] &&
+				path.startsWith("/v1/") &&
+				method !== "get" &&
+				method !== "head" &&
+				op.requestBody !== undefined
+			) {
+				responses["415"] = UNSUPPORTED_MEDIA_TYPE_RESPONSE
+			}
+		}
+	}
+	return out
+}
+
+export const openApiSpec: OpenApiDocument = withStandardResponses(
+	openApiDocument as unknown as OpenApiDocument,
+)

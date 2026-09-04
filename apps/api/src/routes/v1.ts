@@ -80,7 +80,10 @@ const VALID_SCOPE_VALUES = [
 	"global",
 ] as const
 type ApiScope = (typeof VALID_SCOPE_VALUES)[number]
-const WIKI_VALID_KINDS = [
+// Exported for the contract parity test (apps/api/src/contract-parity.test.ts):
+// the runtime validation sets are the source of truth the OpenAPI document and
+// the MCP schemas must not drift below.
+export const WIKI_VALID_KINDS = [
 	"entity",
 	"concept",
 	"synthesis",
@@ -88,7 +91,20 @@ const WIKI_VALID_KINDS = [
 	"report",
 	"procedure",
 ]
-const WIKI_VALID_TRUST_TIERS = ["restricted", "standard", "admin"]
+export const WIKI_VALID_TRUST_TIERS = ["restricted", "standard", "admin"]
+export const WIKI_VALID_SCOPES = [
+	"session",
+	"user",
+	"agent",
+	"workspace",
+	"tenant",
+	"global",
+]
+// Slugs whose first path segment collides with a wiki sub-route registered
+// before the /wiki/* wildcard (lint, revisions) would be unreachable via GET
+// (the sub-route answers instead of the page). Create/patch reject them
+// instead of letting a page silently shadow itself (REV-07 N2).
+export const WIKI_RESERVED_SLUG_SEGMENTS = ["lint", "revisions"]
 type MemongoFailure = {
 	code: string
 	message: string
@@ -2063,14 +2079,15 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		return (afterWiki ?? "").replace(/\/$/, "")
 	}
 
-	const WIKI_VALID_SCOPES = [
-		"session",
-		"user",
-		"agent",
-		"workspace",
-		"tenant",
-		"global",
-	]
+	// REV-07 N2: a slug whose first segment collides with a GET sub-route
+	// registered before the /wiki/* wildcard (lint, revisions) is unreachable
+	// as a page. Reject it at write time with a named reason.
+	function reservedSlugError(slug: string): string | undefined {
+		const firstSegment = slug.split("/")[0]
+		return WIKI_RESERVED_SLUG_SEGMENTS.includes(firstSegment)
+			? `slug segment "${firstSegment}" is reserved (shadows the /v1/wiki/${firstSegment} route); choose a different slug`
+			: undefined
+	}
 	function buildWikiGovContext(
 		c: Parameters<typeof getApiPrincipal>[0],
 		scope: string,
@@ -2139,6 +2156,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			return jsonError(c, 400, "VALIDATION_ERROR", "title is required")
 		if (!slug.trim())
 			return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
+		const reservedSlug = reservedSlugError(slug)
+		if (reservedSlug) return jsonError(c, 400, "VALIDATION_ERROR", reservedSlug)
 		if (!summary.trim())
 			return jsonError(c, 400, "VALIDATION_ERROR", "summary is required")
 		if (!WIKI_VALID_KINDS.includes(kind))
@@ -2264,10 +2283,14 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		}
 	})
 
-	// Wiki lint (/v1/wiki/lint) — T12: lists pages + unresolved contradictions
+	// Wiki lint (/v1/wiki/lint) — T12: lists pages + unresolved contradictions.
+	// REV-07 placebo-parameter fix: kind and limit are honored (clamped to
+	// 1..MAX_LIST_LIMIT), not silently dropped — the SDK and MCP surfaces
+	// advertise both, so the route must consume both.
 	v1.get("/wiki/lint", async (c) => {
 		const scope = c.req.query("scope")
 		const scopeRef = c.req.query("scopeRef")
+		const kind = c.req.query("kind")
 		if (!scope || !scopeRef)
 			return jsonError(
 				c,
@@ -2275,6 +2298,10 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"VALIDATION_ERROR",
 				"scope and scopeRef are required",
 			)
+		const limit = parseListLimit(c.req.query("limit"))
+		if (limit === null) {
+			return jsonError(c, 400, "VALIDATION_ERROR", "limit must be 1..100")
+		}
 		try {
 			const handle = await readWikiDbHandle(
 				String(c.req.query("agentId") ?? ""),
@@ -2284,7 +2311,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				listWikiPages(handle, {
 					scope,
 					scopeRef,
-					limit: MAX_LIST_LIMIT,
+					kind: kind ?? undefined,
+					limit: limit ?? MAX_LIST_LIMIT,
 					governance,
 				}),
 				listUnresolvedContradictions(handle, scope, scopeRef, governance),
@@ -2473,11 +2501,22 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				scope: _s,
 				scopeRef: _sr,
 				slug: _sl,
+				expectedRevision: _er,
 				...patch
 			} = body as Record<string, unknown>
 			void _s
 			void _sr
 			void _sl
+			void _er
+			// REV-07 C24: optional compare-and-swap precondition. When supplied,
+			// the patch applies only if the page is still at the caller's
+			// observed revision; otherwise 409 REVISION_CONFLICT (never a blind
+			// last-writer-wins overwrite). The client's create-or-update fallback
+			// always sends it.
+			const expectedRevision =
+				typeof body.expectedRevision === "number"
+					? body.expectedRevision
+					: undefined
 			const principal = getApiPrincipal(c)
 			if (
 				(patch.trustTier !== undefined || patch.permissions !== undefined) &&
@@ -2500,6 +2539,17 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					session,
 				)
 				if (!target) return undefined
+				if (
+					expectedRevision !== undefined &&
+					Number(target.revision ?? 1) !== expectedRevision
+				) {
+					throw new WikiRevisionConflictError(
+						slug,
+						scope,
+						scopeRef,
+						expectedRevision,
+					)
+				}
 				const result = await updateWikiPage(
 					handle,
 					slug,

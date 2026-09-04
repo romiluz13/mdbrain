@@ -1124,4 +1124,161 @@ describe("wiki routes", () => {
 			expect(json.error?.code).toBe("WIKI_SEARCH_FAILED")
 		})
 	})
+
+	describe("reserved wiki slugs (REV-07 N2)", () => {
+		it("rejects creating a page whose first slug segment shadows GET /wiki/lint", async () => {
+			const res = await createApp().request("/v1/wiki", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ ...VALID_BODY, slug: "lint" }),
+			})
+			expect(res.status).toBe(400)
+			const json = await asJson(res)
+			expect(json.error?.code).toBe("VALIDATION_ERROR")
+			expect(json.error?.message).toMatch(/reserved/)
+			expect(wikiMocks.createWikiPage).not.toHaveBeenCalled()
+		})
+
+		it("rejects creating a page whose first slug segment shadows GET /wiki/revisions", async () => {
+			const res = await createApp().request("/v1/wiki", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ ...VALID_BODY, slug: "revisions/accounts" }),
+			})
+			expect(res.status).toBe(400)
+			expect((await asJson(res)).error?.message).toMatch(
+				/"revisions" is reserved/,
+			)
+			expect(wikiMocks.createWikiPage).not.toHaveBeenCalled()
+		})
+
+		it("allows slugs that merely contain a reserved segment later in the path", async () => {
+			wikiMocks.createWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			const res = await createApp().request("/v1/wiki", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					...VALID_BODY,
+					slug: "tables/revisions-of-accounts",
+				}),
+			})
+			expect(res.status).toBe(201)
+			expect(wikiMocks.createWikiPage).toHaveBeenCalledTimes(1)
+		})
+
+		it("ignores a slug in the PATCH body (rename is not a patch field)", async () => {
+			wikiMocks.updateWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ slug: "lint", summary: "updated" }),
+				},
+			)
+			expect(res.status).toBe(200)
+			const [, , , , patch] = wikiMocks.updateWikiPage.mock.calls[0]
+			// The runtime strips slug from the patch (updateWikiPage cannot
+			// rename), so a reserved first segment in a PATCH body can never
+			// shadow GET /wiki/lint.
+			expect(patch).not.toHaveProperty("slug")
+			expect(patch.summary).toBe("updated")
+		})
+	})
+
+	describe("PATCH expectedRevision precondition (REV-07 C24)", () => {
+		it("applies the patch when the page is at the expected revision", async () => {
+			wikiMocks.updateWikiPage.mockResolvedValue({
+				...SAMPLE_PAGE,
+				revision: 2,
+			})
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ summary: "cas update", expectedRevision: 1 }),
+				},
+			)
+			expect(res.status).toBe(200)
+			const [, , , , patch] = wikiMocks.updateWikiPage.mock.calls[0]
+			expect(patch.summary).toBe("cas update")
+			// The precondition field never reaches the engine as a page field.
+			expect(patch).not.toHaveProperty("expectedRevision")
+		})
+
+		it("returns 409 REVISION_CONFLICT when the page moved past the expected revision", async () => {
+			// beforeEach resolves getWikiPage to SAMPLE_PAGE at revision 1;
+			// a caller that observed revision 5 is stale.
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ summary: "stale", expectedRevision: 5 }),
+				},
+			)
+			expect(res.status).toBe(409)
+			const json = await asJson(res)
+			expect(json.error?.code).toBe("REVISION_CONFLICT")
+			expect(json.error?.message).toMatch(/revision 5/)
+			expect(wikiMocks.updateWikiPage).not.toHaveBeenCalled()
+		})
+
+		it("ignores expectedRevision when absent (plain last-writer-wins stays available)", async () => {
+			wikiMocks.updateWikiPage.mockResolvedValue({
+				...SAMPLE_PAGE,
+				revision: 2,
+			})
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ summary: "no precondition" }),
+				},
+			)
+			expect(res.status).toBe(200)
+			expect(wikiMocks.updateWikiPage).toHaveBeenCalledTimes(1)
+		})
+	})
+
+	describe("GET /v1/wiki/lint", () => {
+		it("forwards kind and limit to the page list (placebo-parameter fix)", async () => {
+			wikiMocks.listWikiPages.mockResolvedValue({
+				pages: [SAMPLE_PAGE],
+				total: 1,
+			})
+			wikiMocks.listUnresolvedContradictions.mockResolvedValue([])
+			const res = await createApp().request(
+				"/v1/wiki/lint?scope=workspace&scopeRef=ws-1&kind=concept&limit=5",
+			)
+			expect(res.status).toBe(200)
+			const [, params] = wikiMocks.listWikiPages.mock.calls[0]
+			expect(params.kind).toBe("concept")
+			expect(params.limit).toBe(5)
+			expect(params.scope).toBe("workspace")
+			expect(params.scopeRef).toBe("ws-1")
+		})
+
+		it("clamps an out-of-range limit and defaults kind to undefined", async () => {
+			wikiMocks.listWikiPages.mockResolvedValue({ pages: [], total: 0 })
+			wikiMocks.listUnresolvedContradictions.mockResolvedValue([])
+			await createApp().request(
+				"/v1/wiki/lint?scope=workspace&scopeRef=ws-1&limit=500",
+			)
+			const [, params] = wikiMocks.listWikiPages.mock.calls[0]
+			expect(params.kind).toBeUndefined()
+			// Clamped to MAX_LIST_LIMIT (100), matching GET /v1/wiki behavior.
+			expect(params.limit).toBe(100)
+		})
+
+		it("rejects a non-numeric limit", async () => {
+			const res = await createApp().request(
+				"/v1/wiki/lint?scope=workspace&scopeRef=ws-1&limit=abc",
+			)
+			expect(res.status).toBe(400)
+			expect((await asJson(res)).error?.message).toMatch(/limit/)
+		})
+	})
 })

@@ -26,6 +26,7 @@ import type {
 import {
 	apiDelete,
 	apiGet,
+	apiGetText,
 	apiPatch,
 	apiPost,
 	MdbrainClientError,
@@ -869,6 +870,7 @@ export class MdbrainClient {
 			scope: string
 			scopeRef: string
 			format?: "json" | "markdown" | "html"
+			transclude?: boolean
 			agentId?: string
 		},
 		requestOptions?: MdbrainRequestOptions,
@@ -878,8 +880,19 @@ export class MdbrainClient {
 			scopeRef: input.scopeRef,
 		})
 		if (input.format) qs.set("format", input.format)
+		if (input.transclude !== undefined) {
+			qs.set("transclude", String(input.transclude))
+		}
 		if (input.agentId) qs.set("agentId", input.agentId)
-		return apiGet(this._opts, `/v1/wiki/${input.slug}?${qs}`, requestOptions)
+		// Slugs are OKF concept IDs that may contain path-unsafe characters
+		// (spaces, "?", "#"); encode each segment so the path stays routable.
+		const path = `/v1/wiki/${encodeURIComponent(input.slug)}?${qs}`
+		if (input.format === "markdown" || input.format === "html") {
+			// The server deliberately returns a non-JSON body for these
+			// formats; resolve to the raw string instead of parsing.
+			return apiGetText(this._opts, path, requestOptions)
+		}
+		return apiGet(this._opts, path, requestOptions)
 	}
 
 	async wikiApply(
@@ -910,8 +923,12 @@ export class MdbrainClient {
 		const deadlineAt =
 			Date.now() + resolveDeadlineMs(this._opts, requestOptions)
 		// Upsert: try POST (create); on 409 DUPLICATE_SLUG, fall back to PATCH
-		// (update existing page, bumps revision). Honors the create-or-update
-		// contract the tool description advertises.
+		// (update existing page, bumps revision). REV-07 race-safety fix: the
+		// fallback re-reads the current page and sends expectedRevision so a
+		// concurrent writer between the GET and the PATCH surfaces as
+		// 409 REVISION_CONFLICT instead of silently overwriting. If the page
+		// disappears mid-fallback (concurrent delete), the GET's 404 is
+		// rethrown — the caller should decide whether to re-create.
 		const body = {
 			kind: input.kind,
 			title: input.title,
@@ -934,19 +951,41 @@ export class MdbrainClient {
 				requestOptions,
 			)
 		} catch (err) {
-			if (err instanceof MdbrainClientError && err.status === 409) {
-				const remainingOptions: MdbrainRequestOptions = {
-					...requestOptions,
-					timeoutMs: Math.max(0, deadlineAt - Date.now()),
-				}
-				return apiPatch(
-					this._opts,
-					`/v1/wiki/${input.slug}`,
-					body,
-					remainingOptions,
-				)
+			// Only DUPLICATE_SLUG means "the page exists; update it instead".
+			// A bare 409 (no envelope code) may be an older server or a
+			// different conflict; treat it as DUPLICATE_SLUG for compatibility.
+			if (
+				!(err instanceof MdbrainClientError && err.status === 409) ||
+				(err.envelope !== undefined && err.envelope.code !== "DUPLICATE_SLUG")
+			) {
+				throw err
 			}
-			throw err
+			const remainingOptions: MdbrainRequestOptions = {
+				...requestOptions,
+				timeoutMs: Math.max(0, deadlineAt - Date.now()),
+			}
+			// A GET failure here (e.g. the page vanished between POST and GET
+			// via a concurrent delete) propagates: the caller must learn the
+			// upsert target disappeared rather than get a blind overwrite.
+			const existing = (await apiGet(
+				this._opts,
+				`/v1/wiki/${encodeURIComponent(input.slug)}?${new URLSearchParams({
+					scope: input.scope,
+					scopeRef: input.scopeRef,
+					...(input.agentId ? { agentId: input.agentId } : {}),
+				})}`,
+				remainingOptions,
+			)) as { revision?: unknown }
+			const expectedRevision =
+				existing && typeof existing.revision === "number"
+					? existing.revision
+					: undefined
+			return apiPatch(
+				this._opts,
+				`/v1/wiki/${encodeURIComponent(input.slug)}`,
+				{ ...body, expectedRevision },
+				remainingOptions,
+			)
 		}
 	}
 
@@ -1030,7 +1069,7 @@ export class MdbrainClient {
 		if (input.agentId) params.set("agentId", input.agentId)
 		return apiDelete(
 			this._opts,
-			`/v1/wiki/${input.slug}?${params}`,
+			`/v1/wiki/${encodeURIComponent(input.slug)}?${params}`,
 			requestOptions,
 		)
 	}

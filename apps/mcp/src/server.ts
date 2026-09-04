@@ -4,7 +4,7 @@ import {
 	CallToolRequestSchema,
 	ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js"
-import { MdbrainClient } from "@mdbrain/client"
+import { MdbrainClient, MdbrainClientError } from "@mdbrain/client"
 import { pathToFileURL } from "node:url"
 
 const mdbrain = new MdbrainClient({
@@ -691,11 +691,23 @@ export const toolList = [
 					type: "string",
 					enum: ["restricted", "standard", "admin"],
 				},
+				// Parity with the HTTP route: these filters are honored by
+				// POST /v1/wiki/search and forwarded by the SDK; the tool schema
+				// must expose them too.
+				state: {
+					type: "string",
+					description: "Page state filter (e.g. draft, published, superseded).",
+				},
+				privacyTier: { type: "string" },
 				recipe: { type: "string", enum: ["fast", "hybrid", "deep"] },
 				maxResults: { type: "number" },
+				minScore: {
+					type: "number",
+					description: "Minimum ranking score; lower-scoring hits are dropped.",
+				},
 				agentId: { type: "string" },
 			},
-			required: ["query"],
+			required: ["query", "scope", "scopeRef"],
 		},
 	},
 	{
@@ -712,6 +724,10 @@ export const toolList = [
 				scope: { type: "string" },
 				scopeRef: { type: "string" },
 				format: { type: "string", enum: ["json", "markdown", "html"] },
+				transclude: {
+					type: "boolean",
+					description: "Include inline dependents in the response.",
+				},
 				agentId: { type: "string" },
 			},
 			required: ["slug", "scope", "scopeRef"],
@@ -1443,6 +1459,9 @@ export async function handleToolCall(
 				kind: typeof args.kind === "string" ? args.kind : undefined,
 				trustTier:
 					typeof args.trustTier === "string" ? args.trustTier : undefined,
+				state: typeof args.state === "string" ? args.state : undefined,
+				privacyTier:
+					typeof args.privacyTier === "string" ? args.privacyTier : undefined,
 				recipe:
 					args.recipe === "fast" ||
 					args.recipe === "hybrid" ||
@@ -1451,23 +1470,39 @@ export async function handleToolCall(
 						: undefined,
 				maxResults:
 					typeof args.maxResults === "number" ? args.maxResults : undefined,
+				minScore: typeof args.minScore === "number" ? args.minScore : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
 		if (name === "mdbrain_wiki_get") {
+			const format =
+				args.format === "markdown" ||
+				args.format === "html" ||
+				args.format === "json"
+					? args.format
+					: undefined
 			const out = await mdbrain.wikiGet({
 				slug: typeof args.slug === "string" ? args.slug : "",
 				scope: typeof args.scope === "string" ? args.scope : "",
 				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
-				format:
-					args.format === "markdown" ||
-					args.format === "html" ||
-					args.format === "json"
-						? args.format
-						: undefined,
+				format,
+				transclude:
+					typeof args.transclude === "boolean" ? args.transclude : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 			})
+			if (format === "markdown" || format === "html") {
+				// The SDK resolves these formats to the raw rendered string;
+				// return it verbatim instead of JSON-quoting it.
+				return {
+					content: [
+						{
+							type: "text",
+							text: typeof out === "string" ? out : JSON.stringify(out),
+						},
+					],
+				}
+			}
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
 		if (name === "mdbrain_wiki_apply") {
@@ -1542,6 +1577,23 @@ export async function handleToolCall(
 		}
 		throw new Error(`unknown tool: ${name}`)
 	} catch (err) {
+		// REV-07 C14 passthrough: when the HTTP API answered with a structured
+		// error envelope (RATE_LIMITED, REVISION_CONFLICT, SEARCH_UNAVAILABLE,
+		// ...), forward its machine-readable fields instead of flattening
+		// everything to a bare message string — agents need to branch on
+		// codes like REVISION_CONFLICT (re-read, retry) vs RATE_LIMITED
+		// (honor retryAfterMs).
+		if (err instanceof MdbrainClientError && err.envelope) {
+			return jsonResult(
+				{
+					error: {
+						...err.envelope,
+						status: err.status,
+					},
+				},
+				true,
+			)
+		}
 		const message = err instanceof Error ? err.message : String(err)
 		return jsonResult({ error: message }, true)
 	}

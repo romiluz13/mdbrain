@@ -16,11 +16,56 @@ export type MdbrainRequestOptions = {
 	signal?: AbortSignal
 }
 
+/**
+ * Parsed form of the API's error envelope
+ * (`{ error: { code, message, retryable?, outcome?, retryAfterMs? } }`).
+ * Exposed on every MdbrainClientError so callers can branch on the machine
+ * code (e.g. REVISION_CONFLICT) instead of scraping the raw body text.
+ */
+export type MdbrainApiErrorEnvelope = {
+	code: string
+	message: string
+	retryable?: boolean
+	outcome?: string
+	retryAfterMs?: number
+}
+
+function parseErrorEnvelope(body: string): MdbrainApiErrorEnvelope | undefined {
+	if (!body) return undefined
+	try {
+		const parsed: unknown = JSON.parse(body)
+		if (parsed === null || typeof parsed !== "object") return undefined
+		const error = (parsed as Record<string, unknown>).error
+		if (error === null || typeof error !== "object") return undefined
+		const { code, message } = error as Record<string, unknown>
+		if (typeof code !== "string" || typeof message !== "string")
+			return undefined
+		const envelope = { code, message } as MdbrainApiErrorEnvelope
+		const { retryable, outcome, retryAfterMs } = error as Record<
+			string,
+			unknown
+		>
+		if (typeof retryable === "boolean") envelope.retryable = retryable
+		if (typeof outcome === "string") envelope.outcome = outcome
+		if (typeof retryAfterMs === "number") envelope.retryAfterMs = retryAfterMs
+		return envelope
+	} catch {
+		return undefined
+	}
+}
+
 /** Thrown when the Mdbrain HTTP API returns a non-OK status. */
 export class MdbrainClientError extends Error {
 	readonly status: number
 	readonly body: string
 	readonly code?: "DEADLINE_EXCEEDED" | "REQUEST_ABORTED"
+	/**
+	 * The API error envelope parsed from `body`, when the server sent one.
+	 * API error codes (UNAUTHORIZED, DUPLICATE_SLUG, REVISION_CONFLICT,
+	 * RATE_LIMITED, ...) live here; the transport-level `code` above only
+	 * covers abort/deadline conditions.
+	 */
+	readonly envelope?: MdbrainApiErrorEnvelope
 
 	constructor(
 		status: number,
@@ -33,6 +78,7 @@ export class MdbrainClientError extends Error {
 		this.status = status
 		this.body = body
 		this.code = code
+		this.envelope = parseErrorEnvelope(body)
 	}
 }
 
@@ -141,6 +187,8 @@ function resolveApiKey(opts: MdbrainClientOptions): string | undefined {
 
 type RetryPolicy = "safe" | "same-key" | "never"
 
+type ResponseParse = "json" | "text"
+
 function retryDelayMs(response: Response, attempt: number): number {
 	const retryAfter = response.headers.get("retry-after")
 	if (retryAfter) {
@@ -194,6 +242,7 @@ async function apiFetch<T>(
 	init: RequestInit,
 	retryPolicy: RetryPolicy,
 	requestOptions?: MdbrainRequestOptions,
+	parse: ResponseParse = "json",
 ): Promise<T> {
 	const url = `${resolveBaseUrl(opts)}${path}`
 	const method = (init.method ?? "GET").toUpperCase()
@@ -235,6 +284,9 @@ async function apiFetch<T>(
 				throw error
 			}
 			if (res.ok) {
+				if (parse === "text") {
+					return (await res.text()) as T
+				}
 				try {
 					return (await res.json()) as T
 				} catch (error) {
@@ -306,6 +358,26 @@ export async function apiGet<T>(
 	requestOptions?: MdbrainRequestOptions,
 ): Promise<T> {
 	return apiFetch<T>(opts, path, { method: "GET" }, "safe", requestOptions)
+}
+
+/**
+ * GET that resolves to the raw response body text instead of parsed JSON.
+ * Used for wiki GET with format=markdown|html, where the API deliberately
+ * returns a non-JSON body.
+ */
+export async function apiGetText(
+	opts: MdbrainClientOptions,
+	path: string,
+	requestOptions?: MdbrainRequestOptions,
+): Promise<string> {
+	return apiFetch<string>(
+		opts,
+		path,
+		{ method: "GET" },
+		"safe",
+		requestOptions,
+		"text",
+	)
 }
 
 export async function apiPatch<T>(
