@@ -9,9 +9,9 @@ import {
 	type MemongoReadinessReport,
 } from "./memongo-memory-gateway.js"
 
-export const MEMONGO_CONTRACT_VERSION = "2.0.1"
+export const MEMONGO_CONTRACT_VERSION = "2.1.0"
 export const MEMONGO_CONTRACT_SHA256 =
-	"01680e7ba03674ae06c899856d7521e95e66d5d1be465f172080907dc29cb8bc"
+	"bb1cb9fdd3eaa49699925980c775737d994fbba8774977c080ece7586a5d835f"
 
 export type MemongoRuntimeConfig = Omit<
 	MemongoHttpClientOptions,
@@ -87,6 +87,7 @@ export function resolveMemongoRuntimeConfig(
 			0,
 		),
 		allowInsecureLocal: env.MEMONGO_ALLOW_INSECURE_LOCAL === "1",
+		allowInsecureHttp: env.MEMONGO_ALLOW_INSECURE_HTTP === "1",
 		readinessControlLanes: readinessControlLanes(env, controlApiKey),
 	}
 }

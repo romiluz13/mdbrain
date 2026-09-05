@@ -1,0 +1,554 @@
+{
+	"schemaVersion": 1,
+	"capturedAt": "2026-09-04T23:06:25.004Z",
+	"source": "configured Memongo endpoint",
+	"transport": {
+		"protocol": "http:",
+		"loopback": true,
+		"redirectPolicy": "manual-reject"
+	},
+	"health": {
+		"status": 200,
+		"ok": true
+	},
+	"readiness": {
+		"status": 200,
+		"ok": true
+	},
+	"openapi": {
+		"status": 200,
+		"format": "3.0.3",
+		"version": "2.1.0",
+		"rawSha256": "c8706d7506c0de8a2551dac87b778a344e8df77284af7218e6b3e771585ec336",
+		"canonicalSha256": "bb1cb9fdd3eaa49699925980c775737d994fbba8774977c080ece7586a5d835f",
+		"pathCount": 48
+	},
+	"routes": [
+		{
+			"method": "GET",
+			"path": "/health",
+			"summary": "Health check",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/openapi.json",
+			"summary": "OpenAPI document",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/search",
+			"summary": "Search memory",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/search-detailed",
+			"summary": "Advanced search with CRAG corrective retrieval, MMR diversity, constraint relaxation, and multi-source fusion",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/recall-conversation",
+			"summary": "Recall prior conversation events by content, session, role, and exact time range",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/import/conversations",
+			"summary": "Import conversation history through the canonical writeConversationEvent() pipeline",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/search-kb",
+			"summary": "Search imported knowledge base documents",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/hydrate-active-slate",
+			"summary": "Hydrate a tiny active-memory slate for recall-heavy turns and debugging surfaces",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/discovery-projection",
+			"summary": "Build a rebuildable discovery projection such as an entity brief, topic brief, what-changed brief, or contradiction report",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/context-bundle",
+			"summary": "Build a prompt-ready context bundle from active memory, durable evidence, summaries, and recent events",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/state",
+			"summary": "Get the unified state family (profile, blocks, bundle)",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/read-file",
+			"summary": "Read memory file or structured path",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/lifecycle/get",
+			"summary": "Fetch the current lifecycle item for a stable handle",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"404",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/lifecycle/update",
+			"summary": "Update a lifecycle item using a family-aware patch",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"202",
+				"400",
+				"404",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/lifecycle/delete",
+			"summary": "Delete a lifecycle item using invalidate-with-history semantics",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"404",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/lifecycle/history",
+			"summary": "List lifecycle revision history for a stable handle",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"404",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/procedures/outcome",
+			"summary": "Record a success or failure outcome on a procedure using its stable handle",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"404",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/memory/feedback",
+			"summary": "Apply structured memory feedback using stable handles without bypassing revision history",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"202",
+				"400",
+				"404",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/add",
+			"summary": "Append a user message to conversational memory",
+			"idempotencyHeader": true,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/write-event",
+			"summary": "Write conversation event (any role)",
+			"idempotencyHeader": true,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/write-events",
+			"summary": "Write a batch of conversation events (P3.9) with per-item receipts",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/extract",
+			"summary": "Schedule background extraction for one canonical event",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"202",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/write-structured",
+			"summary": "Structured memory write",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"202",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/write-procedure",
+			"summary": "Upsert procedure",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/profile",
+			"summary": "Synthesize a profile for a scope",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/status",
+			"summary": "Memory provider status",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/status/detailed",
+			"summary": "Detailed v2 status",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/stats",
+			"summary": "Collection stats",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/sync",
+			"summary": "Sync workspace files to MongoDB",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/probes/embedding",
+			"summary": "Probe embedding availability",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/probes/vector",
+			"summary": "Probe vector search availability",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/admin/relevance/explain",
+			"summary": "Relevance explain (diagnostic)",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/admin/relevance/report",
+			"summary": "Relevance report",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/admin/relevance/sample-rate",
+			"summary": "Relevance sampling state",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/admin/access-trends",
+			"summary": "Rolling 7-day access trends from the access_events time series collection",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/admin/traces",
+			"summary": "List recent recall traces",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/admin/traces/{traceId}",
+			"summary": "Get one recall trace by traceId",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"404",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/admin/erase",
+			"summary": "Irreversibly erase every collection entry for one agent (tenant erasure)",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/admin/quarantine",
+			"summary": "List quarantined memories awaiting review (oldest first)",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/admin/quarantine/promote",
+			"summary": "Overrule the injection classifier and write a quarantined memory as structured memory",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/admin/quarantine/reject",
+			"summary": "Discard a quarantined memory (kept as audit trail; only unreviewed entries expire)",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/admin/access-summaries",
+			"summary": "Aggregate access counts and last-access timestamps from the access_events time series collection",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/jobs",
+			"summary": "List background memory jobs",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"500"
+			]
+		},
+		{
+			"method": "GET",
+			"path": "/v1/jobs/{jobId}",
+			"summary": "Get one background memory job by jobId",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"404",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/chain-trace",
+			"summary": "Trace reasoning chain for a fact",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/novelty-scan",
+			"summary": "Scan for novel/surprising observations",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/consolidate",
+			"summary": "Run Dreamer consolidation — extract facts from events",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"400",
+				"500"
+			]
+		},
+		{
+			"method": "POST",
+			"path": "/v1/self-edit",
+			"summary": "Directly edit a core memory block (user/persona/instructions)",
+			"idempotencyHeader": false,
+			"responseStatuses": [
+				"200",
+				"202",
+				"400",
+				"422",
+				"500"
+			]
+		}
+	]
+}

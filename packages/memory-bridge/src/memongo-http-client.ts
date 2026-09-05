@@ -44,6 +44,7 @@ export type MemongoHttpClientOptions = {
 	compatibilityTtlMs?: number
 	timeoutMs?: number
 	allowInsecureLocal?: boolean
+	allowInsecureHttp?: boolean
 	fetchImpl?: typeof fetch
 }
 
@@ -95,7 +96,11 @@ function canonicalize(value: JsonValue): JsonValue {
 	return value
 }
 
-function normalizedBaseUrl(raw: string, allowInsecureLocal: boolean): URL {
+function normalizedBaseUrl(
+	raw: string,
+	allowInsecureLocal: boolean,
+	allowInsecureHttp: boolean,
+): URL {
 	let url: URL
 	try {
 		url = new URL(raw)
@@ -122,8 +127,9 @@ function normalizedBaseUrl(raw: string, allowInsecureLocal: boolean): URL {
 		url.hostname === "[::1]" ||
 		url.hostname === "::1"
 	if (url.protocol === "http:" && allowInsecureLocal && isLoopback) return url
+	if (url.protocol === "http:" && allowInsecureHttp) return url
 	throw new MemongoHttpError(
-		"Memongo requires HTTPS; plain HTTP is allowed only for explicit loopback development",
+		"Memongo requires HTTPS; plain HTTP is allowed only for explicit loopback development (MEMONGO_ALLOW_INSECURE_LOCAL=1) or an explicit opt-in for isolated private networks (MEMONGO_ALLOW_INSECURE_HTTP=1)",
 		"VALIDATION",
 		false,
 		"not-applied",
@@ -253,6 +259,7 @@ export class MemongoHttpClient {
 		this.#baseUrl = normalizedBaseUrl(
 			options.baseUrl,
 			options.allowInsecureLocal ?? false,
+			options.allowInsecureHttp ?? false,
 		)
 		this.#tenantApiKey = options.tenantApiKey.trim()
 		this.#controlApiKey = options.controlApiKey?.trim() || undefined

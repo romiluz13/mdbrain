@@ -37,3 +37,55 @@ jobs:
 
       - name: Test
         run: bun run test
+
+  bundle-smoke:
+    name: Compose bundle smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # mdbrain and memongo are checked out as siblings so that the compose
+      # memongo build context (../../memongo relative to docker/) resolves.
+      # The stack itself enforces the contract pin (exact version + canonical
+      # sha match in the memory bridge): if memongo main drifts from the
+      # pinned contract, /ready fails closed and this job fails loudly.
+      - name: Checkout mdbrain
+        uses: actions/checkout@v7
+        with:
+          path: mdbrain
+
+      - name: Checkout memongo (sibling)
+        uses: actions/checkout@v7
+        with:
+          repository: romiluz13/Memongo
+          path: memongo
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.5
+
+      - name: Install dependencies (for scripts/compose-smoke.ts)
+        run: |
+          cd mdbrain
+          bun install --frozen-lockfile
+
+      - name: Build bundle images
+        run: |
+          cd mdbrain
+          docker compose -f docker/compose.full.yml build
+
+      - name: Boot the full stack
+        run: |
+          cd mdbrain
+          docker compose -f docker/compose.full.yml up -d
+
+      - name: Run compose-smoke journey
+        run: |
+          cd mdbrain
+          MDBRAIN_API_KEY=dev-mdbrain-key bun scripts/compose-smoke.ts
+
+      - name: Teardown
+        if: always()
+        run: |
+          cd mdbrain
+          docker compose -f docker/compose.full.yml down -v

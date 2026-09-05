@@ -35,6 +35,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.0",
+		"@mdbrain/client": "workspace:*",
 		"@mdbrain/wiki-engine": "workspace:*",
 		"fast-check": "^4.8.0",
 		"mongodb": "^7.0.0",

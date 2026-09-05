@@ -6,6 +6,7 @@
       "name": "mdbrian",
       "devDependencies": {
         "@biomejs/biome": "^2.4.0",
+        "@mdbrain/client": "workspace:*",
         "@mdbrain/wiki-engine": "workspace:*",
         "fast-check": "^4.8.0",
         "mongodb": "^7.0.0",
@@ -60,6 +61,7 @@
         "next": "^15.1.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
+        "typescript": "^5.8.0",
       },
       "devDependencies": {
         "@axe-core/playwright": "^4.13.0",
@@ -69,7 +71,6 @@
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.2.4",
         "@vitejs/plugin-react": "^6.1.0",
-        "typescript": "^5.8.0",
         "vitest": "^4.1.0",
         "wrangler": "^4.42.0",
       },

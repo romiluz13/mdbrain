@@ -1,0 +1,94 @@
+# One-command full stack: MongoDB + Atlas Search → memongo → mdbrain-api → web console.
+#
+# Usage (from repo root):
+#   docker compose -f docker/compose.full.yml up -d
+#   open http://127.0.0.1:3040
+#
+# memongo builds from a sibling checkout (../../memongo relative to this
+# file — clone mdbrain and memongo into the same parent directory) until the
+# image is published to ghcr.io/romiluz13/memongo; once published, set
+# MEMONGO_IMAGE (e.g. ghcr.io/romiluz13/memongo:2.0) and the build clause is
+# skipped only if you also pass --no-build with a prebuilt image; simplest
+# is to leave MEMONGO_IMAGE pointing at the local tag.
+#
+# Security: default keys are development placeholders and every host port is
+# bound to loopback. Set MDBRAIN_API_KEY and MEMONGO_API_KEY to real secrets
+# before exposing ports beyond localhost. VOYAGE_API_KEY (Atlas model API
+# key, al-... prefix) is optional and enables auto-embeddings / vector
+# search lanes; without it the stack boots degraded (text search only).
+
+services:
+  mongodb:
+    image: mongodb/mongodb-atlas-local:preview
+    container_name: mdbrain-full-mongodb
+    environment:
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
+      - MONGODB_ATLAS_TELEMETRY_ENABLE=false
+    volumes:
+      - mdbrain_full_mongo_data:/data/db
+      - mdbrain_full_mongo_config:/data/configdb
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/runner", "healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  memongo:
+    build:
+      context: ../../memongo
+    image: ${MEMONGO_IMAGE:-memongo-api:local}
+    environment:
+      MEMONGO_API_HOST: 0.0.0.0
+      MEMONGO_MONGODB_URI: mongodb://mongodb:27017
+      MEMONGO_API_KEY: ${MEMONGO_API_KEY:-dev-memongo-key}
+      MEMONGO_ENRICHMENT_BASE_URL: ${MEMONGO_ENRICHMENT_BASE_URL:-}
+      MEMONGO_ENRICHMENT_MODEL: ${MEMONGO_ENRICHMENT_MODEL:-}
+      MEMONGO_ENRICHMENT_PROVIDER: ${MEMONGO_ENRICHMENT_PROVIDER:-}
+    ports:
+      # Loopback-only, for contract capture and debugging; pick a port that
+      # does not collide with a local memongo dev server (3847).
+      - "127.0.0.1:${MEMONGO_HOST_PORT:-3848}:3847"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  mdbrain-api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    image: mdbrain-api:local
+    environment:
+      MDBRAIN_API_HOST: 0.0.0.0
+      MDBRAIN_WIKI_MONGODB_URI: mongodb://mongodb:27017
+      MEMONGO_API_URL: http://memongo:3847
+      # Plain HTTP to the memongo service name (non-loopback) requires this
+      # explicit opt-in; traffic never leaves the isolated compose network.
+      MEMONGO_ALLOW_INSECURE_HTTP: "1"
+      MEMONGO_API_KEY: ${MEMONGO_API_KEY:-dev-memongo-key}
+      MDBRAIN_API_KEY: ${MDBRAIN_API_KEY:-dev-mdbrain-key}
+      MDBRAIN_API_CORS_ORIGINS: http://localhost:3040,http://127.0.0.1:3040
+    ports:
+      - "127.0.0.1:${MDBRAIN_API_PORT:-3847}:3847"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      memongo:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_MDBRAIN_API_URL: ${NEXT_PUBLIC_MDBRAIN_API_URL:-http://127.0.0.1:3847}
+    image: mdbrain-web:local
+    ports:
+      - "127.0.0.1:${MDBRAIN_WEB_PORT:-3040}:3040"
+    depends_on:
+      mdbrain-api:
+        condition: service_healthy
+
+volumes:
+  mdbrain_full_mongo_data: {}
+  mdbrain_full_mongo_config: {}

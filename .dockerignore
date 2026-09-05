@@ -1,0 +1,18 @@
+# Container build context: only what the API and web images need.
+# Workspaces (apps/*, packages/*) must stay intact for lockfile resolution.
+node_modules
+**/node_modules
+**/coverage
+**/test-results
+.git
+.factory
+.github
+docs
+droid-wiki
+docker
+scripts
+apps/web/e2e
+apps/web/.next
+# Tests are inert at runtime.
+**/*.test.ts
+**/*.test.tsx
