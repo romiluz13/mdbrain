@@ -1545,6 +1545,33 @@ describe("createApp", () => {
 		)
 	})
 
+	it("resolves the canonical agent scopeRef when none is provided", async () => {
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": "write-canonical-scope-1",
+			},
+			body: JSON.stringify({
+				role: "user",
+				body: "unscoped agent memory",
+				agentId: "codex",
+				idempotencyKey: "write-canonical-scope-1",
+			}),
+		})
+
+		expect(res.status).toBe(200)
+		expect(
+			bridgeMocks.mdbrainBridgeWriteConversationEvent,
+		).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: "codex",
+				scope: "agent",
+				scopeRef: "agent:codex",
+			}),
+		)
+	})
+
 	it("accepts explicit receipt-gated wiki promotion on a memory write", async () => {
 		const res = await createApp().request("/v1/write-event", {
 			method: "POST",

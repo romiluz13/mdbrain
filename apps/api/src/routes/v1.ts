@@ -327,7 +327,15 @@ function resolveWriteIdentity(
 	}
 	const agentId = authorized.agentId ?? bodyAgentId ?? "default"
 	const scope = (authorized.scope ?? bodyScope ?? "agent") as ApiScope
-	const scopeRef = authorized.scopeRef ?? bodyScopeRef ?? agentId
+	// Canonical identity rule (mirrors memongo resolveScopeIdentity): an
+	// implicit agent-scope write must use the same `agent:<id>` ref that an
+	// unscoped search resolves to. A bare agentId here lands writes in a
+	// scope no read path ever queries (writes are stored verbatim, reads
+	// resolve the prefixed form), silently breaking recall.
+	const scopeRef =
+		authorized.scopeRef ??
+		bodyScopeRef ??
+		(scope === "agent" ? `agent:${agentId}` : agentId)
 	return { ok: true, identity: { agentId, scope, scopeRef } }
 }
 
