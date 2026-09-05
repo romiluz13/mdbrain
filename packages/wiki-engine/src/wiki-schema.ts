@@ -747,7 +747,14 @@ export async function ensureWikiStandardIndexes(
 		{ key: { entityId: 1 }, name: "entityId", sparse: true },
 		{ key: { okfConceptId: 1 }, name: "okfConceptId", sparse: true },
 		{ key: { okfBundleId: 1 }, name: "okfBundleId", sparse: true },
-		{ key: { scope: 1, scopeRef: 1 }, name: "scope_scopeRef" },
+		// Covers list queries filtered by scope/scopeRef and sorted by
+		// updatedAt (descending) — the sort was previously an in-memory
+		// SORT stage once result sets grew. Replaces the strict-prefix
+		// {scope, scopeRef} index (house precedent: P3.8 prefix retirement).
+		{
+			key: { scope: 1, scopeRef: 1, updatedAt: -1 },
+			name: "scope_scopeRef_updatedAt",
+		},
 		{ key: { trustTier: 1 }, name: "trustTier" },
 		{ key: { state: 1 }, name: "state" },
 		{ key: { freshness: 1 }, name: "freshness" },
@@ -758,6 +765,14 @@ export async function ensureWikiStandardIndexes(
 		{ key: { lastMaintainedAt: 1 }, name: "lastMaintainedAt", sparse: true },
 	]
 	await coll.createIndexes(indexes)
+	// Retire the strict-prefix {scope, scopeRef} index superseded by
+	// scope_scopeRef_updatedAt above (house precedent: P3.8 prefix
+	// retirement). Guarded — absent on fresh databases.
+	try {
+		await coll.dropIndex("scope_scopeRef")
+	} catch {
+		// Index may not exist — safe to ignore.
+	}
 	log.info(`ensured standard indexes on ${coll.collectionName}`)
 
 	const revisionsColl = wikiRevisionsCollection(db, prefix)

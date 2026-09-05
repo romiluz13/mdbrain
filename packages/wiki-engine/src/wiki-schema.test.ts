@@ -196,7 +196,7 @@ describe("ensureWikiStandardIndexes", () => {
 			"entityId",
 			"okfConceptId",
 			"okfBundleId",
-			"scope_scopeRef",
+			"scope_scopeRef_updatedAt",
 			"trustTier",
 			"state",
 			"freshness",

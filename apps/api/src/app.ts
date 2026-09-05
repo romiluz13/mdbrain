@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono"
 import { cors } from "hono/cors"
+import { bodyLimit } from "hono/body-limit"
 import type { MemoryScope } from "@mdbrain/lib"
 import { mdbrainBridgeCheckReadiness } from "@mdbrain/memory-bridge"
 import type { ApiEnvironment, AuthorizedRequestScope } from "./api-context.js"
@@ -336,6 +337,17 @@ export function createApp(): Hono<ApiEnvironment> {
 				: {},
 		),
 	)
+
+	// Request body size cap (413 on oversized payloads). The rate limiter
+	// bounds request frequency, not payload size — this closes that gap.
+	// Configure via MDBRAIN_API_MAX_BODY_BYTES (default 2 MiB). Set 0 to
+	// disable.
+	const maxBodyBytes = Number(
+		process.env.MDBRAIN_API_MAX_BODY_BYTES ?? 2 * 1024 * 1024,
+	)
+	if (maxBodyBytes > 0) {
+		app.use("/v1/*", bodyLimit({ maxSize: maxBodyBytes }))
+	}
 
 	app.use("/v1/*", async (c, next) => {
 		if (c.req.method !== "GET" && c.req.method !== "HEAD") {
