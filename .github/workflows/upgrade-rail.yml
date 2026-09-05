@@ -1,0 +1,166 @@
+# Upgrade rail: nightly drift gate between mdbrain's exact contract pin
+# (packages/memory-bridge/src/memongo-runtime.ts) and what memongo main
+# actually serves.
+#
+# Conformant (version + canonical sha equal the pin): green, nothing to do.
+# Drift to a NEW version label: recapture contract evidence, move the pin,
+# and open/update a draft pin-bump PR on the automation-owned branch
+# rail/memongo-pin-bump. The PR's own CI run is the conformance gate: the
+# bundle-smoke job boots memongo main against the re-pinned bridge and the
+# full suite must pass before the PR is reviewable.
+# Drift under an EXISTING version label (same label, different sha): the
+# evidence recapture refuses to overwrite, the job fails loudly, and no PR
+# is opened — a relabeled contract is a memongo release-process violation
+# that needs a human, not an automation.
+
+name: Upgrade rail
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  drift-check:
+    name: Memongo pin drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Same sibling layout as the CI bundle-smoke job so the compose
+      # memongo build context (../../memongo relative to docker/) resolves.
+      - name: Checkout mdbrain
+        uses: actions/checkout@v7
+        with:
+          path: mdbrain
+
+      - name: Checkout memongo (sibling, main)
+        uses: actions/checkout@v7
+        with:
+          repository: romiluz13/Memongo
+          ref: main
+          path: memongo
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.5
+
+      - name: Install dependencies
+        run: |
+          cd mdbrain
+          bun install --frozen-lockfile
+
+      - name: Build memongo image
+        run: |
+          cd mdbrain
+          docker compose -f docker/compose.full.yml build memongo
+
+      - name: Boot mongodb + memongo only
+        run: |
+          cd mdbrain
+          docker compose -f docker/compose.full.yml up -d mongodb memongo
+
+      - name: Capture served contract (scratch)
+        run: |
+          cd mdbrain
+          mkdir -p ../pin-scratch
+          cd ../pin-scratch
+          MEMONGO_API_URL=http://127.0.0.1:3848 \
+            bun ../mdbrain/scripts/capture-memongo-contract.ts
+
+      - name: Compare served contract against the pin
+        id: pin
+        working-directory: mdbrain
+        run: |
+          capture=$(find ../pin-scratch -name capture.json | head -1)
+          if [ -z "$capture" ]; then
+            echo "no capture found"; exit 1
+          fi
+          set +e
+          bun scripts/check-memongo-pin.ts "$capture" | tee pin-report.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "status=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Fail on ambiguity or capture error
+        if: steps.pin.outputs.status != '0' && steps.pin.outputs.status != '3'
+        run: |
+          echo "Pin check did not produce a usable verdict (status ${{ steps.pin.outputs.status }})."
+          exit 1
+
+      - name: Recapture contract evidence into the repo
+        if: steps.pin.outputs.status == '3'
+        working-directory: mdbrain
+        run: |
+          MEMONGO_API_URL=http://127.0.0.1:3848 \
+            bun scripts/capture-memongo-contract.ts
+          # A same-label-different-sha drift lands here: the capture script
+          # refuses to overwrite the committed evidence and this step fails.
+
+      - name: Move the pin
+        if: steps.pin.outputs.status == '3'
+        working-directory: mdbrain
+        run: |
+          report=$(cat pin-report.txt)
+          version=$(printf '%s' "$report" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)
+          sha=$(printf '%s' "$report" | sed -n 's/.*"canonicalSha256":"\([^"]*\)".*/\1/p' | head -1)
+          if [ -z "$version" ] || [ -z "$sha" ]; then
+            echo "could not parse drift report"; cat pin-report.txt; exit 1
+          fi
+          echo "PIN_VERSION=$version" >> "$GITHUB_ENV"
+          echo "PIN_SHA12=${sha:0:12}" >> "$GITHUB_ENV"
+          bun scripts/bump-memongo-pin.ts "$version" "$sha"
+
+      - name: Open or update the pin-bump PR
+        if: steps.pin.outputs.status == '3'
+        working-directory: mdbrain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "mdbrain-upgrade-rail"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout -B rail/memongo-pin-bump
+          git add docs/contracts/memongo packages/memory-bridge/src/memongo-runtime.ts
+          if git diff --cached --quiet; then
+            echo "pin already at ${PIN_VERSION}; nothing to commit"
+          else
+            git commit -m "chore(rail): pin memongo ${PIN_VERSION} (${PIN_SHA12})"
+            # Force is safe: rail/memongo-pin-bump is automation-owned and
+            # rebased from the default branch on every nightly run.
+            git push -f origin rail/memongo-pin-bump
+          fi
+          body=$(cat <<'EOF'
+          Automated pin-bump from the nightly upgrade rail: memongo main
+          drifted from the pinned contract.
+
+          - Evidence recaptured under docs/contracts/memongo/<version>/
+          - MEMONGO_CONTRACT_VERSION / MEMONGO_CONTRACT_SHA256 moved in
+            packages/memory-bridge/src/memongo-runtime.ts
+
+          This PR is the conformance gate: CI boots memongo main against the
+          re-pinned bridge (bundle-smoke) and runs the full suite. Merge only
+          if both are green. Do not edit the pin by hand; rerun the rail
+          (workflow_dispatch) instead.
+          EOF
+          )
+          if gh pr view rail/memongo-pin-bump --json state -q .state 2>/dev/null | grep -q OPEN; then
+            gh pr comment rail/memongo-pin-bump --body "Rail re-ran: pin now at ${PIN_VERSION} (${PIN_SHA12})."
+          else
+            gh pr create \
+              --draft \
+              --base main \
+              --head rail/memongo-pin-bump \
+              --title "chore(rail): pin memongo ${PIN_VERSION} (${PIN_SHA12})" \
+              --body "$body"
+          fi
+
+      - name: Teardown
+        if: always()
+        run: |
+          cd mdbrain
+          docker compose -f docker/compose.full.yml down -v
