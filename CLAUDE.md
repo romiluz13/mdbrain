@@ -58,20 +58,6 @@ mdbrain/
 - Follow concise, action-oriented commit messages (e.g., `engine: add graph expansion`).
 - Group related changes; avoid bundling unrelated refactors.
 
-## Agent skills
-
-### Issue tracker
-
-Issues and specs are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Use the default triage roles and labels. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Use a multi-context layout rooted at `CONTEXT-MAP.md`. See `docs/agents/domain.md`.
-
 ## Security
 
 - Never commit secrets. Use environment variables (`MDBRAIN_WIKI_MONGODB_URI`, `MEMONGO_API_KEY`, `MDBRAIN_API_KEY`, etc.).

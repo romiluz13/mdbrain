@@ -52,6 +52,9 @@ docs/audit/
 .scratch/
 docs/research/
 
+# Generated wiki baseline (CI uploads to GitHub Wiki, never tracked)
+droid-wiki/
+
 # Pi subagent scratch
 .pi-subagents/
 .pi/

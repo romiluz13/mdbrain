@@ -9,8 +9,6 @@
 //   Layer 1 = remote memory and raw sources (Memongo)
 //   Layer 2 = wiki_pages (this module) — LLM-synthesized, browsable by humans + agents
 //   Layer 3 = page-kind schemas + maintenance rules + governance policies
-//
-// Design spec: docs/specs/2026-07-08-mdbrain-llm-wiki-design.md §4
 
 import type {
 	Collection,

@@ -30,8 +30,6 @@
 // MBrain internal wiki_pages schema is a strict SUPERSET of OKF. OKF is the
 // portable projection: export → import round-trips structure, but unexpressible
 // fields (embedding, backlinks, trustTier, permissions) stay in MongoDB.
-//
-// Design spec: docs/specs/2026-07-08-mdbrain-llm-wiki-design.md §5
 
 import fs from "node:fs"
 import fsp from "node:fs/promises"

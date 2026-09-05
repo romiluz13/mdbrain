@@ -72,7 +72,7 @@ jobs:
           --output-format stream-json
           --skip-permissions-unsafe
           --model "custom:CI-Model-0"
-          "/wiki Refresh the existing droid-wiki baseline. Upload to GitHub Wiki only. Skip Factory Cloud upload and video generation."
+          "/wiki Generate the wiki from the repository. Upload to GitHub Wiki only. Skip Factory Cloud upload and video generation."
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +87,7 @@ jobs:
           --skip-permissions-unsafe
           --model "${{ vars.DROID_MODEL || 'claude-sonnet-4-5-20250929' }}"
           --reasoning-effort off
-          "/wiki Refresh the existing droid-wiki baseline. Upload to GitHub Wiki only. Skip Factory Cloud upload and video generation."
+          "/wiki Generate the wiki from the repository. Upload to GitHub Wiki only. Skip Factory Cloud upload and video generation."
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
