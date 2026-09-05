@@ -24,7 +24,13 @@
 			"!coverage",
 			"!**/coverage",
 			"!docker",
-			"!**/docker"
+			"!**/docker",
+			"!.factory",
+			"!**/.factory",
+			"!tmp",
+			"!**/tmp",
+			"!docs/contracts",
+			"!**/docs/contracts"
 		]
 	},
 	"formatter": {
