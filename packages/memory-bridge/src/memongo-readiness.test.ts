@@ -38,6 +38,23 @@ function delayedResponse(response: Response, delayMs: number) {
 		})
 }
 
+// Never resolves on its own; only the caller's deadline can end it. Used
+// where a test must prove the deadline aborts an in-flight request —
+// unlike delayedResponse this cannot race the deadline on a slow runner.
+function pendingResponse(): (
+	_input: RequestInfo | URL,
+	init?: RequestInit,
+) => Promise<Response> {
+	return (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+		new Promise((_resolve, reject) => {
+			init?.signal?.addEventListener(
+				"abort",
+				() => reject(init.signal?.reason),
+				{ once: true },
+			)
+		})
+}
+
 describe("Memongo readiness", () => {
 	it("identifies invalid tenant credentials as a retrieval dependency failure", async () => {
 		const fetchImpl = vi
@@ -74,17 +91,18 @@ describe("Memongo readiness", () => {
 	})
 
 	it("bounds the complete non-mutating readiness sequence with one deadline", async () => {
+		// The compatibility fetch resolves immediately so no runner-speed
+		// race can abort it instead of the retrieval fetch; the retrieval
+		// fetch never resolves, so the shared 30ms deadline is provably
+		// what bounds the sequence.
 		const fetchImpl = vi
 			.fn<typeof fetch>()
-			.mockImplementationOnce(
-				delayedResponse(
-					new Response(openApiBody, {
-						headers: { "content-type": "application/json" },
-					}),
-					20,
-				),
+			.mockResolvedValueOnce(
+				new Response(openApiBody, {
+					headers: { "content-type": "application/json" },
+				}),
 			)
-			.mockImplementationOnce(delayedResponse(jsonResponse(readyState), 20))
+			.mockImplementationOnce(pendingResponse())
 		const gateway = new MemongoMemoryGateway(
 			new MemongoHttpClient({
 				baseUrl: "https://memongo.example.test",
