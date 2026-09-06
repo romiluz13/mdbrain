@@ -45,18 +45,32 @@ jobs:
     steps:
       # mdbrain and memongo are checked out as siblings so that the compose
       # memongo build context (../../memongo relative to docker/) resolves.
-      # The stack itself enforces the contract pin (exact version + canonical
-      # sha match in the memory bridge): if memongo main drifts from the
-      # pinned contract, /ready fails closed and this job fails loudly.
+      # memongo is checked out at MEMONGO_CONTRACT_SOURCE_REF — the exact
+      # commit recorded beside the contract pin in
+      # packages/memory-bridge/src/memongo-runtime.ts — so this job
+      # validates the bundle against the pinned contract deterministically.
+      # Drift on memongo main is the nightly upgrade rail's job to catch
+      # (as data, with a pin-bump PR), not this job's.
       - name: Checkout mdbrain
         uses: actions/checkout@v7
         with:
           path: mdbrain
 
-      - name: Checkout memongo (sibling)
+      - name: Resolve pinned Memongo ref
+        working-directory: mdbrain
+        run: |
+          ref=$(sed -n 's/^export const MEMONGO_CONTRACT_SOURCE_REF = "\([^"]*\)".*/\1/p' packages/memory-bridge/src/memongo-runtime.ts)
+          if [ -z "$ref" ]; then
+            echo "MEMONGO_CONTRACT_SOURCE_REF not found in packages/memory-bridge/src/memongo-runtime.ts"
+            exit 1
+          fi
+          echo "MEMONGO_REF=$ref" >> "$GITHUB_ENV"
+
+      - name: Checkout memongo (sibling, pinned)
         uses: actions/checkout@v7
         with:
           repository: romiluz13/Memongo
+          ref: ${{ env.MEMONGO_REF }}
           path: memongo
 
       - name: Setup Bun
@@ -69,6 +83,14 @@ jobs:
           cd mdbrain
           bun install --frozen-lockfile
 
+      # compose-smoke imports @mdbrain/client, whose entry point resolves
+      # to the package's built dist/ — build it (and its workspace deps)
+      # before running the journey.
+      - name: Build client SDK for compose-smoke
+        run: |
+          cd mdbrain
+          bunx turbo run build --filter '@mdbrain/client'
+
       - name: Build bundle images
         run: |
           cd mdbrain
@@ -80,9 +102,11 @@ jobs:
           docker compose -f docker/compose.full.yml up -d
 
       - name: Run compose-smoke journey
+        env:
+          MDBRAIN_API_KEY: dev-mdbrain-key
         run: |
           cd mdbrain
-          MDBRAIN_API_KEY=dev-mdbrain-key bun scripts/compose-smoke.ts
+          bun scripts/compose-smoke.ts
 
       - name: Teardown
         if: always()

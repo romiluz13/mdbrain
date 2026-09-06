@@ -167,6 +167,25 @@ function canonicalJson(value: unknown): string {
 		.join(",")}}`
 }
 
+/** The MongoDB node driver serializes JS `undefined` as `null` (BSON has no
+ *  undefined type by default), so a payload recorded with undefined-valued
+ *  optional keys round-trips out of the ledger in a different shape than
+ *  the one that was fingerprinted — every reconciliation replay would then
+ *  flag a payloadFingerprint conflict and the intent could never complete.
+ *  The ledger therefore persists the canonical (undefined-stripped) payload:
+ *  what is fingerprinted is exactly what is stored. */
+function stripUndefinedDeliveryPayload(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stripUndefinedDeliveryPayload)
+	if (value !== null && typeof value === "object") {
+		const out: Record<string, unknown> = {}
+		for (const [key, entry] of Object.entries(value)) {
+			if (entry !== undefined) out[key] = stripUndefinedDeliveryPayload(entry)
+		}
+		return out
+	}
+	return value
+}
+
 export function fingerprintMemoryDeliveryPayload(payload: unknown): string {
 	return createHash("sha256").update(canonicalJson(payload)).digest("hex")
 }
@@ -181,7 +200,11 @@ export async function recordMemoryDeliveryIntent(
 	conflict: boolean
 }> {
 	const collection = memoryDeliveryIntentsCollection(handle.db, handle.prefix)
-	const canonicalPayload = canonicalJson(params.payload)
+	const payload = stripUndefinedDeliveryPayload(params.payload) as Record<
+		string,
+		unknown
+	>
+	const canonicalPayload = canonicalJson(payload)
 	const payloadBytes = Buffer.byteLength(canonicalPayload, "utf8")
 	if (payloadBytes > MAX_MEMORY_DELIVERY_PAYLOAD_BYTES) {
 		throw new MemoryDeliveryPayloadTooLargeError(
@@ -189,7 +212,7 @@ export async function recordMemoryDeliveryIntent(
 			MAX_MEMORY_DELIVERY_PAYLOAD_BYTES,
 		)
 	}
-	const payloadFingerprint = fingerprintMemoryDeliveryPayload(params.payload)
+	const payloadFingerprint = fingerprintMemoryDeliveryPayload(payload)
 	const existing = (await collection.findOne(
 		{ operationId: params.operationId },
 		{ session },
@@ -257,7 +280,7 @@ export async function recordMemoryDeliveryIntent(
 		operation: params.operation,
 		idempotencyKey: params.idempotencyKey,
 		payloadFingerprint,
-		payload: params.payload,
+		payload,
 		principalSubjectId: params.principalSubjectId,
 		agentId: params.agentId,
 		scope: params.scope,

@@ -1,7 +1,16 @@
+# Explicit project name: without it, compose derives "docker" from this
+# file's directory and claims/removes unrelated containers in any other
+# project that happens to be named "docker" (orphan warnings, name
+# conflicts). "mdbrain-full" is unique to this bundle.
+name: mdbrain-full
+
 # One-command full stack: MongoDB + Atlas Search → memongo → mdbrain-api → web console.
+# This is the CANONICAL quickstart path (README "Quickstart").
 #
 # Usage (from repo root):
-#   docker compose -f docker/compose.full.yml up -d
+#   export VOYAGE_API_KEY=al-your-atlas-model-api-key   # see README "Model API key"
+#   docker compose -f docker/compose.full.yml up -d --wait --wait-timeout 180
+#   curl -fsS http://127.0.0.1:3847/ready
 #   open http://127.0.0.1:3040
 #
 # memongo builds from a sibling checkout (../../memongo relative to this
@@ -11,18 +20,36 @@
 # skipped only if you also pass --no-build with a prebuilt image; simplest
 # is to leave MEMONGO_IMAGE pointing at the local tag.
 #
+# VOYAGE_API_KEY: the canonical quickstart REQUIRES a real Atlas Model API
+# key (al-... prefix, cloud.mongodb.com → AI Models; see README) for the
+# auto-embed vector search lane. The variable stays OPTIONAL here
+# (deliberate, verified live on atlas-local:preview): CI boots this file
+# keyless, and a placeholder key is worse than none — an invalid key
+# registers the autoEmbed index but fails the query-embedding call, which
+# 503s the default hybrid search entirely, while a keyless boot degrades
+# cleanly (hybrid serves via the text lane inside $rankFusion). A keyless
+# boot is a DEGRADED mode: /ready reports 200 with
+# wiki.search.vector = "unavailable" (+ actionable detail) and the vector
+# lane does not serve. Set a real key for the full experience.
+#
 # Security: default keys are development placeholders and every host port is
 # bound to loopback. Set MDBRAIN_API_KEY and MEMONGO_API_KEY to real secrets
-# before exposing ports beyond localhost. VOYAGE_API_KEY (Atlas model API
-# key, al-... prefix) is optional and enables auto-embeddings / vector
-# search lanes; without it the stack boots degraded (text search only).
+# before exposing ports beyond localhost.
 
 services:
   mongodb:
+    # Mutable tag by design (dev quickstart, P8); resolved digest recorded
+    # 2026-09-06 for traceability:
+    #   mongodb/mongodb-atlas-local:preview
+    #     = sha256:adbbd514dc5028d7f6e2c7f1ded90685d7644624f96f9461ab570aa10e169b21
     image: mongodb/mongodb-atlas-local:preview
     container_name: mdbrain-full-mongodb
     environment:
       - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
+      # Direct VoyageAI keys (pa-...) need the provider endpoint override
+      # (README "Model API key"); default keeps mongot on the Atlas Model
+      # API route, matching the image's own default.
+      - EMBEDDING_PROVIDER_ENDPOINT=${EMBEDDING_PROVIDER_ENDPOINT:-https://ai.mongodb.com/v1/embeddings}
       - MONGODB_ATLAS_TELEMETRY_ENABLE=false
     volumes:
       - mdbrain_full_mongo_data:/data/db
@@ -65,6 +92,13 @@ services:
       # Plain HTTP to the memongo service name (non-loopback) requires this
       # explicit opt-in; traffic never leaves the isolated compose network.
       MEMONGO_ALLOW_INSECURE_HTTP: "1"
+      # Keyless boots pay a one-time ~60s memongo index-bootstrap wait on
+      # the FIRST memory write (vector indexes never become queryable
+      # without an embedding model, so the wait runs to its horizon). The
+      # bridge default (10s) would dead-letter that write before it lands;
+      # the bundle raises the deadline so the first write completes inline.
+      # Subsequent writes return in milliseconds.
+      MEMONGO_TIMEOUT_MS: "120000"
       MEMONGO_API_KEY: ${MEMONGO_API_KEY:-dev-memongo-key}
       MDBRAIN_API_KEY: ${MDBRAIN_API_KEY:-dev-mdbrain-key}
       MDBRAIN_API_CORS_ORIGINS: http://localhost:3040,http://127.0.0.1:3040

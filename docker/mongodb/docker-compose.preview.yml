@@ -1,5 +1,8 @@
-# docker-compose.preview.yml - Mdbrain one-command setup
-# Uses mongodb/mongodb-atlas-local:preview (the ONLY tag with auto-embeddings)
+# docker-compose.preview.yml — dev convenience: MongoDB + Atlas Search only.
+# NOT part of the canonical quickstart (that is docker/compose.full.yml);
+# use this when you run the API on the host against a local search-capable
+# MongoDB. Uses mongodb/mongodb-atlas-local:preview (the ONLY tag with
+# auto-embeddings).
 #
 # Usage:
 #   docker compose -f docker/mongodb/docker-compose.preview.yml up -d

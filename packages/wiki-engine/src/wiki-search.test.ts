@@ -670,12 +670,20 @@ describe("searchWikiPages with native rerank", () => {
 
 describe("probeWikiSearch", () => {
 	const TEXT_INDEX = WIKI_PAGES_SEARCH_INDEX_TARGETS.text.name
+	const VECTOR_INDEX = WIKI_PAGES_SEARCH_INDEX_TARGETS.vector.name
 
 	function probeColl(opts: {
 		indexes?: Array<{ name?: unknown }>
+		textIndexes?: Array<{ name?: unknown }>
+		vectorIndexes?: Array<{ name?: unknown }>
 		indexError?: Error
 		aggregate?: ReturnType<typeof vi.fn>
 	}): Collection {
+		const listCalls = [
+			opts.textIndexes ?? opts.indexes ?? [{ name: TEXT_INDEX }],
+			opts.vectorIndexes ?? opts.indexes ?? [{ name: VECTOR_INDEX }],
+		]
+		let listCall = 0
 		return {
 			collectionName: "test_wiki_pages",
 			listSearchIndexes: opts.indexError
@@ -683,7 +691,7 @@ describe("probeWikiSearch", () => {
 						toArray: async () => Promise.reject(opts.indexError),
 					}))
 				: vi.fn(() => ({
-						toArray: async () => opts.indexes ?? [{ name: TEXT_INDEX }],
+						toArray: async () => listCalls[listCall++ % listCalls.length],
 					})),
 			aggregate:
 				opts.aggregate ??
@@ -691,7 +699,7 @@ describe("probeWikiSearch", () => {
 		} as unknown as Collection
 	}
 
-	it("verifies the text index exists and answers a $search round-trip", async () => {
+	it("verifies both lanes and reports full capabilities when the key works", async () => {
 		const aggregate = vi.fn(() => ({
 			toArray: async () => [makeDoc("any", 1)],
 		}))
@@ -699,12 +707,23 @@ describe("probeWikiSearch", () => {
 			collection: vi.fn(() => probeColl({ aggregate })),
 		} as unknown as Db
 		const h: WikiDbHandle = { db, prefix: "test_" }
-		const matched = await probeWikiSearch(h)
-		expect(matched).toBe(1)
-		// Round-trip pipeline: $search on the text index, $limit 1.
-		const call = aggregate.mock.calls[0][0] as Document[]
-		expect(call[0].$search.index).toBe(TEXT_INDEX)
-		expect(call.find((s) => "$limit" in s)?.$limit).toBe(1)
+		const caps = await probeWikiSearch(h)
+		expect(caps).toEqual({
+			text: "ready",
+			vector: "ready",
+			autoEmbed: "ready",
+		})
+		// Two round-trips: $search on the text index, then $vectorSearch on
+		// the vector index (auto-embedded query through the model API).
+		expect(aggregate).toHaveBeenCalledTimes(2)
+		const searchPipeline = aggregate.mock.calls[0][0] as Document[]
+		const vectorPipeline = aggregate.mock.calls[1][0] as Document[]
+		expect(searchPipeline[0].$search.index).toBe(TEXT_INDEX)
+		expect(searchPipeline.find((s) => "$limit" in s)?.$limit).toBe(1)
+		expect(vectorPipeline[0].$vectorSearch.index).toBe(VECTOR_INDEX)
+		expect(vectorPipeline[0].$vectorSearch.query).toEqual({
+			text: "readiness probe",
+		})
 	})
 
 	it("throws when the search index was never created (misconfiguration)", async () => {
@@ -734,27 +753,104 @@ describe("probeWikiSearch", () => {
 		)
 	})
 
-	it("throws when the probe $search hangs (client-side bound)", async () => {
-		// Verified live: $search can hang indefinitely when mongot dies
-		// mid-connection — the probe must cut it off, not block /ready.
-		vi.useFakeTimers()
-		try {
-			const aggregate = vi.fn(() =>
-				// Never resolves — simulates the hung $search.
-				({ toArray: () => new Promise<never>(() => {}) }),
-			)
-			const db = {
-				collection: vi.fn(() => probeColl({ aggregate })),
-			} as unknown as Db
-			const h: WikiDbHandle = { db, prefix: "test_" }
-			const probe = probeWikiSearch(h)
-			const expectation = expect(probe).rejects.toBeInstanceOf(
-				WikiSearchUnavailableError,
-			)
-			await vi.advanceTimersByTimeAsync(5000)
-			await expectation
-		} finally {
-			vi.useRealTimers()
+	it("passes the driver-side deadline to every probe operation", async () => {
+		// A Promise.race bound returns while leaving the hung command
+		// running on the connection pool; the driver's per-operation
+		// timeoutMS deadline actually cancels it. Every aggregate call must
+		// carry the deadline.
+		const aggregate = vi.fn(() => ({
+			toArray: async () => [makeDoc("any", 1)],
+		}))
+		const db = {
+			collection: vi.fn(() => probeColl({ aggregate })),
+		} as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		await probeWikiSearch(h)
+		expect(aggregate.mock.calls.length).toBeGreaterThanOrEqual(2)
+		for (const call of aggregate.mock.calls) {
+			expect(call[1]).toEqual({ timeoutMS: 5000 })
 		}
+	})
+
+	it("throws when the probe $search hits the driver deadline (mongot hang)", async () => {
+		// Verified live: $search can hang indefinitely when mongot dies
+		// mid-connection — the driver's timeoutMS deadline cancels the hung
+		// operation and surfaces a timeout error, which the probe turns into
+		// a fail-closed readiness failure instead of blocking /ready.
+		const aggregate = vi.fn(() => ({
+			toArray: async () => {
+				throw new Error("operation time out")
+			},
+		}))
+		const db = {
+			collection: vi.fn(() => probeColl({ aggregate })),
+		} as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		await expect(probeWikiSearch(h)).rejects.toBeInstanceOf(
+			WikiSearchUnavailableError,
+		)
+	})
+
+	it("reports vector/autoEmbed unavailable when the index is missing (keyless boot)", async () => {
+		// Verified live on atlas-local:preview: without an Atlas Model API
+		// key the autoEmbed index is never created (model not registered),
+		// while the text index serves normally — /ready stays 200.
+		const db = {
+			collection: vi.fn(() => probeColl({ vectorIndexes: [] })),
+		} as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const caps = await probeWikiSearch(h)
+		expect(caps.text).toBe("ready")
+		expect(caps.vector).toBe("unavailable")
+		expect(caps.autoEmbed).toBe("unavailable")
+		expect(caps.detail).toContain("VOYAGE_API_KEY")
+	})
+
+	it("reports vector/autoEmbed unavailable when the probe query is rejected (invalid key)", async () => {
+		// Verified live: with an invalid key the vector index IS created (the
+		// model registers from any key string) but the query-embedding call
+		// fails at search time — index existence alone would lie "ready".
+		let aggregateCall = 0
+		const aggregate = vi.fn(() => ({
+			toArray: async () => {
+				aggregateCall++
+				if (aggregateCall === 1) return [makeDoc("any", 1)]
+				throw new Error("Cannot generate query embedding: unauthorized")
+			},
+		}))
+		const db = {
+			collection: vi.fn(() => probeColl({ aggregate })),
+		} as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const caps = await probeWikiSearch(h)
+		expect(caps.text).toBe("ready")
+		expect(caps.vector).toBe("unavailable")
+		expect(caps.autoEmbed).toBe("unavailable")
+		expect(caps.detail).toContain("VOYAGE_API_KEY")
+		expect(caps.detail).toContain("unauthorized")
+	})
+
+	it("bounds a hung vector probe instead of blocking readiness", async () => {
+		// The vector lane hangs (mongot/model-API stall); the driver's
+		// timeoutMS deadline cancels it and the lane degrades to
+		// "unavailable" with the timeout as the diagnostic cause.
+		let aggregateCall = 0
+		const aggregate = vi.fn(() => ({
+			toArray: async () => {
+				aggregateCall++
+				// Text lane answers; vector lane times out.
+				if (aggregateCall === 1) return [makeDoc("any", 1)]
+				throw new Error("operation time out")
+			},
+		}))
+		const db = {
+			collection: vi.fn(() => probeColl({ aggregate })),
+		} as unknown as Db
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const caps = await probeWikiSearch(h)
+		expect(caps.text).toBe("ready")
+		expect(caps.vector).toBe("unavailable")
+		expect(caps.autoEmbed).toBe("unavailable")
+		expect(caps.detail).toContain("operation time out")
 	})
 })

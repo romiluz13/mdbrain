@@ -1,6 +1,11 @@
-# Wiki MongoDB only. Run `apps/api` on the host with
-# MDBRAIN_WIKI_MONGODB_URI pointing at a transaction-capable replica set.
-# Memongo is a separate HTTP dependency configured with MEMONGO_API_URL.
+# Transactions-only dev fixture: MongoDB 7 single-node replica set, NO
+# mongot / Atlas Search. /ready and /v1/wiki/search fail closed by design on
+# this stack (the search readiness probe cannot reach mongot) — use
+# docker/mongodb/docker-compose.preview.yml (MongoDB + Search) or the
+# canonical docker/compose.full.yml for working search. NOT part of the
+# canonical quickstart. Run `apps/api` on the host with
+# MDBRAIN_WIKI_MONGODB_URI pointing at the replica set; Memongo is a
+# separate HTTP dependency configured with MEMONGO_API_URL.
 services:
   mongodb:
     image: mongo:7

@@ -11,6 +11,7 @@
 import type { Document } from "mongodb"
 import {
 	wikiPagesCollection,
+	WIKI_AUTO_EMBED_MODEL,
 	WIKI_PAGES_SEARCH_INDEX_TARGETS,
 } from "./wiki-schema.js"
 import type { WikiDbHandle, WikiPageView } from "./wiki-bridge.js"
@@ -173,7 +174,7 @@ function buildVectorStage(
 	return {
 		index: WIKI_PAGES_SEARCH_INDEX_TARGETS.vector.name,
 		query: { text: params.query },
-		model: "voyage-4-large",
+		model: WIKI_AUTO_EMBED_MODEL,
 		path: "text",
 		numCandidates,
 		limit: cfg.maxResults * 4,

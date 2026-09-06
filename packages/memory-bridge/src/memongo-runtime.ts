@@ -12,6 +12,14 @@ import {
 export const MEMONGO_CONTRACT_VERSION = "2.1.0"
 export const MEMONGO_CONTRACT_SHA256 =
 	"bb1cb9fdd3eaa49699925980c775737d994fbba8774977c080ece7586a5d835f"
+// Full git ref (40-char SHA — actions/checkout and git fetch cannot resolve
+// abbreviated SHAs without local objects) of the Memongo commit verified to
+// serve exactly the contract pinned above (single source of truth: the CI
+// bundle-smoke checkout and the README quickstart both read it from here;
+// the upgrade rail moves it together with the pin). Drift on Memongo main
+// is the rail's job to catch, not the smoke's.
+export const MEMONGO_CONTRACT_SOURCE_REF =
+	"fa0f19db6267e86d41e909b42e3d2be1bb207a35"
 
 export type MemongoRuntimeConfig = Omit<
 	MemongoHttpClientOptions,

@@ -426,6 +426,37 @@ describe("memory ledger TTL configuration", () => {
 		)
 	})
 
+	it("scales the dispatch lease with the bridge deadline so mid-flight writes are never reclaimed", async () => {
+		const original = process.env.MEMONGO_TIMEOUT_MS
+		process.env.MEMONGO_TIMEOUT_MS = "120000"
+
+		try {
+			await deliverMemoryWrite({
+				...params,
+				dispatch: async () => ({ eventId: "event-1", chunkCreated: true }),
+			})
+
+			// Lease = max(30s floor, 2 × MEMONGO_TIMEOUT_MS + 10s margin): a cold
+			// bridge call performs up to two deadline-bounded round trips (the
+			// /openapi.json compatibility check + the write).
+			expect(mocks.beginMemoryDelivery).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.anything(),
+				expect.anything(),
+				3,
+				250_000,
+				5,
+				expect.any(Number),
+			)
+		} finally {
+			if (original === undefined) {
+				delete process.env.MEMONGO_TIMEOUT_MS
+			} else {
+				process.env.MEMONGO_TIMEOUT_MS = original
+			}
+		}
+	})
+
 	it("honors a positive day override", async () => {
 		process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS = "7"
 

@@ -841,6 +841,8 @@ export async function ensureWikiStandardIndexes(
 
 /** Search index definition for wiki_pages (vector + text). Kept here so the
  *  API/MCP layers and any migration tooling can reference one source of truth. */
+export const WIKI_AUTO_EMBED_MODEL = "voyage-4-large"
+
 export const WIKI_PAGES_SEARCH_INDEX_TARGETS = {
 	vector: {
 		name: "wiki_pages_vector",
@@ -854,7 +856,7 @@ export const WIKI_PAGES_SEARCH_INDEX_TARGETS = {
 					type: "autoEmbed",
 					modality: "text",
 					path: "text",
-					model: "voyage-4-large",
+					model: WIKI_AUTO_EMBED_MODEL,
 				},
 				// Pre-filter axes (scoped retrieval + governance).
 				{ type: "filter", path: "kind" },
@@ -892,6 +894,25 @@ export const WIKI_PAGES_SEARCH_INDEX_TARGETS = {
 	},
 }
 
+/** Per-index outcome of ensureWikiSearchIndexes (P6): callers (boot logs,
+ *  /ready diagnostics) can distinguish a keyless boot (vector failed to
+ *  register) from a mongot-less deployment (management unavailable). */
+export type WikiSearchIndexCreationStatus =
+	| "created"
+	| "already-present"
+	| "unavailable"
+	| "failed"
+
+export interface WikiSearchIndexCreationReport {
+	vector: { status: WikiSearchIndexCreationStatus; detail?: string }
+	text: { status: WikiSearchIndexCreationStatus; detail?: string }
+}
+
+/** Sentinel detail recorded when search index management is not supported
+ *  (plain Community Server, no mongot) — distinct from a creation failure. */
+export const WIKI_SEARCH_INDEX_CREATION_UNAVAILABLE =
+	"search index management unavailable (no mongot)"
+
 /**
  * Ensure vector + Atlas Search indexes on wiki_pages.
  *
@@ -899,19 +920,31 @@ export const WIKI_PAGES_SEARCH_INDEX_TARGETS = {
  * (Atlas, or Atlas Local Preview via docker). On a plain Community Server
  * without mongot, search index creation is a no-op (logged, not fatal) —
  * mirroring memory-engine's isSearchIndexManagementUnavailable handling.
+ *
+ * Returns a per-index creation report (P6). Keyless-boot case verified live
+ * on atlas-local:preview: the vector index creation FAILS with
+ * "CanonicalModel: voyage-4-large not registered yet" (mongot cannot
+ * register the model without an Atlas Model API key) while the text index
+ * creates normally — the report surfaces that split instead of only logging.
  */
 export async function ensureWikiSearchIndexes(
 	db: Db,
 	prefix: string,
-): Promise<void> {
+): Promise<WikiSearchIndexCreationReport> {
 	const coll = wikiPagesCollection(db, prefix)
 	const targets = WIKI_PAGES_SEARCH_INDEX_TARGETS
+	const report: WikiSearchIndexCreationReport = {
+		vector: { status: "failed" },
+		text: { status: "failed" },
+	}
 
-	for (const target of [targets.vector, targets.text]) {
+	for (const lane of ["vector", "text"] as const) {
+		const target = targets[lane]
 		try {
 			// Search index management API: list + create pattern.
 			const existing = await coll.listSearchIndexes(target.name).toArray()
 			if (existing.length > 0) {
+				report[lane] = { status: "already-present" }
 				continue
 			}
 			const description: SearchIndexDescription = {
@@ -923,13 +956,14 @@ export async function ensureWikiSearchIndexes(
 			log.info(
 				`created ${target.type} index ${target.name} on ${coll.collectionName}`,
 			)
+			report[lane] = { status: "created" }
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			// Search index management unavailable (no mongot) — not fatal.
 			// Match the memory-engine reference (isSearchIndexManagementUnavailable)
 			// plus fallback strings seen on Community Server.
 			if (
-				msg.includes("Search Index Management service") ||
+				msg.includes("Search Index Management") ||
 				msg.includes("Error connecting to Search Index Management service") ||
 				msg.includes("not supported") ||
 				msg.includes("searchIndexManagement") ||
@@ -939,13 +973,19 @@ export async function ensureWikiSearchIndexes(
 				log.info(
 					`search index management unavailable for ${target.name} (no mongot) — skipping`,
 				)
+				report[lane] = {
+					status: "unavailable",
+					detail: WIKI_SEARCH_INDEX_CREATION_UNAVAILABLE,
+				}
 				continue
 			}
 			log.warn(
 				`search index ${target.name} on ${coll.collectionName} failed: ${msg}`,
 			)
+			report[lane] = { status: "failed", detail: msg }
 		}
 	}
+	return report
 }
 
 // ---------------------------------------------------------------------------

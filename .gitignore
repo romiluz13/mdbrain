@@ -51,6 +51,7 @@ docs/audit/
 # Internal planning/research scratch (local-only, never publish)
 .scratch/
 docs/research/
+tmp/
 
 # Generated wiki baseline (CI uploads to GitHub Wiki, never tracked)
 droid-wiki/

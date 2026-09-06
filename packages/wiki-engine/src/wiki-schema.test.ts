@@ -9,6 +9,7 @@ import {
 	ensureWikiSearchIndexes,
 	ensureWikiSchema,
 	WIKI_PAGES_SEARCH_INDEX_TARGETS,
+	WIKI_SEARCH_INDEX_CREATION_UNAVAILABLE,
 	WIKI_PAGE_KIND_VALUES,
 	WIKI_SCOPE_VALUES,
 	WIKI_TRUST_TIER_VALUES,
@@ -277,7 +278,7 @@ describe("ensureWikiStandardIndexes", () => {
 describe("ensureWikiSearchIndexes", () => {
 	it("creates vector + text search indexes when absent", async () => {
 		const db = mockDb()
-		await ensureWikiSearchIndexes(db, "test_")
+		const report = await ensureWikiSearchIndexes(db, "test_")
 		const coll = wikiPagesCollection(db, "test_")
 		const createCalls = (
 			coll.createSearchIndex as unknown as ReturnType<typeof vi.fn>
@@ -286,6 +287,10 @@ describe("ensureWikiSearchIndexes", () => {
 		const created = createCalls.map((c: unknown[]) => c[0] as { type: string })
 		const types = created.map((d) => d.type).sort()
 		expect(types).toEqual(["search", "vectorSearch"])
+		expect(report).toEqual({
+			vector: { status: "created" },
+			text: { status: "created" },
+		})
 	})
 
 	it("is idempotent — skips indexes that already exist", async () => {
@@ -298,8 +303,12 @@ describe("ensureWikiSearchIndexes", () => {
 			.mockReturnValueOnce({
 				toArray: async () => [{ name: "wiki_pages_text" }],
 			})
-		await ensureWikiSearchIndexes(db, "test_")
+		const report = await ensureWikiSearchIndexes(db, "test_")
 		expect(coll.createSearchIndex).not.toHaveBeenCalled()
+		expect(report).toEqual({
+			vector: { status: "already-present" },
+			text: { status: "already-present" },
+		})
 	})
 
 	it("swallows search-index-management-unavailable (no mongot)", async () => {
@@ -308,7 +317,32 @@ describe("ensureWikiSearchIndexes", () => {
 		;(
 			coll.createSearchIndex as unknown as ReturnType<typeof vi.fn>
 		).mockRejectedValueOnce(new Error("no such command: searchIndexManagement"))
-		await expect(ensureWikiSearchIndexes(db, "test_")).resolves.toBeUndefined()
+		const report = await ensureWikiSearchIndexes(db, "test_")
+		// The vector lane (first in the loop) hit the unavailable management
+		// API; the text lane still created normally.
+		expect(report.vector.status).toBe("unavailable")
+		expect(report.vector.detail).toBe(WIKI_SEARCH_INDEX_CREATION_UNAVAILABLE)
+		expect(report.text.status).toBe("created")
+	})
+
+	it("reports a failed vector creation distinctly (keyless boot)", async () => {
+		// Verified live on atlas-local:preview: without an Atlas Model API key
+		// the vector index creation fails with "CanonicalModel ... not
+		// registered yet" while the text index creates normally — the report
+		// must surface that split (P6) instead of only logging it.
+		const db = mockDb()
+		const coll = wikiPagesCollection(db, "test_")
+		;(
+			coll.createSearchIndex as unknown as ReturnType<typeof vi.fn>
+		).mockRejectedValueOnce(
+			new Error(
+				"CanonicalModel: voyage-4-large not registered yet, supported models are: []",
+			),
+		)
+		const report = await ensureWikiSearchIndexes(db, "test_")
+		expect(report.vector.status).toBe("failed")
+		expect(report.vector.detail).toContain("not registered yet")
+		expect(report.text.status).toBe("created")
 	})
 })
 

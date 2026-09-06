@@ -426,10 +426,13 @@ const openApiDocument = {
 					"Memongo contract and transactional wiki-store dependency readiness",
 				security: [],
 				responses: {
-					"200": { description: "All required dependencies are ready" },
+					"200": {
+						description:
+							'All required dependencies are ready. `wiki.search` is a per-lane capability block: `text: "ready"` (fail-closed — a broken text lane yields 503 instead), and `vector`/`autoEmbed` reporting `"ready"` or `"unavailable"` with a `detail` diagnostic. `unavailable` means the Atlas Model API key (VOYAGE_API_KEY, `al-...`) is missing or rejected: the auto-embed vector lane is not serving, text search remains available, and readiness stays 200.',
+					},
 					"503": {
 						description:
-							"Memongo is unavailable or incompatible, or wiki transactions are unavailable",
+							"Memongo is unavailable or incompatible, the wiki text-search lane is unavailable, or wiki transactions are unavailable",
 					},
 				},
 			},

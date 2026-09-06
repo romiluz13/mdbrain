@@ -70,6 +70,21 @@ function memoryLedgerTtlMs(): number {
  *  be observable without scraping logs). */
 const reconciliationCounters = { attempted: 0, completed: 0, failed: 0 }
 
+/** The dispatch lease must cover the longest possible dispatch by
+ *  construction: a cold bridge call performs up to TWO full
+ *  MEMONGO_TIMEOUT_MS-bounded round trips — the /openapi.json contract
+ *  compatibility check (MemongoHttpClient) and the write itself — so the
+ *  lease covers both plus a settlement margin. A shorter lease lets the
+ *  reconciler reclaim mid-flight writes and surface spurious
+ *  DELIVERY_LEASE_LOST conflicts (observed live on the keyless compose
+ *  bundle, whose one-time ~62s first write outlived the 30s lease once
+ *  the bridge deadline was raised to cover it). */
+function dispatchLeaseMs(): number {
+	const raw = Number(process.env.MEMONGO_TIMEOUT_MS)
+	const bridgeDeadlineMs = Number.isFinite(raw) && raw >= 1 ? raw : 10_000
+	return Math.max(30_000, 2 * bridgeDeadlineMs + 10_000)
+}
+
 export function getMemoryDeliveryReconciliationCounters(): {
 	attempted: number
 	completed: number
@@ -426,7 +441,7 @@ export async function deliverMemoryWrite(params: {
 				operationId,
 				session,
 				3,
-				30_000,
+				dispatchLeaseMs(),
 				5,
 				ledgerTtlMs,
 			),
