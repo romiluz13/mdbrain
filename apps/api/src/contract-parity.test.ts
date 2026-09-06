@@ -18,12 +18,9 @@ import {
 	WIKI_VALID_TRUST_TIERS,
 } from "./routes/v1.js"
 // Cross-app import is deliberate: the MCP tool schemas are the third surface
-// of the same contract and must be pinned in the same place. The specifier
-// sits outside this package's rootDir, so tsc cannot follow it (the stricter
-// expect-error form trips the unused-directive check for program-level
-// diagnostics); vitest resolves it against the workspace source at test time.
-// eslint-disable-next-line
-// @ts-ignore -- see comment above
+// of the same contract and must be pinned in the same place. tsc follows it
+// into the workspace source at check time (apps/api tsconfig drops rootDir —
+// with noEmit it only constrained the parity import's file location).
 import { toolList } from "../../mcp/src/server.js"
 
 type Json = Record<string, unknown>

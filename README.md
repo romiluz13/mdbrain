@@ -110,7 +110,7 @@ Note: `$vectorSearch`, `$search`, `$rankFusion`, and `$rerank` require Atlas Sea
 | **Contradiction detection** | None | ADD-only bias (stores contradictions) | None | **Cross-page, runs before dedup** |
 | **Self-maintenance** | Scheduled runs | Reactive | Reactive | **Git-diff + Dreamer 5-phase (wiki Dreamer simplified)** |
 | **MCP tools** | Planned | None | None | **34 supported tools (6 wiki)** |
-| **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **6 read-only discovery adapters** |
+| **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **Obsidian (beta): discovery + export; ingest throws** |
 | **Web console** | None (CLI only) | None | None | **Next.js wiki browser** |
 | **Backlinks** | None | None | Graph edges | **Auto-computed from relationships** |
 | **Supersession audit** | None | None | None | **Retained, not deleted** |
@@ -239,15 +239,15 @@ npm install @mdbrain/client @mdbrain/wiki-engine
 ## Architecture
 
 ```
-Sources          Connectors          Maintenance          Governance
-───────         ──────────          ──────────           ──────────
-Obsidian   ──┐  Confluence    ──┐  Git-diff (LLM)  ──┐  Scope filter
-GitHub     ──┤  Notion        ──┤  Dreamer (5-phase)──┤  Trust tiers
-Confluence ──┤  Slack         ──┤                    │  Permissions
-Notion     ──┤  CRM           ──┘                    │  Contradiction (before dedup)
-Slack      ──┤                       │               │  Supersession audit
-CRM        ──┘                       │               │
-                                      ▼               ▼
+Sources          Connectors                 Maintenance               Governance
+───────         ──────────                 ──────────                ──────────
+Obsidian   ──┐  Obsidian (beta):        ──┐  Git-diff (LLM)       ──┐  Scope filter
+(beta)     ──┘  vault discovery +       ──┘  Dreamer (5-phase,       │  Trust tiers
+                path-contained export        LLM-classified,         │  Permissions
+                (ingest throws               operator-triggered      │  Contradiction (before dedup)
+                ConnectorNotImplemented      CLI only)               │  Supersession audit
+                Error)                                                │
+                                                                      ▼
                               ┌─────────────────────────────┐
                               │     wiki_pages (MongoDB)     │
                               │  claims · evidence · questions│
@@ -293,11 +293,11 @@ Clients -> MDBrain API -> Memongo HTTP gateway -> Memongo-owned memory
 
 **Contradiction detection** — Cross-page contradictions are detected BEFORE dedup/near-duplicate gating (prevents the arXiv pipeline-ordering bug). Contradictions are recorded, surfaced via `wiki_lint`, and can be resolved (newest_wins, authority_wins, human_escalation).
 
-**Self-maintenance** — Two strategies, unified through the same governance gates: git-diff maintenance (detects changed source files via `maintenanceHash`, regenerates only affected pages) and Dreamer 5-phase promotion (novelty scan, similarity, injection classification, extraction, promotion for event/conversation sources). Wiki Dreamer promotion is currently simplified — full vector similarity matching is on the roadmap.
+**Self-maintenance** — Two strategies, unified through the same governance gates, both operator-triggered via `bun run wiki:maintenance` (never a silent background loop): git-diff maintenance (detects changed source files via `maintenanceHash`, regenerates only affected pages through the configured LLM) and Dreamer 5-phase promotion for event/conversation sources (novelty scan, vector similarity with a 0.65 floor, LLM injection classification — ignore/new/update/contradiction, per-claim confidence extraction with event provenance, promotion through the pipeline gate). Both require an LLM (`MDBRAIN_LLM_*`) and fail closed with `MaintenanceLlmUnconfiguredError` when it is not configured; the legacy whole-event importer is an explicit `--importer heuristic-importer` opt-in, disclosed in the run summary. Every LLM response is JSON-Schema-constrained and validated locally; there is no silent success path (refusals, truncation, and malformed output are hard errors).
 
 **MCP tools** — 34 tools for supported memory and wiki operations, including 6 wiki-specific tools. Connect from Claude Desktop, Cursor, or any MCP-compatible agent.
 
-**Connectors** — Six read-only discovery adapters: Obsidian, GitHub, Confluence, Notion, Slack, and CRM. They return source metadata without mutating wiki collections. Obsidian export is an explicit, path-contained operation.
+**Connectors** — Obsidian (beta): real vault discovery + path-contained export; `ingest` throws `ConnectorNotImplementedError` until the post-sale roadmap item lands. The GitHub/Confluence/Notion/Slack/CRM shell connectors were removed: they reported success while writing nothing.
 
 **Backlinks** — Auto-computed from relationship targets. Incremental recomputation on page create/update/delete. Excluded for soft-deleted (superseded) pages.
 
@@ -355,6 +355,14 @@ Browse pages (filterable by kind), view full page details (claims, contradiction
 | `MEMONGO_READINESS_CONTROL_LANES` | Optional | Comma-separated required `control`, `embedding`, and/or `vector` lanes |
 | `MDBRAIN_API_KEY` | Yes | API authentication key (any string for local dev) |
 | `MDBRAIN_API_URL` | MCP only | URL of the MDBrain API server (default: `http://127.0.0.1:3847`) |
+| `MDBRAIN_LLM_BASE_URL` | Maintenance CLI only* | Base URL of an OpenAI-compatible `/chat/completions` endpoint for git-diff regeneration and Dreamer classification. *Required for non-dry-run `bun run wiki:maintenance` |
+| `MDBRAIN_LLM_API_KEY` | Maintenance CLI only* | API key for the LLM endpoint (never echoed in error messages) |
+| `MDBRAIN_LLM_MODEL` | Maintenance CLI only* | Model name for chat completions |
+| `MDBRAIN_LLM_AUTH_STYLE` | Optional | `authorization-bearer` (default), `api-key`, or `x-api-key` |
+| `MDBRAIN_LLM_TOKEN_PARAM` | Optional | `max_tokens` (default) or `max_completion_tokens` |
+| `MDBRAIN_LLM_TIMEOUT_MS` | Optional | Total budget for all attempts of one call (default 60000) |
+| `MDBRAIN_LLM_MAX_RESPONSE_BYTES` | Optional | Response body cap (default 262144) |
+| `MDBRAIN_LLM_STRUCTURED_OUTPUTS` | Optional | `0`/`false` disables `response_format: json_schema` for models without Structured Outputs support (the schema then rides in the prompt; output is still validated locally) |
 | `VOYAGE_API_KEY` | Optional* | Atlas Model API key (`al-...` prefix) for the auto-embed vector search lane. *Required for the full quickstart experience; without it the stack boots degraded (text-lane search only) and `/ready` reports `vector`/`autoEmbed` as `unavailable` |
 
 ## Acknowledgments

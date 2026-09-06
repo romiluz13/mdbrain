@@ -3,7 +3,8 @@
 // Wiki pages, OKF interchange, page rendering, self-maintenance
 // (git-diff + Dreamer), cross-page contradiction detection, governance
 // (scoped retrieval, trust tiers, permissions), backlinks, and connectors
-// (Obsidian, GitHub, Confluence, Notion, Slack, CRM).
+// (Obsidian beta; ingest throws ConnectorNotImplementedError — post-sale
+// roadmap).
 //
 // T2: wiki_pages collection schema + indexes.
 // T3: wiki CRUD bridge + page rendering.
@@ -192,6 +193,11 @@ export {
 	detectChangedSources,
 	runGitDiffMaintenance,
 	runDreamerPromotion,
+	MaintenanceLlmUnconfiguredError,
+	type DreamerClassification,
+	type DreamerClassifier,
+	type DreamerExtractedClaim,
+	type DreamerInjectionType,
 	type MaintenanceSource,
 	type MaintenanceResult,
 	type ChangedSource,
@@ -200,14 +206,9 @@ export {
 } from "./wiki-maintenance.js"
 
 export {
-	ObsidianConnector,
-	GitHubConnector,
-	ConfluenceConnector,
-	NotionConnector,
-	SlackConnector,
-	CrmConnector,
+	ConnectorNotImplementedError,
 	ConnectorRegistry,
-	type SourceConnector,
+	ObsidianConnector,
 	type ConnectorAuthenticateResult,
 	type ConnectorDiscoverResult,
 	type ConnectorIngestResult,
@@ -215,11 +216,7 @@ export {
 	type DiscoveredSource,
 	type IngestOpts,
 	type ObsidianConnectorConfig,
-	type GitHubConnectorConfig,
-	type ConfluenceConnectorConfig,
-	type NotionConnectorConfig,
-	type SlackConnectorConfig,
-	type CrmConnectorConfig,
+	type SourceConnector,
 } from "./wiki-connectors.js"
 
 export { omitUndefined } from "./omit-undefined.js"
