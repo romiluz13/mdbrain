@@ -60,7 +60,10 @@ import {
 	wikiPagesCollection,
 	wikiRevisionsCollection,
 } from "./wiki-schema.js"
-import { probeWikiSearch } from "./wiki-search-probe.js"
+import {
+	probeWikiSearch,
+	type WikiSearchCapabilities,
+} from "./wiki-search-probe.js"
 import { searchWikiPages, WikiSearchUnavailableError } from "./wiki-search.js"
 
 const conformanceUri = process.env.MDBRAIN_CONFORMANCE_MONGODB_URI?.trim()
@@ -289,18 +292,29 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 	it("probeWikiSearch resolves against an indexed collection (WS-6)", async () => {
 		// The main conformance prefix had its search indexes created by
 		// ensureWikiSchema during store.initialize().
-		let matched: number | undefined
+		let caps: WikiSearchCapabilities | undefined
 		for (let attempt = 0; attempt < 10; attempt++) {
 			try {
-				matched = await probeWikiSearch(handle)
+				caps = await probeWikiSearch(handle)
 				break
 			} catch (err) {
 				if (attempt === 9) throw err
 				await new Promise((r) => setTimeout(r, 500))
 			}
 		}
-		expect(typeof matched).toBe("number")
-		expect(matched).toBeLessThanOrEqual(1)
+		// The text lane is fail-closed: resolving at all means it is ready.
+		expect(caps?.text).toBe("ready")
+		// The vector/auto-embed lane depends on the cluster's model key:
+		// keyed → "ready"; keyless (no VOYAGE_API_KEY on the container) →
+		// "unavailable" with an actionable diagnostic (P6). Both are valid
+		// conformance outcomes; the probe must never lie "ready".
+		if (caps?.vector === "unavailable") {
+			expect(caps.autoEmbed).toBe("unavailable")
+			expect(caps.detail).toContain("VOYAGE_API_KEY")
+		} else {
+			expect(caps?.vector).toBe("ready")
+			expect(caps?.autoEmbed).toBe("ready")
+		}
 	})
 
 	// WS-5 item 2 — optimistic concurrency. Two writers racing on the same

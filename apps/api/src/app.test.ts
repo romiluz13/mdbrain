@@ -125,6 +125,11 @@ describe("createApp", () => {
 		wikiStoreMocks.checkWikiStoreReadiness.mockReset()
 		wikiStoreMocks.checkWikiStoreReadiness.mockResolvedValue({
 			transactional: true,
+			search: {
+				text: "ready",
+				vector: "ready",
+				autoEmbed: "ready",
+			},
 		})
 		bridgeMocks.mdbrainBridgeSearchDetailed.mockReset()
 		bridgeMocks.mdbrainBridgeAdd.mockReset()
@@ -531,7 +536,14 @@ describe("createApp", () => {
 				contractSha256: "abc",
 				lanes: { retrieval: "ready" },
 			},
-			wiki: { transactional: true },
+			wiki: {
+				transactional: true,
+				search: {
+					text: "ready",
+					vector: "ready",
+					autoEmbed: "ready",
+				},
+			},
 		})
 	})
 

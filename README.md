@@ -117,36 +117,65 @@ Note: `$vectorSearch`, `$search`, `$rankFusion`, and `$rerank` require Atlas Sea
 
 ## Quickstart
 
+One canonical path: the full bundle (`docker/compose.full.yml`) boots MongoDB + Atlas Search, Memongo, the API, and the web console in a single command. The dev-convenience stacks (`docker/mongodb/docker-compose.preview.yml`, `docker/docker-compose.minimal.yml`) are labeled as such and are never part of this path.
+
+### Model API key (required for the full experience)
+
+The auto-embed vector search lane needs an **Atlas Model API key** (`al-...` prefix). Create one at cloud.mongodb.com → AI Models → Create model API key ([docs](https://www.mongodb.com/docs/voyageai/management/api-keys/)). Direct VoyageAI keys (`pa-...`) do not work as-is — mongot routes through ai.mongodb.com; to use one, also set `EMBEDDING_PROVIDER_ENDPOINT=https://api.voyageai.com/v1/embeddings` in the environment.
+
+Without a key the bundle still boots, honestly degraded: hybrid search serves through the text lane, and `/ready` reports `wiki.search.vector = "unavailable"` with an actionable diagnostic (`wiki.search.text` stays `"ready"` and readiness stays 200). That is a documented degraded mode — not a hidden failure. An **invalid** key is worse than none: it registers the auto-embed index but fails the query-embedding call, which makes the default hybrid search return 503.
+
+### Boot the bundle
+
+mdbrain and memongo must be sibling checkouts (the compose build context is `../../memongo` relative to `docker/compose.full.yml`). From a fresh parent directory:
+
 ```bash
 git clone https://github.com/romiluz13/mdbrain.git
+git clone https://github.com/romiluz13/Memongo.git memongo
 cd mdbrain
-bun install
 
-# Start the transaction-capable wiki MongoDB
-docker compose -f docker/docker-compose.minimal.yml up -d
+# Memongo prerequisite: pin the sibling checkout to the revision matching
+# the pinned contract. The exact ref is recorded beside the pin in
+# packages/memory-bridge/src/memongo-runtime.ts (MEMONGO_CONTRACT_SOURCE_REF)
+# and verified in docs/diligence/agreed-plan.md (PR1 implementation record)
+# — CI uses the same source.
+git -C ../memongo checkout fa0f19db6267e86d41e909b42e3d2be1bb207a35
 
-# Start a compatible Memongo 2.0.1 HTTP service separately.
+# Bring up MongoDB+Search, Memongo, the API, and the web console
+export VOYAGE_API_KEY=al-your-atlas-model-api-key
+docker compose -f docker/compose.full.yml up -d --wait --wait-timeout 180
+```
 
-# Start the API
-export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?replicaSet=rs0"
-export MEMONGO_API_URL="http://127.0.0.1:3900"
-export MEMONGO_API_KEY="local-memongo-secret"
-export MEMONGO_ALLOW_INSECURE_LOCAL="1"
-export MDBRAIN_API_KEY="local-dev-secret"
-cd apps/api && bun run dev
+Health — this exercises the Memongo contract check (exact version + canonical SHA-256, enforced at runtime by the memory bridge) and the search capability block:
 
-# Readiness verifies the pinned contract, tenant retrieval, configured
-# Memongo control lanes, and wiki transactions before traffic.
+```bash
 curl -fsS http://127.0.0.1:3847/ready
 ```
 
-Create and search wiki pages:
+Keyed boot (expected):
+
+```json
+{
+	"ok": true,
+	"service": "mdbrain-api",
+	"wiki": {
+		"transactional": true,
+		"search": { "text": "ready", "vector": "ready", "autoEmbed": "ready" }
+	}
+}
+```
+
+Keyless boot: same call returns 200 with `wiki.search.vector` / `autoEmbed` reporting `"unavailable"` plus a `detail` diagnostic. In a keyless bundle the **first memory write** also waits out Memongo's one-time index-bootstrap horizon (~60s measured; the bundle's bridge deadline is raised to cover it) — every later write returns in milliseconds. Keyed boots do not hit the wait.
+
+The web console is at http://127.0.0.1:3040. The compose default API key is `dev-mdbrain-key` (substitute the `authorization` header below if you set `MDBRAIN_API_KEY`).
+
+### Create and search wiki pages
 
 ```bash
 # Create a wiki page
 curl -s http://127.0.0.1:3847/v1/wiki \
   -H "content-type: application/json" \
-  -H "authorization: Bearer local-dev-secret" \
+  -H "authorization: Bearer dev-mdbrain-key" \
   -d '{
     "kind": "concept",
     "title": "Accounts Table",
@@ -162,11 +191,46 @@ curl -s http://127.0.0.1:3847/v1/wiki \
 # Hybrid search (vector + text + rank fusion, auto-embedded via Voyage AI)
 curl -s http://127.0.0.1:3847/v1/wiki/search \
   -H "content-type: application/json" \
-  -H "authorization: Bearer local-dev-secret" \
+  -H "authorization: Bearer dev-mdbrain-key" \
   -d '{"query": "customer balance", "scope": "workspace", "scopeRef": "default"}'
 ```
 
-Install the client SDK:
+Run the end-to-end smoke (auth, memory write/read path, wiki create, and hybrid search that must return the page it just created — empty results fail). The smoke imports the client SDK, whose entry point resolves to its built `dist/` — install and build it first (same prerequisites CI uses):
+
+```bash
+bun install --frozen-lockfile
+bunx turbo run build --filter '@mdbrain/client'
+MDBRAIN_API_KEY=dev-mdbrain-key bun scripts/compose-smoke.ts
+```
+
+Tear down (keeps data in named volumes) with `docker compose -f docker/compose.full.yml down`; add `-v` to remove the volumes too.
+
+### Keyless dev mode (separate from the canonical path)
+
+Without an Atlas Model API key you can still develop against the text search lane:
+
+```bash
+# MongoDB + mongot, no key (official image quickstart form). Loopback-only
+# binding: atlas-local runs unauthenticated, so it must never listen on
+# other interfaces.
+docker run -d -p 127.0.0.1:27017:27017 --name atlas-local mongodb/mongodb-atlas-local:preview
+
+# Run the API on the host
+export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?directConnection=true"
+export MDBRAIN_API_KEY="local-dev-secret"
+cd apps/api && bun run dev
+```
+
+`/ready` reports `wiki.search.vector` / `autoEmbed` as `"unavailable"` (the auto-embed index cannot be registered without a model key); the text lane serves searches. Memory features still require a compatible Memongo HTTP service matching the pinned contract (2.1.0, SHA-256 verified at runtime) — same sibling checkout as above (pinned to `MEMONGO_CONTRACT_SOURCE_REF`), run locally, with the API pointed at it:
+
+```bash
+export MEMONGO_API_URL="http://127.0.0.1:3847"   # your locally running Memongo
+export MEMONGO_API_KEY="your-memongo-key"        # required by the bridge
+# A plain-HTTP loopback Memongo needs this explicit opt-in:
+export MEMONGO_ALLOW_INSECURE_LOCAL="1"
+```
+
+### Client SDK
 
 ```bash
 npm install @mdbrain/client @mdbrain/wiki-engine
@@ -291,7 +355,7 @@ Browse pages (filterable by kind), view full page details (claims, contradiction
 | `MEMONGO_READINESS_CONTROL_LANES` | Optional | Comma-separated required `control`, `embedding`, and/or `vector` lanes |
 | `MDBRAIN_API_KEY` | Yes | API authentication key (any string for local dev) |
 | `MDBRAIN_API_URL` | MCP only | URL of the MDBrain API server (default: `http://127.0.0.1:3847`) |
-| `VOYAGE_API_KEY` | Optional | Atlas Model API key for auto-embeddings (`al-...` prefix) |
+| `VOYAGE_API_KEY` | Optional* | Atlas Model API key (`al-...` prefix) for the auto-embed vector search lane. *Required for the full quickstart experience; without it the stack boots degraded (text-lane search only) and `/ready` reports `vector`/`autoEmbed` as `unavailable` |
 
 ## Acknowledgments
 

@@ -114,7 +114,12 @@ jobs:
           fi
           echo "PIN_VERSION=$version" >> "$GITHUB_ENV"
           echo "PIN_SHA12=${sha:0:12}" >> "$GITHUB_ENV"
-          bun scripts/bump-memongo-pin.ts "$version" "$sha"
+          # The memongo sibling checkout is main; record exactly which
+          # commit served the recaptured contract so CI's pinned checkout
+          # (MEMONGO_CONTRACT_SOURCE_REF) moves with the pin.
+          PIN_REF=$(git -C ../memongo rev-parse HEAD)
+          echo "PIN_REF=$PIN_REF" >> "$GITHUB_ENV"
+          bun scripts/bump-memongo-pin.ts "$version" "$sha" "$PIN_REF"
 
       - name: Open or update the pin-bump PR
         if: steps.pin.outputs.status == '3'

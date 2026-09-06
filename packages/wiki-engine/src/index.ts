@@ -61,7 +61,11 @@ export {
 	ensureWikiStandardIndexes,
 	ensureWikiSearchIndexes,
 	ensureWikiSchema,
+	WIKI_AUTO_EMBED_MODEL,
 	WIKI_PAGES_SEARCH_INDEX_TARGETS,
+	WIKI_SEARCH_INDEX_CREATION_UNAVAILABLE,
+	type WikiSearchIndexCreationReport,
+	type WikiSearchIndexCreationStatus,
 	WIKI_PAGE_KIND_VALUES,
 	WIKI_SCOPE_VALUES,
 	WIKI_TRUST_TIER_VALUES,
@@ -129,7 +133,11 @@ export {
 	type WikiSearchResponse,
 } from "./wiki-search.js"
 
-export { probeWikiSearch } from "./wiki-search-probe.js"
+export {
+	probeWikiSearch,
+	type WikiSearchCapabilities,
+	type WikiSearchLaneCapability,
+} from "./wiki-search-probe.js"
 
 export {
 	buildWikiMapBlock,

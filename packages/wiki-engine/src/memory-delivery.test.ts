@@ -203,6 +203,44 @@ describe("memory delivery state", () => {
 		expect(f.collection.insertOne).toHaveBeenCalledTimes(1)
 	})
 
+	it("stores an undefined-stripped payload so BSON round-trip replays stay conflict-free", async () => {
+		const f = fixture()
+		const payloadWithUndefinedOptionalKeys = {
+			role: "user",
+			body: "marker",
+			sessionId: undefined,
+			timestamp: undefined,
+			metadata: undefined,
+		}
+
+		await recordMemoryDeliveryIntent(
+			f.handle,
+			{ ...params, payload: payloadWithUndefinedOptionalKeys },
+			f.session,
+		)
+
+		// The ledger must persist exactly the shape it fingerprinted: the
+		// MongoDB driver serializes undefined as null, so an undefined-valued
+		// key stored verbatim round-trips into a different payload and every
+		// reconciliation replay would flag a payloadFingerprint conflict.
+		const stored = f.current()
+		expect(Object.values(stored.payload)).not.toContain(undefined)
+		expect(stored.payload).not.toHaveProperty("sessionId")
+		expect(stored.payload).not.toHaveProperty("timestamp")
+		expect(stored.payload).not.toHaveProperty("metadata")
+
+		// A reconciler replay re-records the payload as read back from the
+		// database (a JSON round trip simulates the driver's BSON encoding).
+		const replay = await recordMemoryDeliveryIntent(
+			f.handle,
+			{ ...params, payload: JSON.parse(JSON.stringify(stored.payload)) },
+			f.session,
+		)
+
+		expect(replay.conflict).toBe(false)
+		expect(replay.intent.replayConflictCount).toBeUndefined()
+	})
+
 	it("inserts only caller-supplied intent fields", async () => {
 		const f = fixture()
 		const inputWithServerFields = {
