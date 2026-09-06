@@ -59,9 +59,12 @@ jobs:
       - name: Resolve pinned Memongo ref
         working-directory: mdbrain
         run: |
-          ref=$(sed -n 's/^export const MEMONGO_CONTRACT_SOURCE_REF = "\([^"]*\)".*/\1/p' packages/memory-bridge/src/memongo-runtime.ts)
-          if [ -z "$ref" ]; then
-            echo "MEMONGO_CONTRACT_SOURCE_REF not found in packages/memory-bridge/src/memongo-runtime.ts"
+          # The declaration may be formatter-wrapped (value on the next
+          # line), so scan the declaration line and the one after it for a
+          # full 40-char hex ref.
+          ref=$(grep -A1 'export const MEMONGO_CONTRACT_SOURCE_REF' packages/memory-bridge/src/memongo-runtime.ts | grep -oE '\b[a-f0-9]{40}\b' | head -1)
+          if ! [[ "$ref" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "MEMONGO_CONTRACT_SOURCE_REF (full 40-char ref) not found in packages/memory-bridge/src/memongo-runtime.ts"
             exit 1
           fi
           echo "MEMONGO_REF=$ref" >> "$GITHUB_ENV"
