@@ -1,9 +1,9 @@
-// wiki-connectors.ts tests (T15 Obsidian + T16 GitHub).
+// wiki-connectors.ts tests (T15 Obsidian, beta).
 //
 // Tests:
-// - Connector ABC: authenticate, discover, ingest, mapPermissions
-// - Obsidian: vault discovery, .md file ingestion, export to vault, watcher
-// - GitHub: auth (token required), permission mapping (public/private/secret)
+// - Connector ABC: authenticate, discover, mapPermissions
+// - Obsidian (beta): vault discovery, ingest throws ConnectorNotImplementedError
+//   (honest surface), export to vault, watcher
 // - ConnectorRegistry: register, get, list
 
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock assertions */
@@ -13,13 +13,9 @@ import path from "node:path"
 import type { Collection, Db, Document } from "mongodb"
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import {
-	ObsidianConnector,
-	GitHubConnector,
-	ConfluenceConnector,
-	NotionConnector,
-	SlackConnector,
-	CrmConnector,
+	ConnectorNotImplementedError,
 	ConnectorRegistry,
+	ObsidianConnector,
 } from "./wiki-connectors.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 
@@ -47,7 +43,7 @@ function mockHandle(): WikiDbHandle {
 	return { db, prefix: "test_" }
 }
 
-describe("Connector ABC — ObsidianConnector", () => {
+describe("Connector ABC — ObsidianConnector (beta)", () => {
 	let tmpVault: string
 
 	beforeEach(() => {
@@ -115,6 +111,16 @@ describe("Connector ABC — ObsidianConnector", () => {
 		const result = await conn.discover(cursor)
 		expect(result.sources).toHaveLength(1)
 		expect(result.sources[0].id).toBe("new.md")
+	})
+
+	it("ingest throws ConnectorNotImplementedError (honest beta surface)", async () => {
+		const conn = new ObsidianConnector(mockHandle(), { vaultPath: tmpVault })
+		await expect(
+			conn.ingest([{ id: "note.md", path: "note.md", content: "# Note" }], {
+				scope: "workspace",
+				scopeRef: "ws-1",
+			}),
+		).rejects.toBeInstanceOf(ConnectorNotImplementedError)
 	})
 
 	it("mapPermissions returns internal for Obsidian vaults", async () => {
@@ -226,294 +232,16 @@ describe("Connector ABC — ObsidianConnector", () => {
 	})
 })
 
-describe("Connector ABC — GitHubConnector", () => {
-	it("authenticate fails without a token", async () => {
-		const conn = new GitHubConnector(mockHandle(), { repo: "owner/repo" })
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(false)
-		expect(result.error).toContain("token is required")
-	})
-
-	it("authenticate succeeds with a token", async () => {
-		const conn = new GitHubConnector(mockHandle(), {
-			repo: "owner/repo",
-			token: "ghp_testtoken",
-		})
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(true)
-		expect(result.context).toEqual({ repo: "owner/repo", branch: "main" })
-	})
-
-	it("ingest is read-only and does not write discovered sources directly", async () => {
-		const conn = new GitHubConnector(mockHandle(), {
-			repo: "owner/repo",
-			token: "ghp_testtoken",
-		})
-		const result = await conn.ingest(
-			[{ id: "1", path: "README.md", content: "untrusted" }],
-			{ scope: "workspace", scopeRef: "ws-1" },
-		)
-		expect(result).toEqual({
-			pagesProcessed: 1,
-			pagesCreated: 0,
-			pagesUpdated: 0,
-			errors: [],
-		})
-	})
-
-	it("mapPermissions: public repo → public", () => {
-		const conn = new GitHubConnector(mockHandle(), {
-			repo: "owner/repo",
-			token: "t",
-		})
-		const result = conn.mapPermissions({
-			id: "src/api.ts",
-			path: "src/api.ts",
-			content: "",
-			metadata: { visibility: "public" },
-		})
-		expect(result.privacyTier).toBe("public")
-	})
-
-	it("mapPermissions: private repo → internal", () => {
-		const conn = new GitHubConnector(mockHandle(), {
-			repo: "owner/repo",
-			token: "t",
-		})
-		const result = conn.mapPermissions({
-			id: "src/api.ts",
-			path: "src/api.ts",
-			content: "",
-			metadata: { visibility: "private" },
-		})
-		expect(result.privacyTier).toBe("internal")
-	})
-
-	it("mapPermissions: unknown visibility → restricted", () => {
-		const conn = new GitHubConnector(mockHandle(), {
-			repo: "owner/repo",
-			token: "t",
-		})
-		const result = conn.mapPermissions({
-			id: "src/api.ts",
-			path: "src/api.ts",
-			content: "",
-		})
-		expect(result.privacyTier).toBe("restricted")
-	})
-
-	it("discover returns empty sources with HEAD cursor (placeholder for git API)", async () => {
-		const conn = new GitHubConnector(mockHandle(), {
-			repo: "owner/repo",
-			token: "t",
-		})
-		const result = await conn.discover()
-		expect(result.sources).toHaveLength(0)
-		expect(result.cursor).toBe("HEAD")
-	})
-})
-
 describe("ConnectorRegistry", () => {
 	it("register, get, and list connectors", () => {
 		const registry = new ConnectorRegistry()
 		const obsidian = new ObsidianConnector(mockHandle(), {
 			vaultPath: "/tmp/vault",
 		})
-		const github = new GitHubConnector(mockHandle(), {
-			repo: "owner/repo",
-			token: "t",
-		})
 		registry.register(obsidian)
-		registry.register(github)
 
-		expect(registry.list()).toEqual(["obsidian", "github"])
+		expect(registry.list()).toEqual(["obsidian"])
 		expect(registry.get("obsidian")).toBe(obsidian)
-		expect(registry.get("github")).toBe(github)
 		expect(registry.get("nonexistent")).toBeUndefined()
-	})
-})
-
-describe("ConfluenceConnector", () => {
-	it("authenticate fails without token/email", async () => {
-		const conn = new ConfluenceConnector(mockHandle(), {
-			host: "https://test.atlassian.net",
-			apiToken: "",
-			email: "",
-		})
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(false)
-		expect(result.error).toContain("required")
-	})
-
-	it("authenticate succeeds with token + email", async () => {
-		const conn = new ConfluenceConnector(mockHandle(), {
-			host: "https://test.atlassian.net",
-			apiToken: "token",
-			email: "user@test.com",
-		})
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(true)
-		expect(result.context).toEqual({
-			host: "https://test.atlassian.net",
-			spaceKey: undefined,
-		})
-	})
-
-	it("mapPermissions: restricted when space has restrictions", () => {
-		const conn = new ConfluenceConnector(mockHandle(), {
-			host: "https://test.atlassian.net",
-			apiToken: "t",
-			email: "u@test.com",
-		})
-		expect(
-			conn.mapPermissions({
-				id: "1",
-				path: "p",
-				content: "",
-				metadata: { spaceRestrictions: ["admin"] },
-			}).privacyTier,
-		).toBe("restricted")
-	})
-
-	it("mapPermissions: internal when no restrictions", () => {
-		const conn = new ConfluenceConnector(mockHandle(), {
-			host: "https://test.atlassian.net",
-			apiToken: "t",
-			email: "u@test.com",
-		})
-		expect(
-			conn.mapPermissions({ id: "1", path: "p", content: "" }).privacyTier,
-		).toBe("internal")
-	})
-})
-
-describe("NotionConnector", () => {
-	it("authenticate fails without token", async () => {
-		const conn = new NotionConnector(mockHandle(), { integrationToken: "" })
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(false)
-	})
-
-	it("authenticate succeeds with token", async () => {
-		const conn = new NotionConnector(mockHandle(), {
-			integrationToken: "ntn_test",
-		})
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(true)
-		expect(result.context).toEqual({ databaseId: undefined })
-	})
-
-	it("mapPermissions: public when shared with public", () => {
-		const conn = new NotionConnector(mockHandle(), { integrationToken: "t" })
-		expect(
-			conn.mapPermissions({
-				id: "1",
-				path: "p",
-				content: "",
-				metadata: { sharedWith: ["public"] },
-			}).privacyTier,
-		).toBe("public")
-	})
-
-	it("mapPermissions: restricted when not shared", () => {
-		const conn = new NotionConnector(mockHandle(), { integrationToken: "t" })
-		expect(
-			conn.mapPermissions({
-				id: "1",
-				path: "p",
-				content: "",
-				metadata: { sharedWith: [] },
-			}).privacyTier,
-		).toBe("restricted")
-	})
-})
-
-describe("SlackConnector", () => {
-	it("authenticate fails without valid bot token", async () => {
-		const conn = new SlackConnector(mockHandle(), { botToken: "invalid" })
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(false)
-		expect(result.error).toContain("xoxb-")
-	})
-
-	it("authenticate succeeds with xoxb- token", async () => {
-		const conn = new SlackConnector(mockHandle(), { botToken: "xoxb-test" })
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(true)
-		expect(result.context).toEqual({ channelIds: undefined })
-	})
-
-	it("mapPermissions: restricted for private channels", () => {
-		const conn = new SlackConnector(mockHandle(), { botToken: "xoxb-t" })
-		expect(
-			conn.mapPermissions({
-				id: "C1",
-				path: "C1",
-				content: "",
-				metadata: { isPrivate: true },
-			}).privacyTier,
-		).toBe("restricted")
-	})
-
-	it("mapPermissions: internal for public channels", () => {
-		const conn = new SlackConnector(mockHandle(), { botToken: "xoxb-t" })
-		expect(
-			conn.mapPermissions({ id: "C1", path: "C1", content: "" }).privacyTier,
-		).toBe("internal")
-	})
-})
-
-describe("CrmConnector", () => {
-	it("authenticate fails without API key", async () => {
-		const conn = new CrmConnector(mockHandle(), {
-			provider: "salesforce",
-			apiKey: "",
-		})
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(false)
-		expect(result.error).toContain("salesforce")
-	})
-
-	it("authenticate succeeds with API key", async () => {
-		const conn = new CrmConnector(mockHandle(), {
-			provider: "hubspot",
-			apiKey: "key",
-		})
-		const result = await conn.authenticate()
-		expect(result.authenticated).toBe(true)
-		expect(result.context).toEqual({
-			provider: "hubspot",
-			instanceUrl: undefined,
-		})
-	})
-
-	it("mapPermissions: restricted when owned and not shared", () => {
-		const conn = new CrmConnector(mockHandle(), {
-			provider: "salesforce",
-			apiKey: "k",
-		})
-		expect(
-			conn.mapPermissions({
-				id: "1",
-				path: "p",
-				content: "",
-				metadata: { ownerId: "user-1", isShared: false },
-			}).privacyTier,
-		).toBe("restricted")
-	})
-
-	it("mapPermissions: internal when shared", () => {
-		const conn = new CrmConnector(mockHandle(), {
-			provider: "salesforce",
-			apiKey: "k",
-		})
-		expect(
-			conn.mapPermissions({
-				id: "1",
-				path: "p",
-				content: "",
-				metadata: { ownerId: "u", isShared: true },
-			}).privacyTier,
-		).toBe("internal")
 	})
 })

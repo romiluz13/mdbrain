@@ -4,7 +4,10 @@
 // - computeMaintenanceHash is deterministic
 // - detectChangedSources finds changed files (hash mismatch)
 // - runGitDiffMaintenance: LLM regenerates pages, claims pass through pipeline gate
-// - runDreamerPromotion: events → wiki pages with claims
+// - runDreamerPromotion: fails closed without a classifier (P5); LLM
+//   classification routes phase 5 (ignore/new/update/contradiction); claims
+//   carry per-claim confidence + event provenance; heuristic importer is an
+//   explicit opt-in, disclosed via extractionMode
 // - Both update lastMaintainedAt + lastMaintenanceSource
 
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock assertions */
@@ -15,6 +18,9 @@ import {
 	detectChangedSources,
 	runGitDiffMaintenance,
 	runDreamerPromotion,
+	MaintenanceLlmUnconfiguredError,
+	type DreamerClassification,
+	type DreamerClassifier,
 } from "./wiki-maintenance.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 
@@ -252,8 +258,35 @@ describe("runGitDiffMaintenance", () => {
 	})
 })
 
+/** Fake LLM classifier: defaults to "new" with one claim per event
+ *  (per-claim confidence 0.85, distinct from the old hardcoded 0.7). */
+function fakeClassifier(
+	overrides?: (input: {
+		event: { id: string; text: string }
+		existingPage: unknown
+	}) => Partial<DreamerClassification>,
+): DreamerClassifier {
+	return async ({ event, existingPage }) => ({
+		injection: "new",
+		claims: [{ text: event.text, confidence: 0.85 }],
+		...(overrides?.({ event, existingPage }) ?? {}),
+	})
+}
+
 describe("runDreamerPromotion", () => {
-	it("promotes events to wiki pages with claims", async () => {
+	it("fails closed without a classifier (P5: no silent heuristic default)", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		await expect(
+			runDreamerPromotion(h, [{ id: "evt-1", text: "something" }], {
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+			}),
+		).rejects.toBeInstanceOf(MaintenanceLlmUnconfiguredError)
+		expect(store.docs.size).toBe(0)
+	})
+
+	it("promotes events to wiki pages with claims (LLM path)", async () => {
 		const store = makeStore()
 		const h = handle(store)
 		const result = await runDreamerPromotion(
@@ -262,16 +295,118 @@ describe("runDreamerPromotion", () => {
 				{ id: "evt-1", text: "The user prefers dark mode", agentId: "agent-1" },
 				{ id: "evt-2", text: "The API uses GraphQL", agentId: "agent-1" },
 			],
-			{ scope: SCOPE, scopeRef: SCOPE_REF },
+			{ scope: SCOPE, scopeRef: SCOPE_REF, classifier: fakeClassifier() },
 		)
 		expect(result.pagesRegenerated).toBe(2)
 		expect(result.claimsAdded).toBe(2)
 		expect(result.errors).toHaveLength(0)
-		// Verify pages were created.
+		expect(result.extractionMode).toBe("llm")
+		// Verify pages were created with per-claim confidence + provenance.
 		const page1 = store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF))
 		expect(page1).toBeDefined()
 		expect(page1?.claims).toHaveLength(1)
+		expect(page1?.claims?.[0]).toMatchObject({
+			text: "The user prefers dark mode",
+			confidence: 0.85,
+			evidence: [{ kind: "event", sourceId: "evt-1" }],
+		})
 		expect(page1?.lastMaintenanceSource).toBe("dreamer")
+	})
+
+	it("heuristic importer is an explicit opt-in, disclosed via extractionMode", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const result = await runDreamerPromotion(
+			h,
+			[{ id: "evt-1", text: "The user prefers dark mode" }],
+			{
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				importer: "heuristic-importer",
+			},
+		)
+		expect(result.extractionMode).toBe("heuristic-importer")
+		expect(result.claimsAdded).toBe(1)
+		const page = store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF))
+		expect(page?.claims?.[0]).toMatchObject({
+			text: "The user prefers dark mode",
+			confidence: 0.7,
+			evidence: [{ kind: "event", sourceId: "evt-1" }],
+		})
+	})
+
+	it("ignore classification contributes nothing and counts as rejected", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const result = await runDreamerPromotion(
+			h,
+			[{ id: "evt-1", text: "chit-chat with no durable facts" }],
+			{
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				classifier: fakeClassifier(() => ({ injection: "ignore", claims: [] })),
+			},
+		)
+		expect(result.pagesRegenerated).toBe(0)
+		expect(result.claimsAdded).toBe(0)
+		expect(result.claimsRejected).toBe(1)
+		expect(store.docs.size).toBe(0)
+	})
+
+	it("contradiction classification routes to the update path and is counted", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		// Seed an existing page the event contradicts.
+		store.docs.set(store.key("events/evt-1", SCOPE, SCOPE_REF), {
+			_id: { toString: () => "1" },
+			slug: "events/evt-1",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			title: "Event evt-1",
+			summary: "Old event.",
+			body: "",
+			frontmatter: { type: "entity" },
+			claims: [
+				{ id: "c-old", text: "The user prefers light mode", status: "active" },
+			],
+			revision: 1,
+		})
+		const result = await runDreamerPromotion(
+			h,
+			[{ id: "evt-1", text: "The user now prefers dark mode" }],
+			{
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				classifier: fakeClassifier(() => ({
+					injection: "contradiction",
+					claims: [{ text: "The user now prefers dark mode", confidence: 0.9 }],
+				})),
+			},
+		)
+		expect(result.contradictionsDetected).toBe(1)
+		expect(result.claimsAdded).toBe(1)
+		// Updated the existing page, not created a second one.
+		expect(store.docs.size).toBe(1)
+	})
+
+	it("invalid classifier output lands in errors without touching the store", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const result = await runDreamerPromotion(
+			h,
+			[{ id: "evt-1", text: "The user prefers dark mode" }],
+			{
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				classifier: fakeClassifier(() => ({
+					injection: "new" as const,
+					claims: [{ text: "x", confidence: 1.5 }],
+				})),
+			},
+		)
+		expect(result.errors).toHaveLength(1)
+		expect(result.errors[0]).toContain("confidence outside")
+		expect(store.docs.size).toBe(0)
 	})
 
 	it("adds claims to existing event pages (no data loss)", async () => {
@@ -293,11 +428,20 @@ describe("runDreamerPromotion", () => {
 		const result = await runDreamerPromotion(
 			h,
 			[{ id: "evt-1", text: "New information about this event" }],
-			{ scope: SCOPE, scopeRef: SCOPE_REF },
+			{
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				classifier: fakeClassifier(() => ({ injection: "update" })),
+			},
 		)
 		expect(result.claimsAdded).toBe(1)
 		// The old claim should still be there — the page was updated, not replaced.
-		void store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF))
+		const page = store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF))
+		expect(
+			(page?.claims as Array<{ id: string }> | undefined)?.some(
+				(c) => c.id === "c-old",
+			),
+		).toBe(true)
 	})
 
 	it("skips empty events", async () => {
@@ -306,7 +450,7 @@ describe("runDreamerPromotion", () => {
 		const result = await runDreamerPromotion(
 			h,
 			[{ id: "evt-empty", text: "" }],
-			{ scope: SCOPE, scopeRef: SCOPE_REF },
+			{ scope: SCOPE, scopeRef: SCOPE_REF, classifier: fakeClassifier() },
 		)
 		expect(result.pagesRegenerated).toBe(0)
 		expect(result.claimsAdded).toBe(0)
@@ -326,7 +470,7 @@ describe("runDreamerPromotion", () => {
 		await runDreamerPromotion(
 			h,
 			[{ id: "evt-1", text: "The user prefers dark mode" }],
-			{ scope: SCOPE, scopeRef: SCOPE_REF },
+			{ scope: SCOPE, scopeRef: SCOPE_REF, classifier: fakeClassifier() },
 		)
 		expect(captured.length).toBeGreaterThan(0)
 		// Vector-only recipe: first stage is $vectorSearch (cosine scores in
@@ -374,7 +518,7 @@ describe("runDreamerPromotion", () => {
 		const result = await runDreamerPromotion(
 			h,
 			[{ id: "evt-1", text: "The user prefers dark mode" }],
-			{ scope: SCOPE, scopeRef: SCOPE_REF },
+			{ scope: SCOPE, scopeRef: SCOPE_REF, classifier: fakeClassifier() },
 		)
 		expect(result.claimsAdded).toBe(1)
 		// The claim landed on the similar page, not a fresh events/ page.
@@ -415,7 +559,7 @@ describe("runDreamerPromotion", () => {
 		const result = await runDreamerPromotion(
 			h,
 			[{ id: "evt-1", text: "The user prefers dark mode" }],
-			{ scope: SCOPE, scopeRef: SCOPE_REF },
+			{ scope: SCOPE, scopeRef: SCOPE_REF, classifier: fakeClassifier() },
 		)
 		expect(result.claimsAdded).toBe(1)
 		// The event went to its own hash-slug page; the unrelated page was
@@ -426,5 +570,25 @@ describe("runDreamerPromotion", () => {
 		expect(
 			store.docs.get(store.key("concepts/graphql-schema", SCOPE, SCOPE_REF)),
 		).toBeUndefined()
+	})
+
+	it("is idempotent: re-running the same event does not duplicate claims", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const events = [{ id: "evt-1", text: "The user prefers dark mode" }]
+		const opts = {
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			classifier: fakeClassifier(),
+		}
+		await runDreamerPromotion(h, events, opts)
+		const first = store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF))
+		expect(first?.claims).toHaveLength(1)
+		const second = await runDreamerPromotion(h, events, opts)
+		// The second run's identical claim is deduped by the pipeline gate
+		// (near-duplicate detection inside updateWikiPage), never appended.
+		const page = store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF))
+		expect(page?.claims).toHaveLength(1)
+		expect(second.claimsAdded).toBe(1)
 	})
 })

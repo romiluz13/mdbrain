@@ -4,6 +4,55 @@ All notable changes to Mdbrain will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Operator-triggered maintenance CLI (`bun run wiki:maintenance`, i.e.
+  `scripts/maintenance-run.ts`): `git-diff` (detect changed sources via
+  `maintenanceHash`, regenerate affected pages) and `dreamer` (promote
+  JSONL events through the 5-phase pipeline), with shared
+  `--scope/--scopeRef/--dry-run/--json` flags, a JSON run summary, nonzero
+  exit on item errors, and guaranteed store shutdown. Dry-run performs
+  detection only — no LLM calls, no writes.
+- An OpenAI-compatible LLM adapter for maintenance tooling
+  (`scripts/lib/openai-compatible-llm.ts`) with an explicit environment
+  contract (`MDBRAIN_LLM_*`: base URL, key, model, auth style, token
+  parameter, timeout, response byte cap, structured-outputs toggle),
+  retry-on-transient-only transport (429/500/502/503/504, max 2), API-key
+  redaction in every error message, refusal/truncation/malformed-JSON
+  typed errors, and a local JSON Schema subset validator
+  (`scripts/lib/json-schema.ts`) as the validation floor for every
+  response regardless of provider Structured Outputs support.
+- `DreamerClassifier` (phase 3 injection classification + phase 4 per-claim
+  confidence extraction with event provenance) and
+  `MaintenanceResult.extractionMode` disclosure (`"llm"` vs
+  `"heuristic-importer"`).
+
+### Changed
+
+- Dreamer promotion is now LLM-classified: phases 3–4 call a configured
+  classifier and phase 5 routes per verdict (`ignore` → disclosed
+  rejection, `contradiction` → contradiction counter, `new`/`update` →
+  pipeline-gated promotion). It fails closed with
+  `MaintenanceLlmUnconfiguredError` when no classifier is configured; the
+  legacy whole-event/0.7-confidence importer is an explicit
+  `--importer heuristic-importer` opt-in, never the default.
+- Root `bun run test` now sweeps the whole `scripts/` tree
+  (`bunx vitest run --dir scripts`; previously `scripts/*.test.ts` shell
+  expansion missed `scripts/lib/**`), and `bun run check-types`
+  additionally typechecks the scripts tree via `scripts/tsconfig.json`
+  (root `@types/node` and `vitest` devDependencies added; `apps/api` gains
+  a build-only tsconfig that excludes tests from dist so the
+  contract-parity cross-app import no longer needs a `@ts-expect-error`).
+
+### Removed
+
+- The GitHub/Confluence/Notion/Slack/CRM shell connectors
+  (`packages/wiki-engine/src/wiki-connectors.ts` and their exports/tests):
+  they reported success while writing nothing. The Obsidian connector
+  (beta) stays for real vault discovery and path-contained export; its
+  `ingest` now throws `ConnectorNotImplementedError` instead of returning
+  a zero-count success.
+
 ### Fixed
 
 - Memory delivery intents now persist an undefined-stripped payload: the

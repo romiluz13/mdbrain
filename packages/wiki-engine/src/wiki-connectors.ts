@@ -1,10 +1,12 @@
 // @mdbrain/wiki-engine — source connectors.
 //
-// Connector ABC for ingesting external sources into wiki_pages, plus concrete
-// implementations for Obsidian (bidirectional vault sync) and GitHub
-// (repo-as-source via git-diff maintenance).
+// Connector ABC for ingesting external sources into wiki_pages, plus the
+// Obsidian connector (beta): real vault discovery + path-contained export;
+// `ingest` throws `ConnectorNotImplementedError` until the post-sale roadmap
+// item lands. The GitHub/Confluence/Notion/Slack/CRM shell connectors were
+// removed (agreed plan W4): they reported success while writing nothing.
 //
-// T15 (Obsidian) + T16 (GitHub repo-as-source).
+// T15 (Obsidian).
 
 import { existsSync, readFileSync, watch, readdirSync, statSync } from "node:fs"
 import { join, extname, relative } from "node:path"
@@ -49,7 +51,7 @@ export interface ConnectorMapPermissionsResult {
 
 /** The Connector ABC — every source connector implements this interface. */
 export interface SourceConnector {
-	/** Connector name (e.g. "obsidian", "github"). */
+	/** Connector name (e.g. "obsidian"). */
 	name: string
 	/** Authenticate with the source (token, SSH, OAuth, or no-op for local). */
 	authenticate(): Promise<ConnectorAuthenticateResult>
@@ -71,8 +73,20 @@ export interface IngestOpts {
 	trustTier?: string
 }
 
+/** Thrown when a connector method is intentionally unimplemented, so the
+ *  connector surface stays honest about what ships. */
+export class ConnectorNotImplementedError extends Error {
+	constructor(
+		public readonly connectorName: string,
+		detail: string,
+	) {
+		super(`connector "${connectorName}": ${detail}`)
+		this.name = "ConnectorNotImplementedError"
+	}
+}
+
 // ---------------------------------------------------------------------------
-// Obsidian connector (T15) — bidirectional vault sync
+// Obsidian connector (T15) — beta
 // ---------------------------------------------------------------------------
 
 export interface ObsidianConnectorConfig {
@@ -82,9 +96,9 @@ export interface ObsidianConnectorConfig {
 	watch?: boolean
 }
 
-/** Obsidian connector: bidirectional sync between an Obsidian vault and
- *  wiki_pages. Changed .md files → OKF import → wiki_pages. Changed
- *  wiki_pages (where wikiSource="obsidian") → export to vault files. */
+/** Obsidian connector (beta): real vault discovery + path-contained export;
+ *  `ingest` throws `ConnectorNotImplementedError` until the post-sale
+ *  roadmap item lands. */
 export class ObsidianConnector implements SourceConnector {
 	name = "obsidian"
 	private config: ObsidianConnectorConfig
@@ -135,15 +149,15 @@ export class ObsidianConnector implements SourceConnector {
 	}
 
 	async ingest(
-		sources: DiscoveredSource[],
+		_sources: DiscoveredSource[],
 		_opts: IngestOpts,
 	): Promise<ConnectorIngestResult> {
-		return {
-			pagesProcessed: sources.length,
-			pagesCreated: 0,
-			pagesUpdated: 0,
-			errors: [],
-		}
+		// Honest surface: discovery and export are implemented; ingest is a
+		// post-sale roadmap item. Never report success without writing.
+		throw new ConnectorNotImplementedError(
+			"obsidian",
+			"ingest is a post-sale roadmap item (vault discovery and path-contained export are implemented today)",
+		)
 	}
 
 	mapPermissions(_source: DiscoveredSource): ConnectorMapPermissionsResult {
@@ -216,314 +230,6 @@ export class ObsidianConnector implements SourceConnector {
 				callback(fullPath)
 			}
 		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// GitHub repo-as-source connector (T16)
-// ---------------------------------------------------------------------------
-
-export interface GitHubConnectorConfig {
-	/** GitHub repo (owner/repo format or URL). */
-	repo: string
-	/** GitHub token or SSH key path. */
-	token?: string
-	/** Branch to track (default: main). */
-	branch?: string
-	/** File globs to include (default: all files). */
-	includeGlobs?: string[]
-}
-
-/** GitHub repo-as-source connector: uses git-diff maintenance to ingest
- *  changed files from a repo into wiki_pages. */
-export class GitHubConnector implements SourceConnector {
-	name = "github"
-	private config: GitHubConnectorConfig
-
-	constructor(_handle: WikiDbHandle, config: GitHubConnectorConfig) {
-		this.config = config
-	}
-
-	async authenticate(): Promise<ConnectorAuthenticateResult> {
-		if (!this.config.token) {
-			return {
-				authenticated: false,
-				error: "GitHub token is required",
-			}
-		}
-		return {
-			authenticated: true,
-			context: {
-				repo: this.config.repo,
-				branch: this.config.branch ?? "main",
-			},
-		}
-	}
-
-	async discover(cursor?: string): Promise<ConnectorDiscoverResult> {
-		// In a real implementation, this would use the GitHub API or `git diff`
-		// to find changed files since the cursor (git SHA). Here we accept
-		// a pre-discovered list of sources (passed by the caller or a git CLI).
-		// The cursor is the last processed git SHA.
-		return {
-			sources: [],
-			cursor: cursor ?? "HEAD",
-		}
-	}
-
-	async ingest(
-		sources: DiscoveredSource[],
-		_opts: IngestOpts,
-	): Promise<ConnectorIngestResult> {
-		return {
-			pagesProcessed: sources.length,
-			pagesCreated: 0,
-			pagesUpdated: 0,
-			errors: [],
-		}
-	}
-
-	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
-		// Map repo visibility to page privacyTier.
-		// Public repos → public; private repos → internal; secret repos → restricted.
-		const visibility = source.metadata?.visibility as string | undefined
-		if (visibility === "public") return { privacyTier: "public" }
-		if (visibility === "private") return { privacyTier: "internal" }
-		return { privacyTier: "restricted" }
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Enterprise connectors (T17-T20, read-first, v1)
-// ---------------------------------------------------------------------------
-
-// Confluence connector (T17)
-export interface ConfluenceConnectorConfig {
-	host: string // e.g. "https://yourorg.atlassian.net"
-	apiToken: string
-	email: string // Confluence API token is scoped to a user email
-	spaceKey?: string // limit to a single space
-}
-
-export class ConfluenceConnector implements SourceConnector {
-	name = "confluence"
-	private config: ConfluenceConnectorConfig
-
-	constructor(_handle: WikiDbHandle, config: ConfluenceConnectorConfig) {
-		this.config = config
-	}
-
-	async authenticate(): Promise<ConnectorAuthenticateResult> {
-		if (!this.config.apiToken || !this.config.email) {
-			return {
-				authenticated: false,
-				error: "Confluence API token and email are required",
-			}
-		}
-		return {
-			authenticated: true,
-			context: {
-				host: this.config.host,
-				spaceKey: this.config.spaceKey,
-			},
-		}
-	}
-
-	async discover(_cursor?: string): Promise<ConnectorDiscoverResult> {
-		// In production, this calls the Confluence REST API:
-		// GET /wiki/api/v2/spaces → GET /wiki/api/v2/spaces/{spaceId}/pages
-		// Here we return an empty list — the caller provides pre-fetched pages.
-		return { sources: [], cursor: _cursor }
-	}
-
-	async ingest(
-		sources: DiscoveredSource[],
-		_opts: IngestOpts,
-	): Promise<ConnectorIngestResult> {
-		return {
-			pagesProcessed: sources.length,
-			pagesCreated: 0,
-			pagesUpdated: 0,
-			errors: [],
-		}
-	}
-
-	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
-		const restrictions = source.metadata?.spaceRestrictions as
-			| string[]
-			| undefined
-		if (restrictions && restrictions.length > 0) {
-			return { privacyTier: "restricted" }
-		}
-		return { privacyTier: "internal" }
-	}
-}
-
-// Notion connector (T18)
-export interface NotionConnectorConfig {
-	integrationToken: string
-	databaseId?: string // limit to a single database
-}
-
-export class NotionConnector implements SourceConnector {
-	name = "notion"
-	private config: NotionConnectorConfig
-
-	constructor(_handle: WikiDbHandle, config: NotionConnectorConfig) {
-		this.config = config
-	}
-
-	async authenticate(): Promise<ConnectorAuthenticateResult> {
-		if (!this.config.integrationToken) {
-			return {
-				authenticated: false,
-				error: "Notion integration token is required",
-			}
-		}
-		return {
-			authenticated: true,
-			context: { databaseId: this.config.databaseId },
-		}
-	}
-
-	async discover(_cursor?: string): Promise<ConnectorDiscoverResult> {
-		// In production, this calls the Notion API:
-		// POST /v1/databases/{id}/query → iterate pages → GET /v1/blocks/{id}/children
-		return { sources: [], cursor: _cursor }
-	}
-
-	async ingest(
-		sources: DiscoveredSource[],
-		_opts: IngestOpts,
-	): Promise<ConnectorIngestResult> {
-		return {
-			pagesProcessed: sources.length,
-			pagesCreated: 0,
-			pagesUpdated: 0,
-			errors: [],
-		}
-	}
-
-	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
-		const sharedWith = source.metadata?.sharedWith as string[] | undefined
-		if (sharedWith && sharedWith.includes("public"))
-			return { privacyTier: "public" }
-		if (sharedWith && sharedWith.length === 0)
-			return { privacyTier: "restricted" }
-		return { privacyTier: "internal" }
-	}
-}
-
-// Slack connector (T19) — messages → events → Dreamer → wiki pages
-export interface SlackConnectorConfig {
-	botToken: string // xoxb-...
-	channelIds?: string[] // limit to specific channels
-}
-
-export class SlackConnector implements SourceConnector {
-	name = "slack"
-	private config: SlackConnectorConfig
-
-	constructor(_handle: WikiDbHandle, config: SlackConnectorConfig) {
-		this.config = config
-	}
-
-	async authenticate(): Promise<ConnectorAuthenticateResult> {
-		if (!this.config.botToken || !this.config.botToken.startsWith("xoxb-")) {
-			return {
-				authenticated: false,
-				error: "Slack bot token (xoxb-...) is required",
-			}
-		}
-		return {
-			authenticated: true,
-			context: { channelIds: this.config.channelIds },
-		}
-	}
-
-	async discover(cursor?: string): Promise<ConnectorDiscoverResult> {
-		// In production, this calls the Slack API:
-		// GET /api/conversations.list → GET /api/conversations.history?channel={id}&oldest={cursor}
-		return {
-			sources: [],
-			cursor: cursor ?? String(Math.floor(Date.now() / 1000)),
-		}
-	}
-
-	async ingest(
-		sources: DiscoveredSource[],
-		_opts: IngestOpts,
-	): Promise<ConnectorIngestResult> {
-		return {
-			pagesProcessed: sources.length,
-			pagesCreated: 0,
-			pagesUpdated: 0,
-			errors: [],
-		}
-	}
-
-	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
-		const isPrivate = source.metadata?.isPrivate as boolean | undefined
-		if (isPrivate) return { privacyTier: "restricted" }
-		return { privacyTier: "internal" }
-	}
-}
-
-// CRM connector (T20) — Salesforce/HubSpot records → entity + person/company pages
-export interface CrmConnectorConfig {
-	provider: "salesforce" | "hubspot"
-	apiKey: string // OAuth token or API key
-	instanceUrl?: string // Salesforce instance URL
-}
-
-export class CrmConnector implements SourceConnector {
-	name = "crm"
-	private config: CrmConnectorConfig
-
-	constructor(_handle: WikiDbHandle, config: CrmConnectorConfig) {
-		this.config = config
-	}
-
-	async authenticate(): Promise<ConnectorAuthenticateResult> {
-		if (!this.config.apiKey) {
-			return {
-				authenticated: false,
-				error: `${this.config.provider} API key is required`,
-			}
-		}
-		return {
-			authenticated: true,
-			context: {
-				provider: this.config.provider,
-				instanceUrl: this.config.instanceUrl,
-			},
-		}
-	}
-
-	async discover(_cursor?: string): Promise<ConnectorDiscoverResult> {
-		// In production, this calls the CRM API:
-		// Salesforce: GET /services/data/v58.0/query?q=SELECT... FROM Contact
-		// HubSpot: GET /crm/v3/objects/contacts
-		return { sources: [], cursor: _cursor }
-	}
-
-	async ingest(
-		sources: DiscoveredSource[],
-		_opts: IngestOpts,
-	): Promise<ConnectorIngestResult> {
-		return {
-			pagesProcessed: sources.length,
-			pagesCreated: 0,
-			pagesUpdated: 0,
-			errors: [],
-		}
-	}
-
-	mapPermissions(source: DiscoveredSource): ConnectorMapPermissionsResult {
-		const ownerId = source.metadata?.ownerId as string | undefined
-		const isShared = source.metadata?.isShared as boolean | undefined
-		if (ownerId && !isShared) return { privacyTier: "restricted" }
-		return { privacyTier: "internal" }
 	}
 }
 
