@@ -152,7 +152,13 @@ export async function detectChangedSources(
 			scope,
 			scopeRef,
 			"frontmatter.resource": source.path,
-		})) as unknown as { frontmatter?: { maintenanceHash?: string } } | null
+		})) as unknown as {
+			state?: string
+			frontmatter?: { maintenanceHash?: string }
+		} | null
+
+		// A deleted source stays deleted until an explicit restore operation.
+		if (existing?.state === "superseded") continue
 
 		const previousHash = existing?.frontmatter?.maintenanceHash
 		if (!previousHash || previousHash !== currentHash) {
@@ -201,7 +207,11 @@ export async function runGitDiffMaintenance(
 				slug,
 				opts.scope,
 				opts.scopeRef,
+				undefined,
+				undefined,
+				{ includeSuperseded: true },
 			)
+			if (existing?.state === "superseded") continue
 
 			// Call the LLM with the changed snippet + current page state.
 			const generated = await llmGenerate({
@@ -395,19 +405,44 @@ export async function runDreamerPromotion(
 				})
 				if (searchResult.results.length > 0) {
 					slug = searchResult.results[0].page.slug
-					existing = await getWikiPage(handle, slug, opts.scope, opts.scopeRef)
+					existing = await getWikiPage(
+						handle,
+						slug,
+						opts.scope,
+						opts.scopeRef,
+						undefined,
+						undefined,
+						{ includeSuperseded: true },
+					)
 				} else {
 					// No semantic match above the floor — fall back to hash slug
 					// lookup (backward compat)
-					existing = await getWikiPage(handle, slug, opts.scope, opts.scopeRef)
+					existing = await getWikiPage(
+						handle,
+						slug,
+						opts.scope,
+						opts.scopeRef,
+						undefined,
+						undefined,
+						{ includeSuperseded: true },
+					)
 				}
 			} catch (err) {
 				// Search unavailable (WikiSearchUnavailableError: no mongot /
 				// index outage) — degrade to hash-slug consolidation instead of
 				// skipping the event entirely.
 				if (!(err instanceof WikiSearchUnavailableError)) throw err
-				existing = await getWikiPage(handle, slug, opts.scope, opts.scopeRef)
+				existing = await getWikiPage(
+					handle,
+					slug,
+					opts.scope,
+					opts.scopeRef,
+					undefined,
+					undefined,
+					{ includeSuperseded: true },
+				)
 			}
+			if (existing?.state === "superseded") continue
 
 			// Phase 3 + 4 — injection classification + entity/claim extraction.
 			// LLM path (default): the classifier routes phase 5 and extracts

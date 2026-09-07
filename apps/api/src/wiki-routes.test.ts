@@ -569,6 +569,10 @@ describe("wiki routes", () => {
 		})
 
 		it("hard-deletes when hard=true", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue({
+				...SAMPLE_PAGE,
+				state: "superseded",
+			})
 			wikiMocks.deleteWikiPage.mockResolvedValue(true)
 			const res = await createApp().request(
 				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1&hard=true",
@@ -579,6 +583,18 @@ describe("wiki routes", () => {
 			expect(json.hard).toBe(true)
 			const [, , , , opts] = wikiMocks.deleteWikiPage.mock.calls[0]
 			expect(opts.hard).toBe(true)
+			expect(wikiMocks.getWikiPage).toHaveBeenCalledWith(
+				{ db: {}, prefix: "test_" },
+				"tables/accounts",
+				"workspace",
+				"ws-1",
+				expect.objectContaining({
+					scope: "workspace",
+					scopeRef: "ws-1",
+				}),
+				{},
+				{ includeSuperseded: true },
+			)
 		})
 
 		it("returns 404 when deleting a missing page", async () => {

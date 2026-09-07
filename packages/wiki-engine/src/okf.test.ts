@@ -48,7 +48,9 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 				if (
 					(!filter.slug || doc.slug === filter.slug) &&
 					(!filter.scope || doc.scope === filter.scope) &&
-					(!filter.scopeRef || doc.scopeRef === filter.scopeRef)
+					(!filter.scopeRef || doc.scopeRef === filter.scopeRef) &&
+					(!(filter.state as { $ne?: unknown } | undefined)?.$ne ||
+						doc.state !== (filter.state as { $ne: unknown }).$ne)
 				) {
 					return doc
 				}
@@ -88,7 +90,12 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 		findOneAndUpdate: vi.fn(async (filter: Document, update: Document) => {
 			const k = store.key(filter.slug, filter.scope, filter.scopeRef)
 			const existing = store.docs.get(k)
-			if (!existing) return null
+			if (
+				!existing ||
+				((filter.state as { $ne?: unknown } | undefined)?.$ne &&
+					existing.state === (filter.state as { $ne: unknown }).$ne)
+			)
+				return null
 			const updated = {
 				...existing,
 				...update.$set,
@@ -183,6 +190,33 @@ describe("OKF import + export round-trip", () => {
 			updatedAt: new Date(),
 		})
 	}
+
+	it("preserves superseded pages in a full-fidelity OKF backup", async () => {
+		addExportPage("archived-page")
+		const key = store.key("archived-page", "workspace", "ws-1")
+		const page = store.docs.get(key)
+		if (!page) throw new Error("expected archived test page")
+		store.docs.set(key, {
+			...page,
+			state: "superseded",
+			validTo: new Date(),
+		})
+		const exportDir = path.join(tmpDir, "exported-archive")
+
+		const result = await exportOkfBundle(handle, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			outDir: exportDir,
+			governance: {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "admin",
+			},
+		})
+
+		expect(result.exported).toBe(1)
+		expect(fs.existsSync(path.join(exportDir, "archived-page.md"))).toBe(true)
+	})
 
 	it("rejects a parent-traversal page slug before writing the export", async () => {
 		const slug = "../escaped-parent"
@@ -899,6 +933,69 @@ Bundle content.
 		const unchanged = store.docs.get(key)!
 		expect(unchanged.title).toBe("Manually Authored Accounts Page")
 		expect(unchanged.body).toBe("Hand-written content.")
+	})
+
+	it("reports and skips a tombstoned concept without aborting the bundle", async () => {
+		const tombstoneKey = store.key("tables/accounts", "workspace", "ws-1")
+		store.docs.set(tombstoneKey, {
+			_id: { toString: () => "deleted-id" },
+			slug: "tables/accounts",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			title: "Deleted Accounts",
+			body: "Deleted content.",
+			frontmatter: { type: "table" },
+			claims: [],
+			questions: [],
+			relationships: [],
+			okfConceptId: "tables/accounts",
+			state: "superseded",
+			revision: 2,
+		})
+		const srcDir = path.join(tmpDir, "src-tombstone")
+		writeBundle(srcDir, {
+			"tables/accounts.md": `---
+type: table
+title: Bundle Accounts
+---
+
+Must not restore this page.
+`,
+			"tables/users.md": `---
+type: table
+title: Bundle Users
+---
+
+This live concept should still import.
+`,
+		})
+
+		const result = await importOkfBundle(handle, srcDir, {
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			okfBundleId: "bundle-tombstone",
+			session: {} as never,
+		})
+
+		expect(result.imported).toBe(1)
+		expect(result.skipped).toBe(1)
+		expect(result.conceptIds).toEqual(["tables/users"])
+		expect(result.errors).toEqual([
+			{
+				conceptId: "tables/accounts",
+				error: expect.stringMatching(/superseded|deleted/i),
+			},
+		])
+		expect(store.docs.get(tombstoneKey)).toMatchObject({
+			title: "Deleted Accounts",
+			body: "Deleted content.",
+			state: "superseded",
+			revision: 2,
+		})
+		expect(
+			store.docs.get(store.key("tables/users", "workspace", "ws-1")),
+		).toMatchObject({ title: "Bundle Users", state: "active" })
 	})
 
 	it("allows re-importing a bundle over a page it previously OKF-imported", async () => {

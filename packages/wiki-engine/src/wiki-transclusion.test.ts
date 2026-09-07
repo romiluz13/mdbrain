@@ -29,14 +29,21 @@ describe("extractTransclusionTargets", () => {
 	})
 })
 
-function mockHandle(pages: Record<string, { body: string }>): WikiDbHandle {
+function mockHandle(
+	pages: Record<string, { body: string; state?: string }>,
+): WikiDbHandle {
 	const coll = {
 		findOne: vi.fn(async (filter: Document) => {
 			const slug = (filter.$and?.[0] as { slug?: string } | undefined)?.slug
 			if (!slug || !pages[slug]) return null
+			const excludesSuperseded = (filter.$and as Document[] | undefined)?.some(
+				(part) => part.state?.$ne === "superseded",
+			)
+			if (pages[slug].state === "superseded" && excludesSuperseded) return null
 			return {
 				slug,
 				body: pages[slug].body,
+				state: pages[slug].state ?? "active",
 				scope: "workspace",
 				scopeRef: "ws-1",
 			}
@@ -92,6 +99,19 @@ describe("resolveTransclusions", () => {
 		const handle = mockHandle({})
 		const out = await resolveTransclusions(handle, "{{page:missing}}", CTX)
 		expect(out).toContain("not found or not accessible: missing")
+	})
+
+	it("does not inline content from a superseded page", async () => {
+		const handle = mockHandle({
+			source: { body: "SECRET-GONE-CONTENT", state: "superseded" },
+		})
+		const out = await resolveTransclusions(
+			handle,
+			"Before. {{page:source}} After.",
+			CTX,
+		)
+		expect(out).toContain("not found or not accessible: source")
+		expect(out).not.toContain("SECRET-GONE-CONTENT")
 	})
 
 	it("degrades to an inline notice for a missing named section", async () => {

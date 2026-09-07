@@ -444,6 +444,102 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 		expect(list.map((r) => r.editKind)).toEqual(["delete", "update", "create"])
 	})
 
+	it("soft-deleted pages stay inert but remain hard-deletable after a governed administrative read (F1)", async () => {
+		const slug = "concepts/f1-delete-lifecycle"
+		await createWikiPage(
+			handle,
+			pageInput({
+				slug,
+				permissions: {
+					privacyTier: "restricted",
+					allowedSubjects: ["user:deleter"],
+				},
+			}),
+		)
+
+		await expect(deleteWikiPage(handle, slug, SCOPE, SCOPE_REF)).resolves.toBe(
+			true,
+		)
+		await expect(
+			getWikiPage(handle, slug, SCOPE, SCOPE_REF),
+		).resolves.toBeUndefined()
+		await expect(
+			updateWikiPage(handle, slug, SCOPE, SCOPE_REF, {
+				summary: "must not restore the tombstone",
+			}),
+		).resolves.toBeUndefined()
+		await expect(deleteWikiPage(handle, slug, SCOPE, SCOPE_REF)).resolves.toBe(
+			false,
+		)
+
+		const beforeHardDelete = await listWikiPageRevisions(handle, {
+			pageSlug: slug,
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+		})
+		expect(beforeHardDelete.map((r) => r.editKind)).toEqual([
+			"delete",
+			"create",
+		])
+
+		const denied = await getWikiPage(
+			handle,
+			slug,
+			SCOPE,
+			SCOPE_REF,
+			{
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				trustTier: "standard",
+				subjectId: "user:other",
+			},
+			undefined,
+			{ includeSuperseded: true },
+		)
+		expect(denied).toBeUndefined()
+
+		const authorized = await getWikiPage(
+			handle,
+			slug,
+			SCOPE,
+			SCOPE_REF,
+			{
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				trustTier: "standard",
+				subjectId: "user:deleter",
+			},
+			undefined,
+			{ includeSuperseded: true },
+		)
+		expect(authorized?.state).toBe("superseded")
+		await expect(
+			deleteWikiPage(handle, slug, SCOPE, SCOPE_REF, { hard: true }),
+		).resolves.toBe(true)
+
+		const afterHardDelete = await listWikiPageRevisions(handle, {
+			pageSlug: slug,
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+		})
+		expect(afterHardDelete.map((r) => r.editKind)).toEqual([
+			"delete",
+			"delete",
+			"create",
+		])
+		const hardDeleteRevision = await getWikiPageRevision(handle, {
+			pageSlug: slug,
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			revision: 3,
+		})
+		expect(hardDeleteRevision?.snapshot).toMatchObject({
+			slug,
+			state: "superseded",
+			revision: 2,
+		})
+	})
+
 	// WS-5 item 4 — question patches merge against the page's existing
 	// questions by id: a read-modify-write caller re-submitting the array it
 	// read cannot clobber status/createdAt/answeredByClaimId, and the writes

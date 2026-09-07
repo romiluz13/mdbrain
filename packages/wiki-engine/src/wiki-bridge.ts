@@ -417,7 +417,9 @@ export async function createWikiPage(
 	}
 }
 
-/** Gets a wiki page by slug within a scope. Returns undefined if not found. */
+/** Gets a wiki page by slug within a scope. Returns undefined if not found.
+ *  Superseded pages are hidden unless an administrative caller explicitly
+ *  requests them. */
 export async function getWikiPage(
 	handle: WikiDbHandle,
 	slug: string,
@@ -425,9 +427,15 @@ export async function getWikiPage(
 	scopeRef: string,
 	governance?: GovernanceContext,
 	session?: ClientSession,
+	opts: { includeSuperseded?: boolean } = {},
 ): Promise<WikiPageView | undefined> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
-	const baseFilter: Record<string, unknown> = { slug, scope, scopeRef }
+	const baseFilter: Record<string, unknown> = {
+		slug,
+		scope,
+		scopeRef,
+		...(opts.includeSuperseded ? {} : { state: { $ne: "superseded" } }),
+	}
 	if (governance) {
 		const govFilter = buildGovernanceFilter(governance)
 		// Merge: the $and from governance + the equality fields coexist as an
@@ -579,9 +587,11 @@ export async function updateWikiPage(
 
 	// Single read of the old page, used for (a) auto-embed text merge,
 	// (b) removed-relationship-target detection, (c) the existing-claims
-	// merge below, and (d) the compare-and-swap revision predicate.
+	// merge below, and (d) the compare-and-swap revision predicate. Exclude
+	// superseded pages here so write-pipeline side effects never run for a
+	// target that was already soft-deleted when this update began.
 	const oldPage = (await coll.findOne(
-		{ slug, scope, scopeRef },
+		{ slug, scope, scopeRef, state: { $ne: "superseded" } },
 		opts.session ? { session: opts.session } : undefined,
 	)) as {
 		title?: string
@@ -597,6 +607,8 @@ export async function updateWikiPage(
 			answeredByClaimId?: string
 		}>
 	} | null
+
+	if (oldPage === null) return undefined
 
 	// Recompute the auto-embed text field when title/summary/body changes.
 	// Uses merged old + new values so partial patches still produce correct text.
@@ -705,10 +717,13 @@ export async function updateWikiPage(
 	// oldPage. If a concurrent writer changed the page in between, the filter
 	// matches nothing and we surface a conflict instead of silently writing
 	// a stale merge (stale-read RMW).
-	const updateFilter: Record<string, unknown> = { slug, scope, scopeRef }
-	if (oldPage !== null) {
-		updateFilter.revision = Number(oldPage.revision ?? 1)
+	const updateFilter: Record<string, unknown> = {
+		slug,
+		scope,
+		scopeRef,
+		state: { $ne: "superseded" },
 	}
+	updateFilter.revision = Number(oldPage.revision ?? 1)
 	const result = await coll.findOneAndUpdate(
 		updateFilter,
 		{ $set: omitUndefined(setFields), $inc: { revision: 1 } },
@@ -717,24 +732,25 @@ export async function updateWikiPage(
 	const value = result ?? null
 	if (!value) {
 		// Distinguish "page gone" (not found) from "revision moved" (conflict).
-		if (oldPage !== null) {
-			const stillExists = await coll.findOne(
-				{ slug, scope, scopeRef },
-				opts.session
-					? {
-							session: opts.session,
-							projection: { _id: 1 },
-						}
-					: { projection: { _id: 1 } },
+		// This probe intentionally remains state-blind: once the initial read
+		// observed an active page, a concurrent update or soft delete that wins
+		// the CAS race preserves the existing revision-conflict contract.
+		const stillExists = await coll.findOne(
+			{ slug, scope, scopeRef },
+			opts.session
+				? {
+						session: opts.session,
+						projection: { _id: 1 },
+					}
+				: { projection: { _id: 1 } },
+		)
+		if (stillExists) {
+			throw new WikiRevisionConflictError(
+				slug,
+				scope,
+				scopeRef,
+				Number(oldPage.revision ?? 1),
 			)
-			if (stillExists) {
-				throw new WikiRevisionConflictError(
-					slug,
-					scope,
-					scopeRef,
-					Number(oldPage.revision ?? 1),
-				)
-			}
 		}
 		return undefined
 	}

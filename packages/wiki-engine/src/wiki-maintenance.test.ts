@@ -49,7 +49,9 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 					(!filter.scope || doc.scope === filter.scope) &&
 					(!filter.scopeRef || doc.scopeRef === filter.scopeRef) &&
 					(!filter["frontmatter.resource"] ||
-						doc.frontmatter?.resource === filter["frontmatter.resource"])
+						doc.frontmatter?.resource === filter["frontmatter.resource"]) &&
+					(!(filter.state as { $ne?: unknown } | undefined)?.$ne ||
+						doc.state !== (filter.state as { $ne: unknown }).$ne)
 				) {
 					return doc
 				}
@@ -67,7 +69,12 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 		findOneAndUpdate: vi.fn(async (filter: Document, update: Document) => {
 			const k = store.key(filter.slug, filter.scope, filter.scopeRef)
 			const existing = store.docs.get(k)
-			if (!existing) return null
+			if (
+				!existing ||
+				((filter.state as { $ne?: unknown } | undefined)?.$ne &&
+					existing.state === (filter.state as { $ne: unknown }).$ne)
+			)
+				return null
 			const updated = {
 				...existing,
 				...update.$set,
@@ -189,6 +196,31 @@ describe("detectChangedSources", () => {
 		)
 		expect(changed).toHaveLength(0)
 	})
+
+	it("does not schedule a source whose tracking page is superseded", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		store.docs.set(store.key("sources/src/api.ts", SCOPE, SCOPE_REF), {
+			slug: "sources/src/api.ts",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			state: "superseded",
+			frontmatter: {
+				type: "source",
+				resource: "src/api.ts",
+				maintenanceHash: computeMaintenanceHash("old content"),
+			},
+		})
+
+		const changed = await detectChangedSources(
+			h,
+			[{ path: "src/api.ts", content: "new content" }],
+			SCOPE,
+			SCOPE_REF,
+		)
+
+		expect(changed).toEqual([])
+	})
 })
 
 describe("runGitDiffMaintenance", () => {
@@ -255,6 +287,43 @@ describe("runGitDiffMaintenance", () => {
 			store.key("sources/src/api.ts", SCOPE, SCOPE_REF),
 		)
 		expect(page?.summary).toBe("New summary.")
+	})
+
+	it("skips a superseded target without invoking the LLM or mutating it", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const key = store.key("sources/src/api.ts", SCOPE, SCOPE_REF)
+		store.docs.set(key, {
+			_id: { toString: () => "deleted-source" },
+			slug: "sources/src/api.ts",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			state: "superseded",
+			title: "Deleted source",
+			summary: "Deleted.",
+			body: "Deleted body.",
+			frontmatter: { type: "source", resource: "src/api.ts" },
+			claims: [],
+			revision: 2,
+		})
+		const llmGenerate = vi.fn()
+
+		const result = await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "new content" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+
+		expect(result.pagesProcessed).toBe(1)
+		expect(result.pagesRegenerated).toBe(0)
+		expect(result.errors).toEqual([])
+		expect(llmGenerate).not.toHaveBeenCalled()
+		expect(store.docs.get(key)).toMatchObject({
+			state: "superseded",
+			title: "Deleted source",
+			revision: 2,
+		})
 	})
 })
 
@@ -454,6 +523,42 @@ describe("runDreamerPromotion", () => {
 		)
 		expect(result.pagesRegenerated).toBe(0)
 		expect(result.claimsAdded).toBe(0)
+	})
+
+	it("skips a superseded fallback target without classifying or mutating it", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const key = store.key("events/evt-1", SCOPE, SCOPE_REF)
+		store.docs.set(key, {
+			_id: { toString: () => "deleted-event" },
+			slug: "events/evt-1",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			state: "superseded",
+			title: "Deleted event",
+			summary: "Deleted.",
+			body: "Deleted body.",
+			frontmatter: { type: "entity" },
+			claims: [],
+			revision: 2,
+		})
+		const classifier = vi.fn(fakeClassifier())
+
+		const result = await runDreamerPromotion(
+			h,
+			[{ id: "evt-1", text: "New event text" }],
+			{ scope: SCOPE, scopeRef: SCOPE_REF, classifier },
+		)
+
+		expect(result.pagesProcessed).toBe(1)
+		expect(result.pagesRegenerated).toBe(0)
+		expect(result.errors).toEqual([])
+		expect(classifier).not.toHaveBeenCalled()
+		expect(store.docs.get(key)).toMatchObject({
+			state: "superseded",
+			title: "Deleted event",
+			revision: 2,
+		})
 	})
 
 	it("uses the vector-only recipe so the 0.65 floor is a cosine gate", async () => {

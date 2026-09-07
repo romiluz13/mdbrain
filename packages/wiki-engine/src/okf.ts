@@ -515,7 +515,8 @@ export async function importOkfBundle(
 			let mutationStarted = false
 			try {
 				const input = conceptToWikiInput(concept, opts, indexRelationships)
-				// Upsert by slug+scope: if the page exists, update; else create.
+				// Administrative existence check: a tombstone occupies the unique
+				// slug but must never be restored implicitly by an import.
 				const existing = await getWikiPage(
 					handle,
 					input.slug,
@@ -523,7 +524,16 @@ export async function importOkfBundle(
 					input.scopeRef,
 					undefined,
 					session,
+					{ includeSuperseded: true },
 				)
+				if (existing?.state === "superseded") {
+					result.errors.push({
+						conceptId: concept.conceptId,
+						error: `wiki page "${input.slug}" is superseded; restore it explicitly before importing`,
+					})
+					result.skipped++
+					continue
+				}
 				if (existing) {
 					// Only allow overwrite of pages that were themselves produced by a
 					// prior OKF import. A page authored manually through the wiki UI (no

@@ -141,7 +141,9 @@ export async function getWikiPageGoverned(
 ): Promise<Document | null> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const filter = buildGovernanceFilter(ctx, opts)
-	return coll.findOne({ $and: [{ slug }, filter] })
+	return coll.findOne({
+		$and: [{ slug }, { state: { $ne: "superseded" } }, filter],
+	})
 }
 
 export async function getWikiPageByIdGoverned(
@@ -154,7 +156,11 @@ export async function getWikiPageByIdGoverned(
 	const filter = buildGovernanceFilter(ctx, opts)
 	const _id = ObjectId.isValid(id) ? new ObjectId(id) : id
 	return coll.findOne({
-		$and: [{ _id }, filter] as Filter<Document>[],
+		$and: [
+			{ _id },
+			{ state: { $ne: "superseded" } },
+			filter,
+		] as Filter<Document>[],
 	})
 }
 
@@ -177,7 +183,9 @@ export async function graphTraversalGoverned(
 		const { slug, depth } = queue.shift()!
 		if (visited.has(slug) || depth > maxDepth) continue
 		visited.add(slug)
-		const page = await coll.findOne({ $and: [{ slug }, govFilter] })
+		const page = await coll.findOne({
+			$and: [{ slug }, { state: { $ne: "superseded" } }, govFilter],
+		})
 		if (!page) continue
 		result.push(page)
 		if (depth < maxDepth && Array.isArray(page.relationships)) {

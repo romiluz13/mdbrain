@@ -2621,6 +2621,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					scopeRef,
 					buildWikiGovContext(c, scope, scopeRef),
 					session,
+					hard ? { includeSuperseded: true } : undefined,
 				)
 				if (!target) return false
 				const result = await deleteWikiPage(handle, slug, scope, scopeRef, {

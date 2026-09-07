@@ -16,6 +16,7 @@ import {
 	canPropagateCrossScope,
 	getWikiPageGoverned,
 	getWikiPageByIdGoverned,
+	graphTraversalGoverned,
 	filterPagesByGovernance,
 	type GovernanceContext,
 } from "./wiki-governance.js"
@@ -102,6 +103,10 @@ function matchesFilter(doc: Document, filter: Document): boolean {
 			if (value.$size !== undefined) {
 				if (Array.isArray(current) && current.length !== value.$size)
 					return false
+				continue
+			}
+			if (value.$ne !== undefined) {
+				if (current === value.$ne) return false
 				continue
 			}
 		}
@@ -281,6 +286,48 @@ describe("cross-scope leak prevention (arXiv GET-by-id bug)", () => {
 		const filtered = filterPagesByGovernance([PAGE_A, PAGE_B], ctxA)
 		expect(filtered).toHaveLength(1)
 		expect(filtered[0].slug).toBe("page-a")
+	})
+})
+
+describe("temporal supersession on ordinary governed reads", () => {
+	const SUPERSEDED_PAGE = {
+		...PAGE_A,
+		_id: { toString: () => "id-superseded" },
+		slug: "page-superseded",
+		state: "superseded",
+		relationships: [{ targetPageSlug: "page-a" }],
+	}
+	const ctx: GovernanceContext = {
+		scope: SCOPE_A,
+		scopeRef: SCOPE_A_REF,
+		trustTier: "standard",
+	}
+
+	it("does not return a superseded page by slug", async () => {
+		const result = await getWikiPageGoverned(
+			handle([SUPERSEDED_PAGE]),
+			SUPERSEDED_PAGE.slug,
+			ctx,
+		)
+		expect(result).toBeNull()
+	})
+
+	it("does not return a superseded page by id", async () => {
+		const result = await getWikiPageByIdGoverned(
+			handle([SUPERSEDED_PAGE]),
+			"id-superseded",
+			ctx,
+		)
+		expect(result).toBeNull()
+	})
+
+	it("does not include or traverse through a superseded graph node", async () => {
+		const result = await graphTraversalGoverned(
+			handle([SUPERSEDED_PAGE, PAGE_A]),
+			SUPERSEDED_PAGE.slug,
+			ctx,
+		)
+		expect(result).toEqual([])
 	})
 })
 

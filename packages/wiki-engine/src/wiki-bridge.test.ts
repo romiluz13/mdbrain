@@ -55,6 +55,22 @@ function mockDb(): { db: Db; coll: Collection } {
 	return { db, coll }
 }
 
+function mockActivePage(
+	coll: Collection,
+	overrides: Record<string, unknown> = {},
+): void {
+	;(coll.findOne as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+		slug: "x",
+		scope: "workspace",
+		scopeRef: "ws-1",
+		state: "active",
+		revision: 1,
+		claims: [],
+		relationships: [],
+		...overrides,
+	})
+}
+
 function handle(): WikiDbHandle {
 	const { db } = mockDb()
 	return { db, prefix: "test_" }
@@ -185,6 +201,65 @@ describe("getWikiPage", () => {
 				slug: "x",
 				scope: "workspace",
 				scopeRef: "ws-1",
+				state: { $ne: "superseded" },
+			},
+			undefined,
+		)
+	})
+
+	it("does not return a superseded page through an ordinary exact read", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(coll.findOne as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			async (filter: Record<string, unknown>) =>
+				(filter.state as { $ne?: string } | undefined)?.$ne === "superseded"
+					? null
+					: {
+							_id: { toString: () => "id-superseded" },
+							...VALID_INPUT,
+							state: "superseded",
+							revision: 2,
+						},
+		)
+
+		await expect(
+			getWikiPage(h, "tables/accounts", "workspace", "ws-1"),
+		).resolves.toBeUndefined()
+	})
+
+	it("returns a superseded page only for an explicit administrative read", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			_id: { toString: () => "id-superseded" },
+			...VALID_INPUT,
+			state: "superseded",
+			revision: 2,
+		})
+
+		await expect(
+			getWikiPage(
+				h,
+				"tables/accounts",
+				"workspace",
+				"ws-1",
+				undefined,
+				undefined,
+				{ includeSuperseded: true },
+			),
+		).resolves.toEqual(
+			expect.objectContaining({
+				slug: "tables/accounts",
+				state: "superseded",
+			}),
+		)
+		expect(coll.findOne).toHaveBeenCalledWith(
+			{
+				slug: "tables/accounts",
+				scope: "workspace",
+				scopeRef: "ws-1",
 			},
 			undefined,
 		)
@@ -212,11 +287,18 @@ describe("updateWikiPage", () => {
 	it("bumps revision via $inc and sets updatedAt", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
+		mockActivePage(coll)
 		await updateWikiPage(h, "x", "workspace", "ws-1", { summary: "new" })
 		const [filter, update] = (
 			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
 		).mock.calls[0]
-		expect(filter).toEqual({ slug: "x", scope: "workspace", scopeRef: "ws-1" })
+		expect(filter).toEqual({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			state: { $ne: "superseded" },
+			revision: 1,
+		})
 		expect(update.$inc).toEqual({ revision: 1 })
 		expect(update.$set.updatedAt).toBeInstanceOf(Date)
 		expect(update.$set.summary).toBe("new")
@@ -225,6 +307,7 @@ describe("updateWikiPage", () => {
 	it("records a revision entry with editKind=update after a successful update", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
+		mockActivePage(coll)
 		;(
 			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
 		).mockResolvedValueOnce({
@@ -253,6 +336,7 @@ describe("updateWikiPage", () => {
 	it("normalizes patched questions (adds status + createdAt)", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
+		mockActivePage(coll)
 		await updateWikiPage(h, "x", "workspace", "ws-1", {
 			questions: [{ id: "q1", text: "What is the balance?" }],
 		})
@@ -449,7 +533,46 @@ describe("updateWikiPage", () => {
 			scope: "workspace",
 			scopeRef: "ws-1",
 			revision: 4,
+			state: { $ne: "superseded" },
 		})
+	})
+
+	it("returns undefined when the target is superseded at the initial read", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const findOne = coll.findOne as unknown as ReturnType<typeof vi.fn>
+		findOne.mockImplementationOnce(async (filter: Record<string, unknown>) =>
+			(filter.state as { $ne?: string } | undefined)?.$ne === "superseded"
+				? null
+				: {
+						slug: "x",
+						scope: "workspace",
+						scopeRef: "ws-1",
+						state: "superseded",
+						revision: 5,
+					},
+		)
+		;(
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mockImplementationOnce(async (filter: Record<string, unknown>) =>
+			(filter.state as { $ne?: string } | undefined)?.$ne === "superseded"
+				? null
+				: {
+						_id: { toString: () => "id-x" },
+						slug: "x",
+						scope: "workspace",
+						scopeRef: "ws-1",
+						state: "superseded",
+						revision: 6,
+					},
+		)
+
+		await expect(
+			updateWikiPage(h, "x", "workspace", "ws-1", {
+				claims: [{ id: "c-new", text: "must not run against a tombstone" }],
+			}),
+		).resolves.toBeUndefined()
+		expect(coll.findOneAndUpdate).not.toHaveBeenCalled()
 	})
 
 	it("throws WikiRevisionConflictError when the revision moved (stale-read RMW)", async () => {
@@ -471,6 +594,35 @@ describe("updateWikiPage", () => {
 		await expect(
 			updateWikiPage(h, "x", "workspace", "ws-1", { summary: "stale merge" }),
 		).rejects.toBeInstanceOf(WikiRevisionConflictError)
+	})
+
+	it("keeps the 409 conflict contract when a soft delete wins after an active initial read", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const findOne = coll.findOne as unknown as ReturnType<typeof vi.fn>
+		findOne.mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			state: "active",
+			revision: 4,
+			claims: [],
+			relationships: [],
+		})
+		// The CAS misses after a concurrent soft delete. The post-CAS
+		// existence probe intentionally remains state-blind, so it still sees
+		// the tombstone and preserves the existing race classification.
+		findOne.mockResolvedValueOnce({ _id: 1, state: "superseded" })
+
+		await expect(
+			updateWikiPage(h, "x", "workspace", "ws-1", { summary: "late" }),
+		).rejects.toBeInstanceOf(WikiRevisionConflictError)
+		const [, followUpFilter] = findOne.mock.calls
+		expect(followUpFilter[0]).toEqual({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+		})
 	})
 
 	it("returns undefined (not a conflict) when the page vanished entirely", async () => {
@@ -525,6 +677,7 @@ describe("updateWikiPage", () => {
 	it("records the ACTUAL calling principal as the revision editor", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
+		mockActivePage(coll)
 		const revisionsColl = mockCollection()
 		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
 			(name: string) =>
@@ -561,6 +714,7 @@ describe("updateWikiPage", () => {
 	it("falls back to sourceAgent for engine-internal callers with no editor", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
+		mockActivePage(coll)
 		const revisionsColl = mockCollection()
 		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
 			(name: string) =>
