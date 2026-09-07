@@ -192,6 +192,34 @@ describe("wiki routes", () => {
 		expect(json.deliveries[0]).not.toHaveProperty("principalSubjectId")
 	})
 
+	it("lists deliveries under the canonical authorized scope", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "admin-secret",
+				scopes: ["workspace"],
+				scopeRefs: ["ws-1"],
+				capabilities: ["administer"],
+			},
+		])
+		wikiMocks.listMemoryDeliveryIntents.mockResolvedValue([])
+
+		const res = await createApp().request(
+			"/v1/admin/deliveries?scope=%20workspace%20&scopeRef=%20ws-1%20",
+			{ headers: { Authorization: "Bearer admin-secret" } },
+		)
+
+		expect(res.status).toBe(200)
+		expect(wikiMocks.listMemoryDeliveryIntents).toHaveBeenCalledWith(
+			{ db: {}, prefix: "test_" },
+			{
+				state: undefined,
+				scope: "workspace",
+				scopeRef: "ws-1",
+				limit: undefined,
+			},
+		)
+	})
+
 	afterEach(() => {
 		process.env = { ...prevEnv }
 	})
@@ -221,6 +249,38 @@ describe("wiki routes", () => {
 					principalSubjectId: "development:anonymous",
 				}),
 				session,
+			)
+		})
+
+		it("stores padded-but-equal identity under the canonical wiki partition", async () => {
+			wikiMocks.createWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			const res = await createApp().request("/v1/wiki", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					...VALID_BODY,
+					scope: " workspace ",
+					scopeRef: " ws-1 ",
+				}),
+			})
+
+			expect(res.status).toBe(201)
+			const [handle, input, options] = wikiMocks.createWikiPage.mock.calls[0]
+			expect(input).toMatchObject({
+				scope: "workspace",
+				scopeRef: "ws-1",
+			})
+			expect(wikiMocks.recordWikiMutationIntent).toHaveBeenCalledWith(
+				handle,
+				expect.objectContaining({
+					scope: "workspace",
+					scopeRef: "ws-1",
+					payload: expect.objectContaining({
+						scope: "workspace",
+						scopeRef: "ws-1",
+					}),
+				}),
+				options.session,
 			)
 		})
 
@@ -289,6 +349,25 @@ describe("wiki routes", () => {
 					scopeRef: "ws-1",
 					trustTier: "admin",
 					subjectId: "development:anonymous",
+				}),
+			)
+		})
+
+		it("reads padded-but-equal identity from the canonical wiki partition", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=%20workspace%20&scopeRef=%20ws-1%20",
+			)
+
+			expect(res.status).toBe(200)
+			expect(wikiMocks.getWikiPage).toHaveBeenCalledWith(
+				{ db: {}, prefix: "test_" },
+				"tables/accounts",
+				"workspace",
+				"ws-1",
+				expect.objectContaining({
+					scope: "workspace",
+					scopeRef: "ws-1",
 				}),
 			)
 		})

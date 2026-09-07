@@ -3030,6 +3030,189 @@ describe("createApp", () => {
 		})
 	})
 
+	it("accepts padded-but-equal event identity and dispatches the canonical tuple", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "identity-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["ws:mdbrain"],
+			},
+		])
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer identity-secret",
+				"Content-Type": "application/json",
+				"Idempotency-Key": "ws1-write-event-padded-identity",
+			},
+			body: JSON.stringify({
+				role: "user",
+				body: "canonical identity",
+				agentId: " codex ",
+				scope: " workspace ",
+				scopeRef: " ws:mdbrain ",
+			}),
+		})
+
+		expect(res.status).toBe(200)
+		expect(deliveryMocks.deliverMemoryWrite.mock.calls[0][0]).toMatchObject({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+			payload: expect.objectContaining({
+				agentId: "codex",
+				scope: "workspace",
+				scopeRef: "ws:mdbrain",
+			}),
+		})
+		expect(
+			bridgeMocks.mdbrainBridgeWriteConversationEvent.mock.calls[0][0],
+		).toMatchObject({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+		})
+	})
+
+	it("accepts padded-but-equal add identity and records the canonical tuple", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "identity-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["ws:mdbrain"],
+			},
+		])
+		const res = await createApp().request("/v1/add", {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer identity-secret",
+				"Content-Type": "application/json",
+				"Idempotency-Key": "ws1-add-padded-identity",
+			},
+			body: JSON.stringify({
+				content: "canonical identity",
+				agentId: " codex ",
+				scope: " workspace ",
+				scopeRef: " ws:mdbrain ",
+			}),
+		})
+
+		expect(res.status).toBe(200)
+		expect(deliveryMocks.deliverMemoryWrite.mock.calls[0][0]).toMatchObject({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+			payload: expect.objectContaining({
+				agentId: "codex",
+				scope: "workspace",
+				scopeRef: "ws:mdbrain",
+			}),
+		})
+		expect(bridgeMocks.mdbrainBridgeAdd.mock.calls[0][0]).toMatchObject({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+		})
+	})
+
+	it("still rejects genuinely conflicting event identity", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "identity-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["ws:mdbrain", "ws:other"],
+			},
+		])
+		const res = await createApp().request(
+			"/v1/write-event?agentId=codex&scope=workspace&scopeRef=ws:mdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer identity-secret",
+					"Content-Type": "application/json",
+					"Idempotency-Key": "ws1-write-event-conflicting-identity",
+				},
+				body: JSON.stringify({
+					role: "user",
+					body: "conflicting identity",
+					agentId: "codex",
+					scope: "workspace",
+					scopeRef: "ws:other",
+				}),
+			},
+		)
+
+		expect(res.status).toBe(403)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "FORBIDDEN",
+				message: "conflicting scopeRef values are not allowed",
+			},
+		})
+		expect(deliveryMocks.deliverMemoryWrite).not.toHaveBeenCalled()
+		expect(
+			bridgeMocks.mdbrainBridgeWriteConversationEvent,
+		).not.toHaveBeenCalled()
+	})
+
+	it("keeps the existing validation error for invalid padded event scope", async () => {
+		const res = await createApp().request("/v1/write-event", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": "write-event-invalid-scope",
+			},
+			body: JSON.stringify({
+				role: "user",
+				body: "invalid scope",
+				scope: " project ",
+			}),
+		})
+
+		expect(res.status).toBe(400)
+		await expect(res.json()).resolves.toEqual({
+			error: {
+				code: "VALIDATION_ERROR",
+				message: "scope must be session|user|agent|workspace|tenant|global",
+			},
+		})
+		expect(deliveryMocks.deliverMemoryWrite).not.toHaveBeenCalled()
+	})
+
+	it("forwards query-authorized identity through Memongo read handlers", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "identity-secret",
+				agentIds: ["codex"],
+				scopes: ["workspace"],
+				scopeRefs: ["ws:mdbrain"],
+				capabilities: ["read"],
+			},
+		])
+		const res = await createApp().request(
+			"/v1/hydrate-active-slate?agentId=codex&scope=workspace&scopeRef=ws:mdbrain",
+			{
+				method: "POST",
+				headers: {
+					Authorization: "Bearer identity-secret",
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ maxItems: 4 }),
+			},
+		)
+
+		expect(res.status).toBe(200)
+		expect(bridgeMocks.mdbrainBridgeHydrateActiveSlate).toHaveBeenCalledWith({
+			agentId: "codex",
+			scope: "workspace",
+			scopeRef: "ws:mdbrain",
+			maxItems: 4,
+		})
+	})
+
 	it("executes /v1/extract under the authorized agentId", async () => {
 		const res = await createApp().request("/v1/extract?agentId=codex", {
 			method: "POST",
@@ -3054,6 +3237,64 @@ describe("createApp", () => {
 		expect(bridgeMocks.mdbrainBridgeWriteStructuredMemory).toHaveBeenCalledWith(
 			expect.objectContaining({ agentId: "codex" }),
 		)
+	})
+
+	it("canonicalizes padded structured-entry identity before dispatch", async () => {
+		const res = await createApp().request("/v1/write-structured", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				agentId: " codex ",
+				entry: {
+					agentId: " codex ",
+					type: "decision",
+					key: "k",
+					value: "v",
+					scope: " workspace ",
+					scopeRef: " ws:mdbrain ",
+				},
+			}),
+		})
+
+		expect(res.status).toBe(200)
+		expect(bridgeMocks.mdbrainBridgeWriteStructuredMemory).toHaveBeenCalledWith(
+			{
+				agentId: "codex",
+				entry: expect.objectContaining({
+					agentId: "codex",
+					scope: "workspace",
+					scopeRef: "ws:mdbrain",
+				}),
+			},
+		)
+	})
+
+	it("canonicalizes padded procedure-entry identity before dispatch", async () => {
+		const res = await createApp().request("/v1/write-procedure", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				agentId: " codex ",
+				entry: {
+					agentId: " codex ",
+					procedureId: "deploy",
+					name: "Deploy",
+					steps: ["Ship"],
+					scope: " workspace ",
+					scopeRef: " ws:mdbrain ",
+				},
+			}),
+		})
+
+		expect(res.status).toBe(200)
+		expect(bridgeMocks.mdbrainBridgeWriteProcedure).toHaveBeenCalledWith({
+			agentId: "codex",
+			entry: expect.objectContaining({
+				agentId: "codex",
+				scope: "workspace",
+				scopeRef: "ws:mdbrain",
+			}),
+		})
 	})
 
 	it("rejects structured entries that launder a different agentId", async () => {

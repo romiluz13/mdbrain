@@ -187,7 +187,9 @@ function bridgeJsonError(
 }
 
 function readAgentId(body: Record<string, unknown>): string | undefined {
-	return typeof body.agentId === "string" ? body.agentId : undefined
+	return typeof body.agentId === "string" && body.agentId.trim()
+		? body.agentId.trim()
+		: undefined
 }
 
 function parseListLimit(raw?: string): number | null | undefined {
@@ -203,7 +205,7 @@ function parseListLimit(raw?: string): number | null | undefined {
 
 function readContainerTag(body: Record<string, unknown>): string | undefined {
 	return typeof body.containerTag === "string" && body.containerTag.trim()
-		? body.containerTag
+		? body.containerTag.trim()
 		: undefined
 }
 
@@ -240,13 +242,13 @@ function readSessionKey(body: Record<string, unknown>): string | undefined {
 
 function readScopeRef(body: Record<string, unknown>): string | undefined {
 	if (typeof body.scopeRef === "string" && body.scopeRef.trim()) {
-		return body.scopeRef
+		return body.scopeRef.trim()
 	}
 	return readContainerTag(body)
 }
 
 function readScope(body: Record<string, unknown>): ApiScope | undefined {
-	const scope = typeof body.scope === "string" ? body.scope : undefined
+	const scope = typeof body.scope === "string" ? body.scope.trim() : undefined
 	if (VALID_SCOPE_VALUES.includes(scope as ApiScope)) {
 		return scope as ApiScope
 	}
@@ -1256,6 +1258,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (!query.trim()) {
 			return jsonError(c, 400, "VALIDATION_ERROR", "query is required")
 		}
+		const authorizedScope = getAuthorizedRequestScope(c)
 		try {
 			const searchMode =
 				body.searchMode === "auto" ||
@@ -1299,9 +1302,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					: undefined
 			const result = await mdbrainBridgeSearchDetailed({
 				query,
-				agentId: readAgentId(body),
-				scope: readScope(body),
-				scopeRef: readScopeRef(body),
+				agentId: authorizedScope.agentId,
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 				maxResults: readLimit(body),
 				minScore: typeof body.minScore === "number" ? body.minScore : undefined,
 				searchMode,
@@ -1373,11 +1376,12 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (scopeError) {
 			return jsonError(c, 400, "VALIDATION_ERROR", scopeError)
 		}
+		const authorizedScope = getAuthorizedRequestScope(c)
 		try {
 			const slate = await mdbrainBridgeHydrateActiveSlate({
-				agentId: readAgentId(body),
-				scope: readScope(body),
-				scopeRef: readScopeRef(body),
+				agentId: authorizedScope.agentId,
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 				maxItems: typeof body.maxItems === "number" ? body.maxItems : undefined,
 			})
 			return c.json(slate)
@@ -1405,6 +1409,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (scopeError) {
 			return jsonError(c, 400, "VALIDATION_ERROR", scopeError)
 		}
+		const authorizedScope = getAuthorizedRequestScope(c)
 		try {
 			const timeRange =
 				typeof body.timeRange === "object" &&
@@ -1413,11 +1418,11 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					? (body.timeRange as Record<string, unknown>)
 					: undefined
 			const projection = await mdbrainBridgeBuildDiscoveryProjection({
-				agentId: readAgentId(body),
+				agentId: authorizedScope.agentId,
 				kind,
 				query: readQuery(body) || undefined,
-				scope: readScope(body),
-				scopeRef: readScopeRef(body),
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 				maxItems: typeof body.maxItems === "number" ? body.maxItems : undefined,
 				timeRange: timeRange as
 					| { preset?: string; start?: string; end?: string }
@@ -1450,6 +1455,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (scopeError) {
 			return jsonError(c, 400, "VALIDATION_ERROR", scopeError)
 		}
+		const authorizedScope = getAuthorizedRequestScope(c)
 		try {
 			const timeRange =
 				typeof body.timeRange === "object" &&
@@ -1458,10 +1464,10 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					? (body.timeRange as Record<string, unknown>)
 					: undefined
 			const bundle = await mdbrainBridgeBuildContextBundle({
-				agentId: readAgentId(body),
+				agentId: authorizedScope.agentId,
 				query: readQuery(body) || undefined,
-				scope: readScope(body),
-				scopeRef: readScopeRef(body),
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 				sessionId: readSessionId(body),
 				tokenBudget:
 					typeof body.tokenBudget === "number" ? body.tokenBudget : undefined,
@@ -1831,9 +1837,10 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
 			return jsonError(c, 400, "VALIDATION_ERROR", "entry object is required")
 		}
+		const authorizedScope = getAuthorizedRequestScope(c)
 		const resolvedAgent = resolveAgentIdentity(
 			readAgentId(body),
-			getAuthorizedRequestScope(c).agentId,
+			authorizedScope.agentId,
 		)
 		if (!resolvedAgent.ok) {
 			return jsonError(c, 403, "FORBIDDEN", resolvedAgent.error)
@@ -1843,7 +1850,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		const rawEntryAgentId = (entry as Record<string, unknown>).agentId
 		const entryAgentId =
 			typeof rawEntryAgentId === "string" && rawEntryAgentId.trim()
-				? rawEntryAgentId
+				? rawEntryAgentId.trim()
 				: undefined
 		if (
 			entryAgentId &&
@@ -1858,9 +1865,17 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			)
 		}
 		try {
+			const canonicalEntry = {
+				...(entry as StructuredMemoryEntry),
+				...(resolvedAgent.agentId ? { agentId: resolvedAgent.agentId } : {}),
+				...(authorizedScope.scope ? { scope: authorizedScope.scope } : {}),
+				...(authorizedScope.scopeRef
+					? { scopeRef: authorizedScope.scopeRef }
+					: {}),
+			} as StructuredMemoryEntry
 			const out = await mdbrainBridgeWriteStructuredMemory({
 				agentId: resolvedAgent.agentId ?? entryAgentId,
-				entry: entry as StructuredMemoryEntry,
+				entry: canonicalEntry,
 			})
 			return c.json(out)
 		} catch (err) {
@@ -1877,9 +1892,10 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
 			return jsonError(c, 400, "VALIDATION_ERROR", "entry object is required")
 		}
+		const authorizedScope = getAuthorizedRequestScope(c)
 		const resolvedAgent = resolveAgentIdentity(
 			readAgentId(body),
-			getAuthorizedRequestScope(c).agentId,
+			authorizedScope.agentId,
 		)
 		if (!resolvedAgent.ok) {
 			return jsonError(c, 403, "FORBIDDEN", resolvedAgent.error)
@@ -1887,7 +1903,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		const rawEntryAgentId = (entry as Record<string, unknown>).agentId
 		const entryAgentId =
 			typeof rawEntryAgentId === "string" && rawEntryAgentId.trim()
-				? rawEntryAgentId
+				? rawEntryAgentId.trim()
 				: undefined
 		if (
 			entryAgentId &&
@@ -1902,9 +1918,17 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			)
 		}
 		try {
+			const canonicalEntry = {
+				...(entry as ProcedureEntry),
+				...(resolvedAgent.agentId ? { agentId: resolvedAgent.agentId } : {}),
+				...(authorizedScope.scope ? { scope: authorizedScope.scope } : {}),
+				...(authorizedScope.scopeRef
+					? { scopeRef: authorizedScope.scopeRef }
+					: {}),
+			} as ProcedureEntry
 			const out = await mdbrainBridgeWriteProcedure({
 				agentId: resolvedAgent.agentId ?? entryAgentId,
-				entry: entry as ProcedureEntry,
+				entry: canonicalEntry,
 			})
 			return c.json(out)
 		} catch (err) {
@@ -1921,11 +1945,12 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (scopeError) {
 			return jsonError(c, 400, "VALIDATION_ERROR", scopeError)
 		}
+		const authorizedScope = getAuthorizedRequestScope(c)
 		try {
 			const profile = await mdbrainBridgeProfile({
-				agentId: readAgentId(body),
-				scope: readScope(body),
-				scopeRef: readScopeRef(body),
+				agentId: authorizedScope.agentId,
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 				maxEntities:
 					typeof body.maxEntities === "number" ? body.maxEntities : undefined,
 				maxEpisodes:
@@ -1949,11 +1974,13 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (scopeError) {
 			return jsonError(c, 400, "VALIDATION_ERROR", scopeError)
 		}
-		const agentId = c.req.query("agentId") ?? undefined
-		const scope = readScope(query)
-		const scopeRef = readScopeRef(query)
+		const authorizedScope = getAuthorizedRequestScope(c)
 		try {
-			const state = await mdbrainBridgeGetState({ agentId, scope, scopeRef })
+			const state = await mdbrainBridgeGetState({
+				agentId: authorizedScope.agentId,
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
+			})
 			return c.json(state)
 		} catch (err) {
 			return bridgeJsonError(c, "STATE_FAILED", err)
@@ -1985,10 +2012,11 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		}
 		try {
 			const handle = await getWikiStoreHandle()
+			const authorizedScope = getAuthorizedRequestScope(c)
 			const deliveries = await listMemoryDeliveryIntents(handle, {
 				state: state as (typeof deliveryStates)[number] | undefined,
-				scope: c.req.query("scope"),
-				scopeRef: c.req.query("scopeRef"),
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
 				limit,
 			})
 			return c.json({
@@ -2156,8 +2184,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		const title = String(body.title ?? "")
 		const slug = String(body.slug ?? "")
 		const summary = String(body.summary ?? "")
-		const scope = String(body.scope ?? "")
-		const scopeRef = String(body.scopeRef ?? "")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope ?? ""
+		const scopeRef = authorizedScope.scopeRef ?? ""
 		const trustTier = String(body.trustTier ?? "")
 		const frontmatter = (body.frontmatter ?? {}) as Record<string, unknown>
 		if (!title.trim())
@@ -2222,7 +2251,11 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					"change-permissions capability is required",
 				)
 			}
-			const input = body as unknown as WikiPageInput
+			const input = {
+				...body,
+				scope,
+				scopeRef,
+			} as unknown as WikiPageInput
 			const page = await withWikiTransaction(async (handle, session) => {
 				const created = await createWikiPage(handle, input, {
 					session,
@@ -2237,7 +2270,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 						scope,
 						scopeRef,
 						principalSubjectId: principal.subjectId,
-						payload: body,
+						payload: { ...body, scope, scopeRef },
 					},
 					session,
 				)
@@ -2254,8 +2287,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 	})
 
 	v1.get("/wiki", async (c) => {
-		const scope = c.req.query("scope")
-		const scopeRef = c.req.query("scopeRef")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		const kind = c.req.query("kind")
 		const trustTier = c.req.query("trustTier")
 		const state = c.req.query("state")
@@ -2271,9 +2305,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"scope and scopeRef query params are required",
 			)
 		try {
-			const handle = await readWikiDbHandle(
-				String(c.req.query("agentId") ?? ""),
-			)
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
 			const result = await listWikiPages(handle, {
 				kind: kind ?? undefined,
 				scope: scope ?? undefined,
@@ -2296,8 +2328,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 	// 1..MAX_LIST_LIMIT), not silently dropped — the SDK and MCP surfaces
 	// advertise both, so the route must consume both.
 	v1.get("/wiki/lint", async (c) => {
-		const scope = c.req.query("scope")
-		const scopeRef = c.req.query("scopeRef")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		const kind = c.req.query("kind")
 		if (!scope || !scopeRef)
 			return jsonError(
@@ -2311,9 +2344,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			return jsonError(c, 400, "VALIDATION_ERROR", "limit must be 1..100")
 		}
 		try {
-			const handle = await readWikiDbHandle(
-				String(c.req.query("agentId") ?? ""),
-			)
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
 			const governance = buildWikiGovContext(c, scope, scopeRef)
 			const [pagesResult, contradictions] = await Promise.all([
 				listWikiPages(handle, {
@@ -2345,8 +2376,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 	// see it: authorization is per revision, not per current page state.
 	v1.get("/wiki/revisions", async (c) => {
 		const slug = c.req.query("slug")
-		const scope = c.req.query("scope")
-		const scopeRef = c.req.query("scopeRef")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		const limit = Number(c.req.query("limit") ?? "50")
 		if (!slug) return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
 		if (!scope || !scopeRef)
@@ -2357,9 +2389,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"scope and scopeRef are required",
 			)
 		try {
-			const handle = await readWikiDbHandle(
-				String(c.req.query("agentId") ?? ""),
-			)
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
 			const governance = buildWikiGovContext(c, scope, scopeRef)
 			const revisions = await listWikiPageRevisions(handle, {
 				pageSlug: slug,
@@ -2377,8 +2407,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 
 	v1.get("/wiki/revisions/:revision", async (c) => {
 		const slug = c.req.query("slug")
-		const scope = c.req.query("scope")
-		const scopeRef = c.req.query("scopeRef")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		const revision = Number(c.req.param("revision"))
 		if (!slug) return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
 		if (!scope || !scopeRef)
@@ -2396,9 +2427,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"revision must be a positive integer",
 			)
 		try {
-			const handle = await readWikiDbHandle(
-				String(c.req.query("agentId") ?? ""),
-			)
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
 			const governance = buildWikiGovContext(c, scope, scopeRef)
 			const record = await getWikiPageRevision(handle, {
 				pageSlug: slug,
@@ -2423,8 +2452,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 
 	v1.get("/wiki/*", async (c) => {
 		const slug = readWikiSlug(c)
-		const scope = String(c.req.query("scope") ?? "")
-		const scopeRef = String(c.req.query("scopeRef") ?? "")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		const format = c.req.query("format")
 		const transclude = c.req.query("transclude") === "true"
 		if (!slug) return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
@@ -2436,9 +2466,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"scope and scopeRef query params are required",
 			)
 		try {
-			const handle = await readWikiDbHandle(
-				String(c.req.query("agentId") ?? ""),
-			)
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
 			const governance = buildWikiGovContext(c, scope, scopeRef)
 			const page = await getWikiPage(handle, slug, scope, scopeRef, governance)
 			if (!page)
@@ -2481,8 +2509,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			string,
 			unknown
 		>
-		const scope = String(body.scope ?? c.req.query("scope") ?? "")
-		const scopeRef = String(body.scopeRef ?? c.req.query("scopeRef") ?? "")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		if (!scope || !scopeRef)
 			return jsonError(
 				c,
@@ -2601,8 +2630,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 
 	v1.delete("/wiki/*", async (c) => {
 		const slug = readWikiSlug(c)
-		const scope = String(c.req.query("scope") ?? "")
-		const scopeRef = String(c.req.query("scopeRef") ?? "")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		const hard = c.req.query("hard") === "true"
 		if (!scope || !scopeRef)
 			return jsonError(
@@ -2666,8 +2696,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			unknown
 		>
 		const bundleDir = String(body.bundleDir ?? "")
-		const scope = String(body.scope ?? "")
-		const scopeRef = String(body.scopeRef ?? "")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		const trustTier = String(body.trustTier ?? "")
 		const okfBundleId = String(body.okfBundleId ?? "")
 		if (!bundleDir.trim())
@@ -2700,13 +2731,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			}
 			const result = await withWikiTransaction(async (handle, session) => {
 				const imported = await importOkfBundle(handle, bundleDir, {
-					scope: scope as
-						| "session"
-						| "user"
-						| "agent"
-						| "workspace"
-						| "tenant"
-						| "global",
+					scope,
 					scopeRef,
 					trustTier: trustTier as "restricted" | "standard" | "admin",
 					okfBundleId,
@@ -2744,8 +2769,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			string,
 			unknown
 		>
-		const scope = String(body.scope ?? "")
-		const scopeRef = String(body.scopeRef ?? "")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		const outDir = String(body.outDir ?? "")
 		const okfBundleId = body.okfBundleId ? String(body.okfBundleId) : undefined
 		const trustTier = body.trustTier ? String(body.trustTier) : undefined
@@ -2767,7 +2793,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (!outDir.trim())
 			return jsonError(c, 400, "VALIDATION_ERROR", "outDir is required")
 		try {
-			const handle = await readWikiDbHandle(String(body.agentId ?? ""))
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
 			const result = await exportOkfBundle(handle, {
 				scope,
 				scopeRef,
@@ -2794,8 +2820,9 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		const query = String(body.query ?? "").trim()
 		if (!query)
 			return jsonError(c, 400, "VALIDATION_ERROR", "query is required")
-		const scope = String(body.scope ?? "")
-		const scopeRef = String(body.scopeRef ?? "")
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
 		if (!scope || !scopeRef)
 			return jsonError(
 				c,
@@ -2804,7 +2831,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"scope and scopeRef are required",
 			)
 		try {
-			const handle = await readWikiDbHandle(String(body.agentId ?? ""))
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
 			const result = await searchWikiPages(handle, {
 				query,
 				scope,

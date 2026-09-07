@@ -55,6 +55,12 @@ All notable changes to Mdbrain will be documented in this file.
 
 ### Fixed
 
+- API handlers now dispatch and query with the canonical identity authorized
+  by request middleware, while accepting whitespace-padded equivalent
+  `agentId`, `scope`, and `scopeRef` spellings. Existing wiki pages stored in
+  whitespace-padded scope partitions are not migrated automatically and are
+  not addressed by canonical requests; operators must migrate or reclaim those
+  partitions separately.
 - Memory delivery intents now persist an undefined-stripped payload: the
   MongoDB driver serializes `undefined` as `null`, so an intent recorded with
   absent optional fields (`sessionId`/`timestamp`/`metadata` omitted) stored a
