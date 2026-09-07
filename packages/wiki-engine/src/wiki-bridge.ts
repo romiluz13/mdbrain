@@ -249,6 +249,23 @@ function toView(doc: Record<string, unknown>): WikiPageView {
 
 function normalizeInput(input: WikiPageInput): OptionalId<WikiPage> {
 	const now = new Date()
+	const mappedClaims = (input.claims ?? []).map((c) => {
+		const claim: Record<string, unknown> = {
+			id: c.id,
+			text: c.text,
+			status: c.status ?? "active",
+			confidence: c.confidence ?? 0,
+			evidence: c.evidence ?? [],
+			derivedFrom: c.derivedFrom ?? [],
+			validFrom: c.validFrom ?? now,
+			updatedAt: now,
+		}
+		if (c.writerAgent) claim.writerAgent = c.writerAgent
+		if (c.supersedesClaimId) claim.supersedesClaimId = c.supersedesClaimId
+		if (c.sourceMemId) claim.sourceMemId = c.sourceMemId
+		if (c.validTo) claim.validTo = c.validTo
+		return claim
+	})
 	return {
 		kind: input.kind,
 		title: input.title,
@@ -257,23 +274,7 @@ function normalizeInput(input: WikiPageInput): OptionalId<WikiPage> {
 		summary: input.summary,
 		body: input.body,
 		frontmatter: input.frontmatter,
-		claims: (input.claims ?? []).map((c) => {
-			const claim: Record<string, unknown> = {
-				id: c.id,
-				text: c.text,
-				status: c.status ?? "active",
-				confidence: c.confidence ?? 0,
-				evidence: c.evidence ?? [],
-				derivedFrom: c.derivedFrom ?? [],
-				validFrom: c.validFrom ?? now,
-				updatedAt: now,
-			}
-			if (c.writerAgent) claim.writerAgent = c.writerAgent
-			if (c.supersedesClaimId) claim.supersedesClaimId = c.supersedesClaimId
-			if (c.sourceMemId) claim.sourceMemId = c.sourceMemId
-			if (c.validTo) claim.validTo = c.validTo
-			return claim
-		}) as Required<WikiClaimInput>[],
+		claims: upsertClaimsById([], mappedClaims) as Required<WikiClaimInput>[],
 		contradictions: [],
 		questions: (input.questions ?? []).map((q) => {
 			const question: Record<string, unknown> = {
@@ -539,9 +540,9 @@ export async function listWikiPages(
 
 /** Merges new claims into existing claims BY CLAIM ID: a new claim whose id
  *  already exists replaces the existing entry in place (preserving the
- *  original position); novel ids are appended. Guarantees the resulting
- *  array contains no duplicate claim ids, regardless of what a caller
- *  submits. */
+ *  original position); novel ids are appended. Incoming duplicate ids
+ *  therefore coalesce last-wins. Pre-existing duplicate ids are preserved
+ *  rather than rewritten. */
 function upsertClaimsById(
 	existing: Record<string, unknown>[],
 	incoming: Record<string, unknown>[],
@@ -707,6 +708,10 @@ export async function updateWikiPage(
 		// claims. Internal owned-claim replacement preserves independent claims and
 		// replaces only claims whose IDs begin with the supplied prefix.
 		if (patch.claims !== undefined) {
+			patch.claims = upsertClaimsById(
+				[],
+				patch.claims as unknown as Record<string, unknown>[],
+			) as unknown as typeof patch.claims
 			const existingClaims = oldPage?.claims ?? []
 			const ownedClaimPrefix = opts.claimsReplace?.idPrefix
 			const baseClaims =
@@ -772,8 +777,8 @@ export async function updateWikiPage(
 				}))
 				// Final claims = existing claims with patch claims upserted BY ID:
 				// a patch claim whose id matches an existing claim replaces it in
-				// place; novel ids are appended. The page can never accumulate two
-				// claims with the same id.
+				// place; novel ids are appended. Incoming duplicate ids were already
+				// coalesced above; legacy duplicate base entries are not rewritten.
 				setFields.claims = upsertClaimsById(
 					baseClaims as unknown as Record<string, unknown>[],
 					newClaimsNormalized as unknown as Record<string, unknown>[],

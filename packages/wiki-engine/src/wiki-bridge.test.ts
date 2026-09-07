@@ -207,6 +207,53 @@ describe("createWikiPage", () => {
 		expect(doc.embedding).toBeUndefined()
 	})
 
+	it("coalesces duplicate incoming claim ids before persistence", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const validTo = new Date("2026-12-31T00:00:00.000Z")
+
+		await createWikiPage(h, {
+			...VALID_INPUT,
+			claims: [
+				{ id: "x", text: "The overwritten claim" },
+				{
+					id: "x",
+					text: "The surviving claim",
+					writerAgent: { id: "agent-1", name: "Agent" },
+					derivedFrom: ["source-1"],
+					supersedesClaimId: "claim-0",
+					sourceMemId: "memory-1",
+					validTo,
+				},
+				{ id: "y", text: "A distinct claim" },
+			],
+		})
+
+		const doc = (coll.insertOne as unknown as ReturnType<typeof vi.fn>).mock
+			.calls[0][0]
+		expect(
+			doc.claims.map((claim: { id: string; text: string }) => [
+				claim.id,
+				claim.text,
+			]),
+		).toEqual([
+			["x", "The surviving claim"],
+			["y", "A distinct claim"],
+		])
+		expect(doc.claims[0]).toMatchObject({
+			status: "active",
+			confidence: 0,
+			evidence: [],
+			writerAgent: { id: "agent-1", name: "Agent" },
+			derivedFrom: ["source-1"],
+			supersedesClaimId: "claim-0",
+			sourceMemId: "memory-1",
+			validTo,
+			validFrom: expect.any(Date),
+			updatedAt: expect.any(Date),
+		})
+	})
+
 	it("records a revision entry with editKind=create and revision=1", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
@@ -819,6 +866,124 @@ describe("updateWikiPage", () => {
 		expect(ids).toEqual(["c1", "c2", "c3"]) // no duplicate c1
 		const c1 = update.$set.claims.find((c: { id: string }) => c.id === "c1")
 		expect(c1.text).toBe("Corrected text") // replaced in place
+	})
+
+	it("does not record a contradiction for overwritten same-id claim text", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const oldPage = {
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			state: "active",
+			revision: 1,
+			claims: [],
+			relationships: [{ targetPageSlug: "y" }],
+		}
+		;(coll.findOne as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			async (filter: Record<string, unknown>) => {
+				if (filter.slug === "x") return oldPage
+				if (filter.slug === "y") {
+					return {
+						slug: "y",
+						scope: "workspace",
+						scopeRef: "ws-1",
+						claims: [{ id: "target", text: "The API uses REST endpoints" }],
+						contradictions: [],
+					}
+				}
+				return null
+			},
+		)
+		;(
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			...oldPage,
+			_id: { toString: () => "id-x" },
+			revision: 2,
+		})
+
+		await updateWikiPage(h, "x", "workspace", "ws-1", {
+			claims: [
+				{ id: "claim-x", text: "The API does not use REST endpoints" },
+				{ id: "claim-x", text: "The database stores audit logs" },
+			],
+		})
+
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		expect(
+			update.$set.claims.map((claim: { id: string; text: string }) => [
+				claim.id,
+				claim.text,
+			]),
+		).toEqual([["claim-x", "The database stores audit logs"]])
+		const contradictionWrites = (
+			coll.updateOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls.filter(([, write]) => write.$push?.contradictions)
+		expect(contradictionWrites).toEqual([])
+	})
+
+	it("records a contradiction when the surviving same-id claim contradicts", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const oldPage = {
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			state: "active",
+			revision: 1,
+			claims: [],
+			relationships: [{ targetPageSlug: "y" }],
+		}
+		;(coll.findOne as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			async (filter: Record<string, unknown>) => {
+				if (filter.slug === "x") return oldPage
+				if (filter.slug === "y") {
+					return {
+						slug: "y",
+						scope: "workspace",
+						scopeRef: "ws-1",
+						claims: [{ id: "target", text: "The API uses REST endpoints" }],
+						contradictions: [],
+					}
+				}
+				return null
+			},
+		)
+		;(
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			...oldPage,
+			_id: { toString: () => "id-x" },
+			revision: 2,
+		})
+
+		await updateWikiPage(h, "x", "workspace", "ws-1", {
+			claims: [
+				{ id: "claim-x", text: "The database stores audit logs" },
+				{ id: "claim-x", text: "The API does not use REST endpoints" },
+			],
+		})
+
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		expect(
+			update.$set.claims.map((claim: { id: string; text: string }) => [
+				claim.id,
+				claim.text,
+			]),
+		).toEqual([["claim-x", "The API does not use REST endpoints"]])
+		const contradictionWrites = (
+			coll.updateOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls.filter(([, write]) => write.$push?.contradictions)
+		expect(contradictionWrites).toHaveLength(1)
+		expect(contradictionWrites[0][1].$push.contradictions.claimIds).toEqual([
+			"claim-x",
+			"target",
+		])
 	})
 
 	it("records the ACTUAL calling principal as the revision editor", async () => {

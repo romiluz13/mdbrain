@@ -71,6 +71,9 @@ All notable changes to Mdbrain will be documented in this file.
 
 ### Fixed
 
+- Incoming wiki claims with duplicate ids are now coalesced last-wins before
+  contradiction gates and persistence. Existing pages with pre-coalescing
+  duplicate claim ids are not rewritten.
 - API handlers now dispatch and query with the canonical identity authorized
   by request middleware, while accepting whitespace-padded equivalent
   `agentId`, `scope`, and `scopeRef` spellings. Existing wiki pages stored in
