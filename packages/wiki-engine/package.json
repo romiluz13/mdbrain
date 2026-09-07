@@ -41,7 +41,7 @@
 	},
 	"dependencies": {
 		"@mdbrain/lib": "2.0.0",
-		"js-yaml": "^4.1.0",
+		"js-yaml": "^4.3.2",
 		"mongodb": "^7.0.0"
 	},
 	"devDependencies": {
