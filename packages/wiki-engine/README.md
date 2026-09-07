@@ -8,6 +8,20 @@ MongoDB-native wiki engine for MDBrain — wiki pages, OKF interchange, page ren
 npm install @mdbrain/wiki-engine
 ```
 
+## Database requirement
+
+Wiki mutations use MongoDB multi-document transactions. Connect to a replica
+set or sharded cluster, including for local development. Standalone `mongod`
+deployments are unsupported: write operations fail rather than fall back to
+non-transactional behavior.
+
+Direct, sessionless `updateWikiPage` calls that omit `expectedRevision` can
+serialize and retry under concurrent writes instead of surfacing a revision
+conflict. Replacement fields such as `title`, `summary`, and `body` remain
+last-writer-wins without a pin. Pass the caller-observed page revision as
+`expectedRevision` when a stale update must fail. The HTTP API's optional
+`expectedRevision` behavior is unchanged.
+
 ## When to use this package
 
 - You need direct access to the wiki engine (schema, CRUD, search, governance).

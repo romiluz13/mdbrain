@@ -21,7 +21,7 @@
 // T13 + T14.
 
 import { createHash } from "node:crypto"
-import type { Document } from "mongodb"
+import type { ClientSession, Document } from "mongodb"
 import { wikiPagesCollection } from "./wiki-schema.js"
 import {
 	createWikiPage,
@@ -32,6 +32,7 @@ import {
 } from "./wiki-bridge.js"
 import { searchWikiPages, WikiSearchUnavailableError } from "./wiki-search.js"
 import { omitUndefined } from "./omit-undefined.js"
+import { withWikiTransaction } from "./wiki-transaction.js"
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -245,73 +246,94 @@ export async function runGitDiffMaintenance(
 
 			// Upsert the page with the regenerated content + new claims.
 			const maintenanceHash = computeMaintenanceHash(source.content)
-			if (existing) {
-				await updateWikiPage(
-					handle,
-					slug,
-					opts.scope,
-					opts.scopeRef,
-					{
-						summary: generated.summary,
-						body: generated.body,
-						frontmatter: {
-							...(existing.frontmatter as object),
-							type:
-								(existing.frontmatter as { type?: string })?.type ?? "source",
-							resource: source.path,
-							maintenanceHash,
-						} as unknown as WikiPageInput["frontmatter"],
-						claims: newClaims as unknown as Array<{ id: string; text: string }>,
-					},
-					{ claimsReplace: { idPrefix: claimIdPrefix } },
-				)
-				result.claimsAdded += newClaims.length
-			} else {
-				// createWikiPage runs the pipeline gate internally for each claim.
-				await createWikiPage(handle, {
-					kind: "source",
-					title: generated.title ?? source.path,
-					slug,
-					summary: generated.summary,
-					body: generated.body,
-					frontmatter: {
-						type: "source",
-						resource: source.path,
-						maintenanceHash,
-					},
-					scope: opts.scope as
-						| "workspace"
-						| "session"
-						| "user"
-						| "agent"
-						| "tenant"
-						| "global",
-					scopeRef: opts.scopeRef,
-					trustTier: (opts.trustTier ?? "standard") as
-						| "restricted"
-						| "standard"
-						| "admin",
-					sourceAgent: opts.agentId
-						? { id: opts.agentId, name: opts.agentId }
-						: undefined,
-					claims: newClaims as unknown as Array<{
-						id: string
-						text: string
-						confidence?: number
-					}>,
-				})
-				result.claimsAdded += newClaims.length
-			}
-
-			// Update lastMaintainedAt + lastMaintenanceSource.
-			await updateMaintenanceMetadata(
+			const committed = await withWikiTransaction(
 				handle,
-				slug,
-				opts.scope,
-				opts.scopeRef,
-				"git-diff",
+				undefined,
+				async (session) => {
+					if (existing) {
+						await updateWikiPage(
+							handle,
+							slug,
+							opts.scope,
+							opts.scopeRef,
+							{
+								summary: generated.summary,
+								body: generated.body,
+								frontmatter: {
+									...(existing.frontmatter as object),
+									type:
+										(existing.frontmatter as { type?: string })?.type ??
+										"source",
+									resource: source.path,
+									maintenanceHash,
+								} as unknown as WikiPageInput["frontmatter"],
+								claims: newClaims as unknown as Array<{
+									id: string
+									text: string
+								}>,
+							},
+							{
+								claimsReplace: { idPrefix: claimIdPrefix },
+								expectedRevision: existing.revision,
+								session,
+							},
+						)
+					} else {
+						// createWikiPage runs the pipeline gate internally for each claim.
+						await createWikiPage(
+							handle,
+							{
+								kind: "source",
+								title: generated.title ?? source.path,
+								slug,
+								summary: generated.summary,
+								body: generated.body,
+								frontmatter: {
+									type: "source",
+									resource: source.path,
+									maintenanceHash,
+								},
+								scope: opts.scope as
+									| "workspace"
+									| "session"
+									| "user"
+									| "agent"
+									| "tenant"
+									| "global",
+								scopeRef: opts.scopeRef,
+								trustTier: (opts.trustTier ?? "standard") as
+									| "restricted"
+									| "standard"
+									| "admin",
+								sourceAgent: opts.agentId
+									? { id: opts.agentId, name: opts.agentId }
+									: undefined,
+								claims: newClaims as unknown as Array<{
+									id: string
+									text: string
+									confidence?: number
+								}>,
+							},
+							{ session },
+						)
+					}
+
+					await updateMaintenanceMetadata(
+						handle,
+						slug,
+						opts.scope,
+						opts.scopeRef,
+						"git-diff",
+						session,
+					)
+					return {
+						claimsAdded: newClaims.length,
+						pagesRegenerated: 1,
+					}
+				},
 			)
-			result.pagesRegenerated++
+			result.claimsAdded += committed.claimsAdded
+			result.pagesRegenerated += committed.pagesRegenerated
 		} catch (err) {
 			result.errors.push(
 				`${source.path}: ${err instanceof Error ? err.message : String(err)}`,
@@ -458,6 +480,7 @@ export async function runDreamerPromotion(
 			// claims with per-claim confidence + event provenance. Heuristic
 			// path (explicit opt-in only, P5): the whole event is one claim at
 			// a fixed 0.7 confidence — disclosed via extractionMode.
+			let contradictionDelta = 0
 			let newClaims: Array<{
 				id: string
 				text: string
@@ -497,9 +520,12 @@ export async function runDreamerPromotion(
 					// Routed like an update: the pipeline gate inside
 					// updateWikiPage is the authority on contradictions; this
 					// counter discloses the classifier's verdict.
-					result.contradictionsDetected++
+					contradictionDelta = 1
 				}
-				if (classification.claims.length === 0) continue
+				if (classification.claims.length === 0) {
+					result.contradictionsDetected += contradictionDelta
+					continue
+				}
 
 				newClaims = classification.claims.map((c, i) => ({
 					id: `claim-dreamer-${event.id}-${i}`,
@@ -523,50 +549,77 @@ export async function runDreamerPromotion(
 			// createWikiPage/updateWikiPage (avoids double-gating + duplication).
 			// Pass only the NEW claims — the bridge preserves existing claims.
 
-			// Upsert the page with the new claims.
-			if (existing) {
-				// Pass only NEW claims — updateWikiPage preserves existing
-				// claims and appends accepted new ones through the pipeline gate.
-				await updateWikiPage(handle, slug, opts.scope, opts.scopeRef, {
-					claims: newClaims as unknown as Array<{ id: string; text: string }>,
-				})
-			} else {
-				// createWikiPage runs the pipeline gate internally.
-				await createWikiPage(handle, {
-					kind: "entity",
-					title: `Event ${event.id}`,
-					slug,
-					summary: event.text.slice(0, 100),
-					body: "",
-					frontmatter: { type: "entity" },
-					scope: opts.scope as
-						| "workspace"
-						| "session"
-						| "user"
-						| "agent"
-						| "tenant"
-						| "global",
-					scopeRef: opts.scopeRef,
-					trustTier: (opts.trustTier ?? "standard") as
-						| "restricted"
-						| "standard"
-						| "admin",
-					sourceAgent: event.agentId
-						? { id: event.agentId, name: event.agentId }
-						: undefined,
-					claims: newClaims,
-				})
-			}
-
-			await updateMaintenanceMetadata(
+			const committed = await withWikiTransaction(
 				handle,
-				slug,
-				opts.scope,
-				opts.scopeRef,
-				"dreamer",
+				undefined,
+				async (session) => {
+					// Upsert the page with the new claims.
+					if (existing) {
+						// Pass only NEW claims — updateWikiPage preserves existing
+						// claims and appends accepted new ones through the pipeline gate.
+						await updateWikiPage(
+							handle,
+							slug,
+							opts.scope,
+							opts.scopeRef,
+							{
+								claims: newClaims as unknown as Array<{
+									id: string
+									text: string
+								}>,
+							},
+							{ expectedRevision: existing.revision, session },
+						)
+					} else {
+						// createWikiPage runs the pipeline gate internally.
+						await createWikiPage(
+							handle,
+							{
+								kind: "entity",
+								title: `Event ${event.id}`,
+								slug,
+								summary: event.text.slice(0, 100),
+								body: "",
+								frontmatter: { type: "entity" },
+								scope: opts.scope as
+									| "workspace"
+									| "session"
+									| "user"
+									| "agent"
+									| "tenant"
+									| "global",
+								scopeRef: opts.scopeRef,
+								trustTier: (opts.trustTier ?? "standard") as
+									| "restricted"
+									| "standard"
+									| "admin",
+								sourceAgent: event.agentId
+									? { id: event.agentId, name: event.agentId }
+									: undefined,
+								claims: newClaims,
+							},
+							{ session },
+						)
+					}
+
+					await updateMaintenanceMetadata(
+						handle,
+						slug,
+						opts.scope,
+						opts.scopeRef,
+						"dreamer",
+						session,
+					)
+					return {
+						claimsAdded: newClaims.length,
+						contradictionsDetected: contradictionDelta,
+						pagesRegenerated: 1,
+					}
+				},
 			)
-			result.claimsAdded += newClaims.length
-			result.pagesRegenerated++
+			result.claimsAdded += committed.claimsAdded
+			result.contradictionsDetected += committed.contradictionsDetected
+			result.pagesRegenerated += committed.pagesRegenerated
 		} catch (err) {
 			result.errors.push(
 				`event ${event.id}: ${err instanceof Error ? err.message : String(err)}`,
@@ -640,6 +693,7 @@ async function updateMaintenanceMetadata(
 	scope: string,
 	scopeRef: string,
 	source: MaintenanceSource,
+	session: ClientSession,
 ): Promise<void> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	await coll.updateOne(
@@ -656,5 +710,6 @@ async function updateMaintenanceMetadata(
 				freshness: "fresh",
 			}) as Document,
 		},
+		{ session },
 	)
 }

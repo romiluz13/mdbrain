@@ -5,7 +5,13 @@
 // mocks the MongoDB collection so no live DB is required.
 
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
-import type { Collection, Db, Document } from "mongodb"
+import type {
+	ClientSession,
+	Collection,
+	Db,
+	Document,
+	MongoClient,
+} from "mongodb"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -118,11 +124,29 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 	}))
 	const revisionsColl = {
 		insertOne: revisionsInsertOne,
+		findOne: vi.fn(async () => null),
 	} as unknown as Collection
+	let active = false
+	const session = {
+		inTransaction: vi.fn(() => active),
+		withTransaction: vi.fn(async (operation: () => Promise<unknown>) => {
+			active = true
+			try {
+				return await operation()
+			} finally {
+				active = false
+			}
+		}),
+		endSession: vi.fn(async () => undefined),
+	} as unknown as ClientSession
+	const client = {
+		startSession: vi.fn(() => session),
+	} as unknown as MongoClient
 	const db = {
 		collection: vi.fn((name: string) =>
 			name.endsWith("wiki_revisions") ? revisionsColl : coll,
 		),
+		client,
 	} as unknown as Db
 	return { db, coll, revisionsInsertOne }
 }
@@ -975,7 +999,7 @@ This live concept should still import.
 			scopeRef: "ws-1",
 			trustTier: "standard",
 			okfBundleId: "bundle-tombstone",
-			session: {} as never,
+			session: { inTransaction: () => true } as never,
 		})
 
 		expect(result.imported).toBe(1)
@@ -1550,6 +1574,71 @@ Body.
 	})
 
 	describe("transactional import (fix 5)", () => {
+		it("publishes only the committed retry attempt and prepares embeddings once", async () => {
+			const transactionalStore = makeStore()
+			const { db } = mockDb(transactionalStore)
+			let active = false
+			const withTransaction = vi.fn(
+				async (operation: () => Promise<unknown>) => {
+					active = true
+					try {
+						const snapshot = new Map(transactionalStore.docs)
+						await operation()
+						transactionalStore.docs.clear()
+						for (const [key, value] of snapshot) {
+							transactionalStore.docs.set(key, value)
+						}
+						return await operation()
+					} finally {
+						active = false
+					}
+				},
+			)
+			const endSession = vi.fn(async () => undefined)
+			const session = {
+				inTransaction: vi.fn(() => active),
+				withTransaction,
+				endSession,
+			}
+			const client = {
+				startSession: vi.fn(() => session),
+			} as unknown as WikiDbHandle["client"]
+			const transactionalHandle: WikiDbHandle = {
+				db,
+				prefix: "test_",
+				client,
+			}
+			const srcDir = path.join(tmpDir, "transactional-retry")
+			writeBundle(srcDir, {
+				"good.md": `---
+type: concept
+title: Good
+---
+
+Valid concept.
+`,
+			})
+			const embed = vi.fn(async () => [0.1, 0.2])
+
+			const result = await importOkfBundle(transactionalHandle, srcDir, {
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				okfBundleId: "bundle-1",
+				embed,
+			})
+
+			expect(result).toEqual({
+				imported: 1,
+				skipped: 0,
+				conceptIds: ["good"],
+				errors: [],
+			})
+			expect(embed).toHaveBeenCalledTimes(1)
+			expect(withTransaction).toHaveBeenCalledTimes(1)
+			expect(endSession).toHaveBeenCalledTimes(1)
+		})
+
 		it("reports pre-mutation validation errors and imports valid concepts", async () => {
 			const transactionalStore = makeStore()
 			const { db } = mockDb(transactionalStore)
@@ -1557,7 +1646,11 @@ Body.
 				operation(),
 			)
 			const endSession = vi.fn(async () => {})
-			const session = { withTransaction, endSession }
+			const session = {
+				inTransaction: vi.fn(() => true),
+				withTransaction,
+				endSession,
+			}
 			const client = {
 				startSession: vi.fn(() => session),
 			} as unknown as WikiDbHandle["client"]
@@ -1632,7 +1725,11 @@ Valid concept.
 				}
 			})
 			const endSession = vi.fn(async () => {})
-			const session = { withTransaction, endSession }
+			const session = {
+				inTransaction: vi.fn(() => true),
+				withTransaction,
+				endSession,
+			}
 			const client = {
 				startSession: vi.fn(() => session),
 			} as unknown as WikiDbHandle["client"]
@@ -1678,19 +1775,8 @@ User records.
 			expect(endSession).toHaveBeenCalledTimes(1)
 		})
 
-		it("detects the MongoDB standalone-server transaction-unsupported error", async () => {
-			const { isTransactionNotSupported } = await import("./okf.js")
-			const codeErr = Object.assign(new Error("some msg"), { code: 20 })
-			expect(isTransactionNotSupported(codeErr)).toBe(true)
-			const msgErr = new Error(
-				"Transaction numbers are only allowed on a replica set member or mongos",
-			)
-			expect(isTransactionNotSupported(msgErr)).toBe(true)
-			expect(isTransactionNotSupported(new Error("unrelated"))).toBe(false)
-		})
-
 		it("fails closed when the deployment does not support transactions", async () => {
-			const withTransaction = vi.fn(async (fn: () => Promise<void>) => {
+			const withTransaction = vi.fn(async (_fn: () => Promise<void>) => {
 				const err = Object.assign(
 					new Error(
 						"Transaction numbers are only allowed on a replica set member or mongos",

@@ -29,6 +29,13 @@ All notable changes to Mdbrain will be documented in this file.
 
 ### Changed
 
+- Direct, sessionless `@mdbrain/wiki-engine` updates without
+  `expectedRevision` can now serialize and retry under concurrent writes
+  instead of surfacing a revision conflict. Unpinned replacement fields
+  (`title`, `summary`, and `body`) remain last-writer-wins; callers that need
+  stale-write protection should pass the revision they observed as
+  `expectedRevision`. The HTTP API's optional `expectedRevision` behavior is
+  unchanged.
 - Dreamer promotion is now LLM-classified: phases 3–4 call a configured
   classifier and phase 5 routes per verdict (`ignore` → disclosed
   rejection, `contradiction` → contradiction counter, `new`/`update` →

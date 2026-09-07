@@ -11,7 +11,13 @@
 // - Both update lastMaintainedAt + lastMaintenanceSource
 
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock assertions */
-import type { Collection, Db, Document } from "mongodb"
+import type {
+	ClientSession,
+	Collection,
+	Db,
+	Document,
+	MongoClient,
+} from "mongodb"
 import { describe, it, expect, vi } from "vitest"
 import {
 	computeMaintenanceHash,
@@ -33,6 +39,8 @@ function makeStore() {
 function mockDb(store: ReturnType<typeof makeStore>): {
 	db: Db
 	coll: Collection
+	client: MongoClient
+	session: ClientSession
 } {
 	const coll = {
 		collectionName: "test_wiki_pages",
@@ -71,6 +79,8 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 			const existing = store.docs.get(k)
 			if (
 				!existing ||
+				(filter.revision !== undefined &&
+					Number(existing.revision ?? 1) !== Number(filter.revision)) ||
 				((filter.state as { $ne?: unknown } | undefined)?.$ne &&
 					existing.state === (filter.state as { $ne: unknown }).$ne)
 			)
@@ -102,13 +112,31 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 			acknowledged: true,
 			insertedId: { toString: () => "rev" },
 		})),
+		findOne: vi.fn(async () => null),
 	} as unknown as Collection
+	let active = false
+	const session = {
+		inTransaction: vi.fn(() => active),
+		withTransaction: vi.fn(async (operation: () => Promise<unknown>) => {
+			active = true
+			try {
+				return await operation()
+			} finally {
+				active = false
+			}
+		}),
+		endSession: vi.fn(async () => undefined),
+	} as unknown as ClientSession
+	const client = {
+		startSession: vi.fn(() => session),
+	} as unknown as MongoClient
 	const db = {
 		collection: vi.fn((name: string) =>
 			name.endsWith("wiki_revisions") ? revisionsColl : coll,
 		),
+		client,
 	} as unknown as Db
-	return { db, coll }
+	return { db, coll, client, session }
 }
 
 function handle(store: ReturnType<typeof makeStore>): WikiDbHandle {
@@ -283,6 +311,7 @@ describe("runGitDiffMaintenance", () => {
 					lastMaintenanceSource: "git-diff",
 				}),
 			}),
+			{ session: expect.any(Object) },
 		)
 	})
 
@@ -320,6 +349,98 @@ describe("runGitDiffMaintenance", () => {
 			store.key("sources/src/api.ts", SCOPE, SCOPE_REF),
 		)
 		expect(page?.summary).toBe("New summary.")
+	})
+
+	it("reports a stale prepared update and continues with the next source", async () => {
+		const store = makeStore()
+		const { db, coll, client } = mockDb(store)
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		for (const path of ["src/a.ts", "src/b.ts"]) {
+			const slug = `sources/${path}`
+			store.docs.set(store.key(slug, SCOPE, SCOPE_REF), {
+				_id: { toString: () => `id-${slug}` },
+				slug,
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				state: "active",
+				title: path,
+				summary: "Old summary.",
+				body: "Old body.",
+				frontmatter: { type: "source", resource: path },
+				claims: [],
+				relationships: [],
+				revision: 1,
+			})
+		}
+		;(
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce(null)
+		const llmGenerate = vi.fn(
+			async ({ sourceFile }: { sourceFile: string }) => ({
+				summary: `Regenerated ${sourceFile}`,
+				body: "New body.",
+				claims: [],
+			}),
+		)
+
+		const result = await runGitDiffMaintenance(
+			h,
+			[
+				{ path: "src/a.ts", content: "first" },
+				{ path: "src/b.ts", content: "second" },
+			],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+
+		expect(result.pagesProcessed).toBe(2)
+		expect(result.pagesRegenerated).toBe(1)
+		expect(result.errors).toEqual([
+			expect.stringContaining("moved past revision 1"),
+		])
+		expect(
+			store.docs.get(store.key("sources/src/a.ts", SCOPE, SCOPE_REF)),
+		).toMatchObject({ summary: "Old summary." })
+		expect(
+			store.docs.get(store.key("sources/src/b.ts", SCOPE, SCOPE_REF)),
+		).toMatchObject({ summary: "Regenerated src/b.ts" })
+		expect(client.startSession).toHaveBeenCalledTimes(2)
+	})
+
+	it("publishes counters once when MongoDB retries a page transaction", async () => {
+		const store = makeStore()
+		const { db, session } = mockDb(store)
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			session.inTransaction as unknown as ReturnType<typeof vi.fn>
+		).mockReturnValue(true)
+		;(
+			session.withTransaction as unknown as ReturnType<typeof vi.fn>
+		).mockImplementation(async (operation: () => Promise<unknown>) => {
+			const snapshot = new Map(store.docs)
+			await operation()
+			store.docs.clear()
+			for (const [key, value] of snapshot) store.docs.set(key, value)
+			return operation()
+		})
+		const llmGenerate = vi.fn(async () => ({
+			title: "API Source",
+			summary: "The API module.",
+			body: "# API Source",
+			claims: [{ text: "One claim", confidence: 0.9 }],
+		}))
+
+		const result = await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "export const x = 1" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+
+		expect(result.pagesProcessed).toBe(1)
+		expect(result.pagesRegenerated).toBe(1)
+		expect(result.claimsAdded).toBe(1)
+		expect(llmGenerate).toHaveBeenCalledTimes(1)
 	})
 
 	it("replaces only source-owned claims while preserving independent claims", async () => {

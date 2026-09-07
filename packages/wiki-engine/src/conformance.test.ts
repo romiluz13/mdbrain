@@ -38,7 +38,7 @@
 //   - item 5: hard delete is atomic and the delete revision stays readable
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import type { Document } from "mongodb"
+import type { Db, Document } from "mongodb"
 import { WikiStore } from "./wiki-store.js"
 import {
 	createWikiPage,
@@ -317,26 +317,32 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 		}
 	})
 
-	// WS-5 item 2 — optimistic concurrency. Two writers racing on the same
-	// revision cannot both win: the CAS predicate (slug + scope + scopeRef +
-	// revision) admits exactly one update; the loser observes that the page
-	// still exists and gets WikiRevisionConflictError (409 at the API).
+	// WS-5 item 2 — optimistic concurrency. Two writers that explicitly pin the
+	// same observed revision cannot both win, including when withTransaction
+	// retries a callback after a transient write conflict.
 	it("concurrent same-revision updates: exactly one wins, the loser gets WikiRevisionConflictError (WS-5 item 2)", async () => {
 		const slug = "concepts/ws5-cas"
-		await createWikiPage(handle, pageInput({ slug }))
+		const created = await createWikiPage(handle, pageInput({ slug }))
 		let observedConflict = false
-		// The two reads inside updateWikiPage race the two writes; on a
-		// localhost mongod both reads virtually always land before either
-		// write completes. Retry a few times so a slow first roundtrip can
-		// never flake the suite.
+		let expectedRevision = created.revision
 		for (let attempt = 0; attempt < 5 && !observedConflict; attempt++) {
 			const results = await Promise.allSettled([
-				updateWikiPage(handle, slug, SCOPE, SCOPE_REF, {
-					summary: `writer A, attempt ${attempt}`,
-				}),
-				updateWikiPage(handle, slug, SCOPE, SCOPE_REF, {
-					summary: `writer B, attempt ${attempt}`,
-				}),
+				updateWikiPage(
+					handle,
+					slug,
+					SCOPE,
+					SCOPE_REF,
+					{ summary: `writer A, attempt ${attempt}` },
+					{ expectedRevision },
+				),
+				updateWikiPage(
+					handle,
+					slug,
+					SCOPE,
+					SCOPE_REF,
+					{ summary: `writer B, attempt ${attempt}` },
+					{ expectedRevision },
+				),
 			])
 			for (const r of results) {
 				if (r.status === "rejected") {
@@ -345,6 +351,8 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 					observedConflict = true
 				}
 			}
+			const current = await getWikiPage(handle, slug, SCOPE, SCOPE_REF)
+			expectedRevision = current?.revision ?? expectedRevision
 		}
 		expect(observedConflict).toBe(true)
 		// The winner's write survived and the revision counter moved past the
@@ -442,6 +450,206 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 			scopeRef: SCOPE_REF,
 		})
 		expect(list.map((r) => r.editKind)).toEqual(["delete", "update", "create"])
+	})
+
+	it("continues retained slug history after hard delete with per-snapshot authorization (T9)", async () => {
+		const slug = "concepts/t9-recreated"
+		await createWikiPage(
+			handle,
+			pageInput({
+				slug,
+				permissions: {
+					privacyTier: "restricted",
+					allowedSubjects: ["user:original"],
+				},
+			}),
+		)
+		await deleteWikiPage(handle, slug, SCOPE, SCOPE_REF, { hard: true })
+
+		const recreated = await createWikiPage(
+			handle,
+			pageInput({
+				slug,
+				title: "Recreated concept",
+				permissions: {
+					privacyTier: "restricted",
+					allowedSubjects: ["user:new-owner"],
+				},
+			}),
+		)
+
+		expect(recreated.revision).toBe(3)
+		const revisions = await listWikiPageRevisions(handle, {
+			pageSlug: slug,
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+		})
+		expect(revisions.map((revision) => revision.revision)).toEqual([3, 2, 1])
+		const newOwner = {
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			trustTier: "standard" as const,
+			subjectId: "user:new-owner",
+		}
+		await expect(
+			getWikiPageRevision(handle, {
+				pageSlug: slug,
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				revision: 1,
+				governance: newOwner,
+			}),
+		).resolves.toBeUndefined()
+		await expect(
+			getWikiPageRevision(handle, {
+				pageSlug: slug,
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				revision: 3,
+				governance: newOwner,
+			}),
+		).resolves.toMatchObject({ editKind: "create" })
+
+		const fresh = await createWikiPage(
+			handle,
+			pageInput({ slug: "concepts/t9-fresh" }),
+		)
+		expect(fresh.revision).toBe(1)
+	})
+
+	it("rolls back contradiction writes when the source-page CAS misses (T6)", async () => {
+		const sourceSlug = "concepts/t6-source"
+		const targetSlug = "concepts/t6-target"
+		await createWikiPage(
+			handle,
+			pageInput({
+				slug: targetSlug,
+				claims: [
+					{
+						id: "claim-target",
+						text: "The API uses REST endpoints",
+					},
+				],
+			}),
+		)
+		await createWikiPage(
+			handle,
+			pageInput({
+				slug: sourceSlug,
+				relationships: [
+					{
+						targetPageSlug: targetSlug,
+						targetTitle: "T6 target",
+						kind: "relates_to",
+					},
+				],
+			}),
+		)
+
+		const pagesName = `${handle.prefix}wiki_pages`
+		let contradictionWriteObserved = false
+		const injectedDb = new Proxy(handle.db, {
+			get(target, property) {
+				if (property === "collection") {
+					return (name: string, options?: Document) => {
+						const collection = target.collection(name, options)
+						if (name !== pagesName) return collection
+						return new Proxy(collection, {
+							get(collectionTarget, collectionProperty) {
+								if (collectionProperty === "findOneAndUpdate") {
+									return async (
+										filter: Document,
+										update: Document,
+										updateOptions: Document,
+									) => {
+										if (
+											filter.slug === sourceSlug &&
+											filter.revision !== undefined
+										) {
+											return null
+										}
+										return collectionTarget.findOneAndUpdate(
+											filter,
+											update,
+											updateOptions,
+										)
+									}
+								}
+								if (collectionProperty === "updateOne") {
+									return async (
+										filter: Document,
+										update: Document,
+										updateOptions: Document,
+									) => {
+										const result = await collectionTarget.updateOne(
+											filter,
+											update,
+											updateOptions,
+										)
+										if (
+											filter.slug === targetSlug &&
+											update.$push?.contradictions
+										) {
+											contradictionWriteObserved = result.modifiedCount === 1
+										}
+										return result
+									}
+								}
+								const value = Reflect.get(
+									collectionTarget,
+									collectionProperty,
+									collectionTarget,
+								)
+								return typeof value === "function"
+									? value.bind(collectionTarget)
+									: value
+							},
+						})
+					}
+				}
+				const value = Reflect.get(target, property, target)
+				return typeof value === "function" ? value.bind(target) : value
+			},
+		}) as Db
+
+		await expect(
+			updateWikiPage(
+				{
+					db: injectedDb,
+					prefix: handle.prefix,
+					client: handle.client,
+				},
+				sourceSlug,
+				SCOPE,
+				SCOPE_REF,
+				{
+					relationships: [],
+					claims: [
+						{
+							id: "claim-source",
+							text: "The API does not use REST endpoints",
+						},
+					],
+				},
+			),
+		).rejects.toBeInstanceOf(WikiRevisionConflictError)
+
+		const source = await getWikiPage(handle, sourceSlug, SCOPE, SCOPE_REF)
+		const target = await getWikiPage(handle, targetSlug, SCOPE, SCOPE_REF)
+		const sourceRevisions = await listWikiPageRevisions(handle, {
+			pageSlug: sourceSlug,
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+		})
+		expect(contradictionWriteObserved).toBe(true)
+		expect(source?.claims).toEqual([])
+		expect(source?.revision).toBe(1)
+		expect(source?.relationships).toHaveLength(1)
+		expect(target?.contradictions).toEqual([])
+		expect(target?.backlinks).toEqual([
+			expect.objectContaining({ sourcePageSlug: sourceSlug }),
+		])
+		expect(sourceRevisions.map((revision) => revision.revision)).toEqual([1])
 	})
 
 	it("soft-deleted pages stay inert but remain hard-deletable after a governed administrative read (F1)", async () => {

@@ -35,7 +35,6 @@ import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import yaml from "js-yaml"
-import { createSubsystemLogger } from "@mdbrain/lib"
 import type { ClientSession, Document } from "mongodb"
 import {
 	createWikiPage,
@@ -58,8 +57,7 @@ import {
 	type ContainedFile,
 	writeContainedFiles,
 } from "./filesystem-containment.js"
-
-const log = createSubsystemLogger("wiki:okf")
+import { withWikiTransaction } from "./wiki-transaction.js"
 
 // ---------------------------------------------------------------------------
 // Path safety — prevent directory traversal in OKF import/export
@@ -499,127 +497,140 @@ export async function importOkfBundle(
 	const safeBundleDir = validateOkfPath(bundleDir, allowedRoots)
 	const { concepts, skipped } = await readBundleConcepts(safeBundleDir)
 	const indexRelationships = parseIndexRelationships(safeBundleDir)
-	const result: OkfImportResult = {
-		imported: 0,
-		skipped: skipped.length,
-		conceptIds: [],
-		errors: skipped.map((s) => ({ conceptId: s.path, error: s.reason })),
+	const preparationErrors = skipped.map((s) => ({
+		conceptId: s.path,
+		error: s.reason,
+	}))
+	const preparedConcepts: Array<{
+		concept: OkfConcept
+		input: WikiPageInput
+		embedding?: number[]
+	}> = []
+	for (const concept of concepts) {
+		let input: WikiPageInput
+		try {
+			input = conceptToWikiInput(concept, opts, indexRelationships)
+		} catch (err) {
+			preparationErrors.push({
+				conceptId: concept.conceptId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			continue
+		}
+		const embedding = opts.embed
+			? await opts.embed(`${input.summary}\n${input.body}`)
+			: undefined
+		preparedConcepts.push({
+			concept,
+			input,
+			...(embedding !== undefined ? { embedding } : {}),
+		})
 	}
 
 	// A crash mid-bundle (process crash, dropped DB connection, unhandled
 	// error partway through a large bundle) must not leave the wiki in a
-	// half-imported state. `runImportLoop` always receives the caller's
-	// transaction or one created here for direct library callers.
-	const runImportLoop = async (session: ClientSession | undefined) => {
-		for (const concept of concepts) {
-			let mutationStarted = false
-			try {
-				const input = conceptToWikiInput(concept, opts, indexRelationships)
-				// Administrative existence check: a tombstone occupies the unique
-				// slug but must never be restored implicitly by an import.
-				const existing = await getWikiPage(
-					handle,
-					input.slug,
-					input.scope,
-					input.scopeRef,
-					undefined,
-					session,
-					{ includeSuperseded: true },
-				)
-				if (existing?.state === "superseded") {
-					result.errors.push({
-						conceptId: concept.conceptId,
-						error: `wiki page "${input.slug}" is superseded; restore it explicitly before importing`,
-					})
-					result.skipped++
-					continue
-				}
-				if (existing) {
-					// Only allow overwrite of pages that were themselves produced by a
-					// prior OKF import. A page authored manually through the wiki UI (no
-					// okfConceptId) never had its content sourced from a bundle, so a
-					// slug collision there is far more likely a naming accident than an
-					// intentional re-import — refuse rather than silently clobbering it.
-					if (!existing.okfConceptId) {
-						throw new Error(
-							`slug "${input.slug}" already exists as a manually-authored page ` +
-								"(not previously OKF-imported) — refusing to overwrite",
-						)
-					}
-					mutationStarted = true
-					await updateWikiPage(
+	// half-imported state. Every callback attempt owns its result accumulator;
+	// only the successfully committed attempt is returned to the caller.
+	const committed = await withWikiTransaction(
+		handle,
+		opts.session,
+		async (session): Promise<OkfImportResult> => {
+			const attempt: OkfImportResult = {
+				imported: 0,
+				skipped: 0,
+				conceptIds: [],
+				errors: [],
+			}
+			for (const { concept, input, embedding } of preparedConcepts) {
+				let mutationStarted = false
+				try {
+					// Administrative existence check: a tombstone occupies the unique
+					// slug but must never be restored implicitly by an import.
+					const existing = await getWikiPage(
 						handle,
 						input.slug,
 						input.scope,
 						input.scopeRef,
-						{
-							title: input.title,
-							aliases: input.aliases,
-							summary: input.summary,
-							body: input.body,
-							frontmatter: input.frontmatter,
-							okfConceptId: input.okfConceptId,
-							okfBundleId: input.okfBundleId,
-							relationships: input.relationships,
-							// Keep the governance SSOT in step with the imported
-							// frontmatter tier on re-import; without this, a
-							// restricted bundle re-imported over an old open-access
-							// page would stay open access.
-							...(input.permissions ? { permissions: input.permissions } : {}),
-						},
-						{ session },
+						undefined,
+						session,
+						{ includeSuperseded: true },
 					)
-				} else {
-					mutationStarted = true
-					await createWikiPage(handle, input, { embed: opts.embed, session })
+					if (existing?.state === "superseded") {
+						attempt.errors.push({
+							conceptId: concept.conceptId,
+							error: `wiki page "${input.slug}" is superseded; restore it explicitly before importing`,
+						})
+						attempt.skipped++
+						continue
+					}
+					if (existing) {
+						// Only allow overwrite of pages that were themselves produced by a
+						// prior OKF import. A page authored manually through the wiki UI (no
+						// okfConceptId) never had its content sourced from a bundle, so a
+						// slug collision there is far more likely a naming accident than an
+						// intentional re-import — refuse rather than silently clobbering it.
+						if (!existing.okfConceptId) {
+							throw new Error(
+								`slug "${input.slug}" already exists as a manually-authored page ` +
+									"(not previously OKF-imported) — refusing to overwrite",
+							)
+						}
+						mutationStarted = true
+						await updateWikiPage(
+							handle,
+							input.slug,
+							input.scope,
+							input.scopeRef,
+							{
+								title: input.title,
+								aliases: input.aliases,
+								summary: input.summary,
+								body: input.body,
+								frontmatter: input.frontmatter,
+								okfConceptId: input.okfConceptId,
+								okfBundleId: input.okfBundleId,
+								relationships: input.relationships,
+								// Keep the governance SSOT in step with the imported
+								// frontmatter tier on re-import; without this, a
+								// restricted bundle re-imported over an old open-access
+								// page would stay open access.
+								...(input.permissions
+									? { permissions: input.permissions }
+									: {}),
+							},
+							{ session },
+						)
+					} else {
+						mutationStarted = true
+						await createWikiPage(handle, input, {
+							...(embedding !== undefined
+								? { preparedEmbedding: embedding }
+								: {}),
+							session,
+						})
+					}
+					attempt.imported++
+					attempt.conceptIds.push(concept.conceptId)
+				} catch (err) {
+					// Parse and concept-validation failures before mutation remain
+					// reportable per concept. Once a transactional page mutation begins,
+					// every failure is strict: swallowing a revision or other post-write
+					// failure would commit a page without its required evidence.
+					if (mutationStarted) throw err
+					const msg = err instanceof Error ? err.message : String(err)
+					attempt.errors.push({ conceptId: concept.conceptId, error: msg })
+					attempt.skipped++
 				}
-				result.imported++
-				result.conceptIds.push(concept.conceptId)
-			} catch (err) {
-				// Parse and concept-validation failures before mutation remain
-				// reportable per concept. Once a transactional page mutation begins,
-				// every failure is strict: swallowing a revision or other post-write
-				// failure would commit a page without its required evidence.
-				if (session && (mutationStarted || isTransactionNotSupported(err))) {
-					throw err
-				}
-				const msg = err instanceof Error ? err.message : String(err)
-				result.errors.push({ conceptId: concept.conceptId, error: msg })
-				result.skipped++
 			}
-		}
+			return attempt
+		},
+	)
+	return {
+		imported: committed.imported,
+		skipped: preparationErrors.length + committed.skipped,
+		conceptIds: committed.conceptIds,
+		errors: [...preparationErrors, ...committed.errors],
 	}
-
-	if (opts.session) {
-		await runImportLoop(opts.session)
-	} else if (handle.client) {
-		const session = handle.client.startSession()
-		try {
-			await session.withTransaction(async () => {
-				await runImportLoop(session)
-			})
-		} finally {
-			await session.endSession()
-		}
-	} else {
-		await runImportLoop(undefined)
-	}
-	return result
-}
-
-/** Detects the MongoDB driver's "transactions not supported" error, thrown
- *  when session.withTransaction() is used against a standalone server (no
- *  replica set). Mirrors the same detection in memory-engine's
- *  mongodb-kb.ts/mongodb-sync.ts — 20 = IllegalOperation (standalone), 263 =
- *  NoSuchTransaction; the message check covers driver versions/paths that
- *  don't set `code`. */
-export function isTransactionNotSupported(err: unknown): boolean {
-	if (err instanceof Error && "code" in err) {
-		const code = (err as { code: number }).code
-		if (code === 20 || code === 263) return true
-	}
-	const msg = err instanceof Error ? err.message : String(err)
-	return msg.includes("Transaction numbers are only allowed on a replica set")
 }
 
 /** Parses index.md for relationships. OKF index.md is a directory listing

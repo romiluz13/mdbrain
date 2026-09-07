@@ -6,6 +6,7 @@ import {
 } from "mongodb"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 import { ensureWikiSchema } from "./wiki-schema.js"
+import { withWikiTransaction } from "./wiki-transaction.js"
 
 export type WikiStoreConfig = {
 	uri: string
@@ -86,22 +87,7 @@ export class WikiStore {
 	async transaction<T>(
 		operation: (session: ClientSession) => Promise<T>,
 	): Promise<T> {
-		this.handle()
-		const session = this.#client.startSession()
-		try {
-			let completed = false
-			let result!: T
-			await session.withTransaction(async () => {
-				result = await operation(session)
-				completed = true
-			})
-			if (!completed) {
-				throw new Error("WikiStore transaction completed without a result")
-			}
-			return result
-		} finally {
-			await session.endSession()
-		}
+		return withWikiTransaction(this.handle(), undefined, operation)
 	}
 
 	async ping(): Promise<{ ok: true }> {

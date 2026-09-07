@@ -6,7 +6,13 @@
 // (soft vs hard), duplicate-slug mapping, and renderer markdown/HTML output.
 
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
-import type { Collection, Db, Document } from "mongodb"
+import type {
+	ClientSession,
+	Collection,
+	Db,
+	Document,
+	MongoClient,
+} from "mongodb"
 import { describe, it, expect, vi } from "vitest"
 import {
 	createWikiPage,
@@ -47,12 +53,34 @@ function mockCollection(): Collection {
 	} as unknown as Collection
 }
 
-function mockDb(): { db: Db; coll: Collection } {
+function mockDb(): {
+	db: Db
+	coll: Collection
+	client: MongoClient
+	session: ClientSession
+} {
 	const coll = mockCollection()
+	let active = false
+	const session = {
+		inTransaction: vi.fn(() => active),
+		withTransaction: vi.fn(async (callback: () => Promise<unknown>) => {
+			active = true
+			try {
+				return await callback()
+			} finally {
+				active = false
+			}
+		}),
+		endSession: vi.fn(async () => undefined),
+	} as unknown as ClientSession
+	const client = {
+		startSession: vi.fn(() => session),
+	} as unknown as MongoClient
 	const db = {
 		collection: vi.fn(() => coll),
+		client,
 	} as unknown as Db
-	return { db, coll }
+	return { db, coll, client, session }
 }
 
 function mockActivePage(
@@ -89,6 +117,42 @@ const VALID_INPUT = {
 }
 
 describe("createWikiPage", () => {
+	it("prepares external embeddings before its one owned transaction", async () => {
+		const { db, coll, client, session } = mockDb()
+		const events: string[] = []
+		;(coll.insertOne as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			async (doc: Document, options?: { session?: ClientSession }) => {
+				events.push("slug" in doc ? "page-insert" : "revision-insert")
+				expect(options?.session).toBe(session)
+				return {
+					acknowledged: true,
+					insertedId: { toString: () => `id-${doc.slug}` },
+				}
+			},
+		)
+		;(
+			session.withTransaction as unknown as ReturnType<typeof vi.fn>
+		).mockImplementation(async (callback: () => Promise<unknown>) => {
+			events.push("transaction")
+			return callback()
+		})
+		const embed = vi.fn(async () => {
+			events.push("embed")
+			return [0.1, 0.2]
+		})
+
+		await createWikiPage({ db, prefix: "test_" }, VALID_INPUT, { embed })
+
+		expect(events).toEqual([
+			"embed",
+			"transaction",
+			"page-insert",
+			"revision-insert",
+		])
+		expect(client.startSession).toHaveBeenCalledTimes(1)
+		expect(session.endSession).toHaveBeenCalledTimes(1)
+	})
+
 	it("inserts a normalized document and returns a view", async () => {
 		const h = handle()
 		const page = await createWikiPage(h, VALID_INPUT)
@@ -159,6 +223,41 @@ describe("createWikiPage", () => {
 		expect(revisionDoc.editKind).toBe("create")
 		expect(revisionDoc.revision).toBe(1)
 		expect(revisionDoc.pageSlug).toBe("tables/accounts")
+	})
+
+	it("continues a recreated slug from its highest retained revision", async () => {
+		const { db, coll, session } = mockDb()
+		const revisionsColl = mockCollection()
+		;(
+			revisionsColl.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({ revision: 4 })
+		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+			(name: string) =>
+				name.endsWith("wiki_revisions") ? revisionsColl : coll,
+		)
+
+		const recreated = await createWikiPage({ db, prefix: "test_" }, VALID_INPUT)
+
+		expect(recreated.revision).toBe(5)
+		const [pageDoc] = (coll.insertOne as unknown as ReturnType<typeof vi.fn>)
+			.mock.calls[0]
+		const [revisionDoc] = (
+			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0]
+		expect(pageDoc.revision).toBe(5)
+		expect(revisionDoc.revision).toBe(5)
+		expect(revisionsColl.findOne).toHaveBeenCalledWith(
+			{
+				pageSlug: VALID_INPUT.slug,
+				scope: VALID_INPUT.scope,
+				scopeRef: VALID_INPUT.scopeRef,
+			},
+			{
+				projection: { revision: 1 },
+				sort: { revision: -1 },
+				session,
+			},
+		)
 	})
 
 	it("records the ACTUAL principal as editor on create (overrides sourceAgent)", async () => {
@@ -834,7 +933,7 @@ describe("deleteWikiPage", () => {
 	})
 
 	it("hard-deletes atomically via findOneAndDelete and snapshots the deleted doc", async () => {
-		const { db, coll } = mockDb()
+		const { db, coll, client, session } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
 		const revisionsColl = mockCollection()
 		;(db.collection as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -858,8 +957,10 @@ describe("deleteWikiPage", () => {
 		expect(deleted).toBe(true)
 		expect(coll.findOneAndDelete).toHaveBeenCalledWith(
 			{ slug: "x", scope: "workspace", scopeRef: "ws-1" },
-			{ session: undefined },
+			{ session },
 		)
+		expect(client.startSession).toHaveBeenCalledTimes(1)
+		expect(session.endSession).toHaveBeenCalledTimes(1)
 		const [revisionDoc] = (
 			revisionsColl.insertOne as unknown as ReturnType<typeof vi.fn>
 		).mock.calls[0]

@@ -6,7 +6,13 @@
 // ($match on relationships.targetPageSlug + backlinks.sourcePageSlug).
 
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock assertions */
-import type { Collection, Db, Document } from "mongodb"
+import type {
+	ClientSession,
+	Collection,
+	Db,
+	Document,
+	MongoClient,
+} from "mongodb"
 import { describe, it, expect, vi } from "vitest"
 import {
 	createWikiPage,
@@ -149,11 +155,29 @@ function mockDb(store: ReturnType<typeof makeStore>): {
 			acknowledged: true,
 			insertedId: { toString: () => "rev" },
 		})),
+		findOne: vi.fn(async () => null),
 	} as unknown as Collection
+	let active = false
+	const session = {
+		inTransaction: vi.fn(() => active),
+		withTransaction: vi.fn(async (operation: () => Promise<unknown>) => {
+			active = true
+			try {
+				return await operation()
+			} finally {
+				active = false
+			}
+		}),
+		endSession: vi.fn(async () => {}),
+	} as unknown as ClientSession
+	const client = {
+		startSession: vi.fn(() => session),
+	} as unknown as MongoClient
 	const db = {
 		collection: vi.fn((name: string) =>
 			name.endsWith("wiki_revisions") ? revisionsColl : coll,
 		),
+		client,
 	} as unknown as Db
 	return { db, coll }
 }
