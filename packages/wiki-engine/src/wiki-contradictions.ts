@@ -200,6 +200,7 @@ export async function detectContradictions(
 				slug: targetSlug,
 				scope,
 				scopeRef,
+				state: { $ne: "superseded" },
 			},
 			session ? { session } : undefined,
 		)) as unknown as {
@@ -262,7 +263,12 @@ export async function recordContradictions(
 	let count = 0
 	for (const { pageSlug, contradiction } of contradictions) {
 		const result = await coll.updateOne(
-			{ slug: pageSlug, scope, scopeRef },
+			{
+				slug: pageSlug,
+				scope,
+				scopeRef,
+				state: { $ne: "superseded" },
+			},
 			{ $push: { contradictions: contradiction } as Document },
 			session ? { session } : undefined,
 		)
@@ -388,7 +394,7 @@ export interface PipelineGateResult {
 }
 
 /** Runs the write pipeline gate: contradiction detection FIRST, then dedup.
- *  Returns the result — contradictions are always recorded, dedup may reject.
+ *  Returns the result — contradictions are recorded only for accepted claims.
  *  This ordering prevents the arXiv pipeline bug where dedup would reject
  *  contradictory writes before the contradiction detector could see them. */
 export async function runWritePipelineGate(
@@ -411,16 +417,17 @@ export async function runWritePipelineGate(
 		scopeRef,
 		session,
 	)
-	// Record any detected contradictions immediately.
-	if (contradictions.length > 0) {
-		await recordContradictions(handle, contradictions, scope, scopeRef, session)
-	}
-
 	// STEP 2: Near-duplicate gate — runs AFTER contradiction detection.
 	// A near-duplicate of an existing claim on the SAME page is rejected.
 	const dedup = checkNearDuplicate(newClaim.text, existingClaims, {
 		excludeClaimId: newClaim.id,
 	})
+
+	// Persist contradictions only when the claim is accepted. Detection still
+	// runs first, but rejected claims must not leave phantom references.
+	if (!dedup.isDuplicate && contradictions.length > 0) {
+		await recordContradictions(handle, contradictions, scope, scopeRef, session)
+	}
 
 	return {
 		contradictions,

@@ -16,6 +16,8 @@ import {
 	textOverlap,
 	areContradictory,
 	checkNearDuplicate,
+	detectContradictions,
+	recordContradictions,
 	runWritePipelineGate,
 	listUnresolvedContradictions,
 	resolveContradiction,
@@ -275,6 +277,137 @@ describe("arXIV pipeline bug: contradictory write NOT rejected by dedup", () => 
 		// Dedup rejects the near-duplicate.
 		expect(result.rejected).toBe(true)
 		expect(result.dedup.isDuplicate).toBe(true)
+	})
+
+	it("reports but does not persist contradictions for a rejected near-duplicate", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		store.docs.set(store.key("b", SCOPE, SCOPE_REF), {
+			_id: { toString: () => "id-b" },
+			slug: "b",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			title: "Page B",
+			claims: [
+				{ id: "c-b1", text: "The API uses REST endpoints", status: "active" },
+			],
+			contradictions: [],
+		})
+		store.docs.set(store.key("a", SCOPE, SCOPE_REF), {
+			_id: { toString: () => "id-a" },
+			slug: "a",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			title: "Page A",
+			claims: [
+				{
+					id: "c-a1",
+					text: "The API does not use REST endpoints",
+					status: "active",
+				},
+			],
+			contradictions: [],
+			relationships: [{ targetPageSlug: "b", kind: "relates_to" }],
+		})
+
+		const result = await runWritePipelineGate(
+			h,
+			"a",
+			{ id: "c-a2", text: "The API does not use REST endpoints" },
+			[{ id: "c-a1", text: "The API does not use REST endpoints" }],
+			SCOPE,
+			SCOPE_REF,
+		)
+
+		expect(result.rejected).toBe(true)
+		expect(result.contradictions).toHaveLength(1)
+		expect(
+			store.docs.get(store.key("b", SCOPE, SCOPE_REF))?.contradictions,
+		).toEqual([])
+	})
+})
+
+describe("live target predicates", () => {
+	it("keeps the source lookup state-blind and guards target reads", async () => {
+		const store = makeStore()
+		const { db, coll } = mockDb(store)
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		store.docs.set(store.key("a", SCOPE, SCOPE_REF), {
+			slug: "a",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			relationships: [{ targetPageSlug: "b" }],
+		})
+		store.docs.set(store.key("b", SCOPE, SCOPE_REF), {
+			slug: "b",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			claims: [],
+		})
+
+		await detectContradictions(
+			h,
+			"a",
+			{ id: "c-a1", text: "The API does not use REST endpoints" },
+			SCOPE,
+			SCOPE_REF,
+		)
+
+		expect(coll.findOne).toHaveBeenNthCalledWith(
+			1,
+			{ slug: "a", scope: SCOPE, scopeRef: SCOPE_REF },
+			undefined,
+		)
+		expect(coll.findOne).toHaveBeenNthCalledWith(
+			2,
+			{
+				slug: "b",
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				state: { $ne: "superseded" },
+			},
+			undefined,
+		)
+	})
+
+	it("guards contradiction writes", async () => {
+		const store = makeStore()
+		const { db, coll } = mockDb(store)
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		store.docs.set(store.key("b", SCOPE, SCOPE_REF), {
+			slug: "b",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			contradictions: [],
+		})
+
+		await recordContradictions(
+			h,
+			[
+				{
+					pageSlug: "b",
+					contradiction: {
+						id: "contra-c-a1-c-b1",
+						claimIds: ["c-a1", "c-b1"],
+						detectedAt: new Date(),
+						resolution: "unresolved",
+					},
+				},
+			],
+			SCOPE,
+			SCOPE_REF,
+		)
+
+		expect(coll.updateOne).toHaveBeenCalledWith(
+			{
+				slug: "b",
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				state: { $ne: "superseded" },
+			},
+			expect.any(Object),
+			undefined,
+		)
 	})
 })
 

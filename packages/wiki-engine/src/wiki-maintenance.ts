@@ -634,7 +634,12 @@ async function updateMaintenanceMetadata(
 ): Promise<void> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	await coll.updateOne(
-		{ slug, scope, scopeRef },
+		{
+			slug,
+			scope,
+			scopeRef,
+			state: { $ne: "superseded" },
+		},
 		{
 			$set: omitUndefined({
 				lastMaintainedAt: new Date(),

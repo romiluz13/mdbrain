@@ -253,6 +253,39 @@ describe("runGitDiffMaintenance", () => {
 		expect(page?.lastMaintenanceSource).toBe("git-diff")
 	})
 
+	it("guards maintenance metadata writes against superseded targets", async () => {
+		const store = makeStore()
+		const { db, coll } = mockDb(store)
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const llmGenerate = vi.fn(async () => ({
+			title: "API Source",
+			summary: "The API module.",
+			body: "# API Source",
+			claims: [],
+		}))
+
+		await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "export const x = 1" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+
+		expect(coll.updateOne).toHaveBeenCalledWith(
+			{
+				slug: "sources/src/api.ts",
+				scope: SCOPE,
+				scopeRef: SCOPE_REF,
+				state: { $ne: "superseded" },
+			},
+			expect.objectContaining({
+				$set: expect.objectContaining({
+					lastMaintenanceSource: "git-diff",
+				}),
+			}),
+		)
+	})
+
 	it("updates an existing page (not creates a duplicate)", async () => {
 		const store = makeStore()
 		const h = handle(store)
