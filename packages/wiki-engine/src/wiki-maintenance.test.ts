@@ -281,6 +281,29 @@ describe("runGitDiffMaintenance", () => {
 		expect(page?.lastMaintenanceSource).toBe("git-diff")
 	})
 
+	it("counts duplicate generated identities once after commit", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const llmGenerate = vi.fn(async () => ({
+			title: "API Source",
+			summary: "The API module.",
+			body: "# API Source",
+			claims: [
+				{ text: "The API exports a REST endpoint", confidence: 0.9 },
+				{ text: "The API exports a REST endpoint", confidence: 0.9 },
+			],
+		}))
+
+		const result = await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "export const x = 1" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+
+		expect(result.claimsAdded).toBe(1)
+	})
+
 	it("guards maintenance metadata writes against superseded targets", async () => {
 		const store = makeStore()
 		const { db, coll } = mockDb(store)
@@ -1062,6 +1085,6 @@ describe("runDreamerPromotion", () => {
 		// (near-duplicate detection inside updateWikiPage), never appended.
 		const page = store.docs.get(store.key("events/evt-1", SCOPE, SCOPE_REF))
 		expect(page?.claims).toHaveLength(1)
-		expect(second.claimsAdded).toBe(1)
+		expect(second.claimsAdded).toBe(0)
 	})
 })

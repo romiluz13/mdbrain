@@ -29,6 +29,7 @@ import {
 	updateWikiPage,
 	type WikiDbHandle,
 	type WikiPageInput,
+	type WikiPageView,
 } from "./wiki-bridge.js"
 import { searchWikiPages, WikiSearchUnavailableError } from "./wiki-search.js"
 import { omitUndefined } from "./omit-undefined.js"
@@ -125,6 +126,29 @@ export class MaintenanceLlmUnconfiguredError extends Error {
 /** Computes a 16-character content hash for maintenance and claim identity. */
 export function computeMaintenanceHash(content: string): string {
 	return createHash("sha256").update(content).digest("hex").slice(0, 16)
+}
+
+function countNewClaimIds(
+	beforeClaims: unknown[] | undefined,
+	afterClaims: unknown[] | undefined,
+): number {
+	const claimIds = (claims: unknown[] | undefined) =>
+		new Set(
+			(claims ?? []).flatMap((claim) =>
+				claim &&
+				typeof claim === "object" &&
+				"id" in claim &&
+				typeof claim.id === "string"
+					? [claim.id]
+					: [],
+			),
+		)
+	const beforeIds = claimIds(beforeClaims)
+	let added = 0
+	for (const id of claimIds(afterClaims)) {
+		if (!beforeIds.has(id)) added++
+	}
+	return added
 }
 
 /** Represents a changed source file detected by git-diff. */
@@ -250,8 +274,9 @@ export async function runGitDiffMaintenance(
 				handle,
 				undefined,
 				async (session) => {
+					let committedPage: WikiPageView | undefined
 					if (existing) {
-						await updateWikiPage(
+						committedPage = await updateWikiPage(
 							handle,
 							slug,
 							opts.scope,
@@ -280,7 +305,7 @@ export async function runGitDiffMaintenance(
 						)
 					} else {
 						// createWikiPage runs the pipeline gate internally for each claim.
-						await createWikiPage(
+						committedPage = await createWikiPage(
 							handle,
 							{
 								kind: "source",
@@ -327,7 +352,10 @@ export async function runGitDiffMaintenance(
 						session,
 					)
 					return {
-						claimsAdded: newClaims.length,
+						claimsAdded: countNewClaimIds(
+							existing?.claims,
+							committedPage?.claims,
+						),
 						pagesRegenerated: 1,
 					}
 				},
@@ -553,11 +581,12 @@ export async function runDreamerPromotion(
 				handle,
 				undefined,
 				async (session) => {
+					let committedPage: WikiPageView | undefined
 					// Upsert the page with the new claims.
 					if (existing) {
 						// Pass only NEW claims — updateWikiPage preserves existing
 						// claims and appends accepted new ones through the pipeline gate.
-						await updateWikiPage(
+						committedPage = await updateWikiPage(
 							handle,
 							slug,
 							opts.scope,
@@ -572,7 +601,7 @@ export async function runDreamerPromotion(
 						)
 					} else {
 						// createWikiPage runs the pipeline gate internally.
-						await createWikiPage(
+						committedPage = await createWikiPage(
 							handle,
 							{
 								kind: "entity",
@@ -611,7 +640,10 @@ export async function runDreamerPromotion(
 						session,
 					)
 					return {
-						claimsAdded: newClaims.length,
+						claimsAdded: countNewClaimIds(
+							existing?.claims,
+							committedPage?.claims,
+						),
 						contradictionsDetected: contradictionDelta,
 						pagesRegenerated: 1,
 					}
