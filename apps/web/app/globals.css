@@ -582,6 +582,16 @@ textarea {
 	line-height: 1.62;
 }
 
+.console-workspace {
+	grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+}
+
+@media (max-width: 744px) {
+	.console-workspace {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
 @media (max-width: 880px) {
 	.nav-links {
 		display: none;

@@ -10,6 +10,14 @@ const defaultApi =
 
 type Tab = "overview" | "search" | "kb" | "profile" | "write" | "wiki"
 
+type MemoryScope =
+	| "session"
+	| "user"
+	| "agent"
+	| "workspace"
+	| "tenant"
+	| "global"
+
 type OutputState = {
 	title: string
 	body: string
@@ -143,12 +151,13 @@ function MetricCard({
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
 	return (
-		<div style={{ display: "grid", gap: 6 }}>
+		// biome-ignore lint/a11y/noLabelWithoutControl: Every Field caller nests one form control in children.
+		<label style={{ display: "grid", gap: 6 }}>
 			<span style={{ color: palette.muted, fontSize: 13, fontWeight: 650 }}>
 				{label}
 			</span>
 			{children}
-		</div>
+		</label>
 	)
 }
 
@@ -156,7 +165,10 @@ export default function Home() {
 	const [baseUrl, setBaseUrl] = useState(defaultApi)
 	const [apiKey, setApiKey] = useState("")
 	const [agentId, setAgentId] = useState("main")
-	const [scopeValue, setScopeValue] = useState("default")
+	const [memoryScope, setMemoryScope] = useState<MemoryScope | "">("")
+	const [memoryScopeRef, setMemoryScopeRef] = useState("")
+	const [searchSessionKey, setSearchSessionKey] = useState("default")
+	const [writeSessionId, setWriteSessionId] = useState("default")
 	const [tab, setTab] = useState<Tab>("overview")
 	const [query, setQuery] = useState("What does this user prefer?")
 	const [wikiSlug, setWikiSlug] = useState("")
@@ -230,38 +242,6 @@ export default function Home() {
 			await refreshOverview()
 			return
 		}
-		if (tab === "search") {
-			await withOutput("Search results", async () => {
-				return await client.search({
-					agentId,
-					query,
-					limit: 8,
-					sessionKey: scopeValue,
-				})
-			})
-			return
-		}
-		if (tab === "kb") {
-			await withOutput("Knowledge base results", async () => {
-				return await client.searchKB({
-					agentId,
-					query,
-					limit: 8,
-				})
-			})
-			return
-		}
-		if (tab === "profile") {
-			await withOutput("Profile synthesis", async () => {
-				return await client.profile({
-					agentId,
-					maxEntities: 10,
-					maxEpisodes: 10,
-					scopeRef: scopeValue,
-				})
-			})
-			return
-		}
 		if (tab === "wiki") {
 			// Wiki tab: if a slug is provided, get the page; otherwise list pages.
 			if (wikiSlug.trim()) {
@@ -284,16 +264,70 @@ export default function Home() {
 			}
 			return
 		}
+
+		const scopeRef = memoryScopeRef.trim()
+		if (Boolean(memoryScope) !== Boolean(scopeRef)) {
+			setOutput({
+				title: "Invalid memory scope",
+				body: "Set both Scope and Scope ref, or clear both. A half-set scope is not a valid memory identity.",
+				state: "error",
+			})
+			return
+		}
+		const scopeTuple = memoryScope ? { scope: memoryScope, scopeRef } : {}
+
+		if (tab === "search") {
+			await withOutput("Search results", async () => {
+				return await client.search({
+					agentId,
+					query,
+					limit: 8,
+					sessionKey: searchSessionKey,
+					...scopeTuple,
+				})
+			})
+			return
+		}
+		if (tab === "kb") {
+			await withOutput("Knowledge base results", async () => {
+				return await client.searchKB({
+					agentId,
+					query,
+					limit: 8,
+					...scopeTuple,
+				})
+			})
+			return
+		}
+		if (tab === "profile") {
+			await withOutput("Profile synthesis", async () => {
+				return await client.profile({
+					agentId,
+					maxEntities: 10,
+					maxEpisodes: 10,
+					...scopeTuple,
+				})
+			})
+			return
+		}
 		await withOutput("Memory write", async () => {
 			return await client.add({
 				agentId,
 				content: writeContent,
-				sessionId: scopeValue,
-				idempotencyKey: crypto.randomUUID(),
+				sessionId: writeSessionId,
+				idempotencyKey:
+					typeof crypto.randomUUID === "function"
+						? crypto.randomUUID()
+						: Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+								byte.toString(16).padStart(2, "0"),
+							).join(""),
+				...scopeTuple,
 			})
 		})
 	}
 
+	const isMemoryTab =
+		tab === "search" || tab === "kb" || tab === "profile" || tab === "write"
 	const outputBorder =
 		output.state === "error"
 			? palette.error
@@ -408,9 +442,9 @@ export default function Home() {
 				</section>
 
 				<section
+					className="console-workspace"
 					style={{
 						display: "grid",
-						gridTemplateColumns: "minmax(300px, 390px) minmax(0, 1fr)",
 						gap: 18,
 						alignItems: "start",
 					}}
@@ -447,13 +481,6 @@ export default function Home() {
 								<input
 									value={agentId}
 									onChange={(e) => setAgentId(e.target.value)}
-									style={fieldStyle}
-								/>
-							</Field>
-							<Field label="Session / scope value">
-								<input
-									value={scopeValue}
-									onChange={(e) => setScopeValue(e.target.value)}
 									style={fieldStyle}
 								/>
 							</Field>
@@ -504,20 +531,68 @@ export default function Home() {
 							</Field>
 						)}
 
-						{tab === "write" && (
-							<Field label="Memory content">
-								<textarea
-									value={writeContent}
-									onChange={(e) => setWriteContent(e.target.value)}
-									rows={5}
-									style={{
-										...fieldStyle,
-										resize: "vertical",
-										marginBottom: 14,
-										lineHeight: 1.45,
-									}}
+						{tab === "search" && (
+							<Field label="Session key (filter)">
+								<input
+									value={searchSessionKey}
+									onChange={(e) => setSearchSessionKey(e.target.value)}
+									style={{ ...fieldStyle, marginBottom: 14 }}
 								/>
 							</Field>
+						)}
+
+						{tab === "write" && (
+							<>
+								<Field label="Memory content">
+									<textarea
+										value={writeContent}
+										onChange={(e) => setWriteContent(e.target.value)}
+										rows={5}
+										style={{
+											...fieldStyle,
+											resize: "vertical",
+											marginBottom: 14,
+											lineHeight: 1.45,
+										}}
+									/>
+								</Field>
+								<Field label="Session ID (attribution)">
+									<input
+										value={writeSessionId}
+										onChange={(e) => setWriteSessionId(e.target.value)}
+										style={{ ...fieldStyle, marginBottom: 14 }}
+									/>
+								</Field>
+							</>
+						)}
+
+						{isMemoryTab && (
+							<>
+								<Field label="Scope">
+									<select
+										value={memoryScope}
+										onChange={(e) =>
+											setMemoryScope(e.target.value as MemoryScope | "")
+										}
+										style={{ ...fieldStyle, marginBottom: 14 }}
+									>
+										<option value="">(default)</option>
+										<option value="session">session</option>
+										<option value="user">user</option>
+										<option value="agent">agent</option>
+										<option value="workspace">workspace</option>
+										<option value="tenant">tenant</option>
+										<option value="global">global</option>
+									</select>
+								</Field>
+								<Field label="Scope ref">
+									<input
+										value={memoryScopeRef}
+										onChange={(e) => setMemoryScopeRef(e.target.value)}
+										style={{ ...fieldStyle, marginBottom: 14 }}
+									/>
+								</Field>
+							</>
 						)}
 
 						{tab === "wiki" && (
