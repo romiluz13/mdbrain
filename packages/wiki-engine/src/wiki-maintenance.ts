@@ -121,7 +121,7 @@ export class MaintenanceLlmUnconfiguredError extends Error {
 // Git-diff maintenance (T13)
 // ---------------------------------------------------------------------------
 
-/** Computes a content hash for a source file (used as maintenanceHash). */
+/** Computes a 16-character content hash for maintenance and claim identity. */
 export function computeMaintenanceHash(content: string): string {
 	return createHash("sha256").update(content).digest("hex").slice(0, 16)
 }
@@ -234,8 +234,11 @@ export async function runGitDiffMaintenance(
 			// Generate claim IDs. The pipeline gate (contradiction-before-dedup)
 			// runs INSIDE createWikiPage/updateWikiPage — we don't gate manually
 			// here (avoids double-gating + data loss).
-			const newClaims = generated.claims.map((c, i) => ({
-				id: `claim-git-${computeMaintenanceHash(source.path)}-${i}`,
+			const claimIdPrefix = `claim-git-${computeMaintenanceHash(source.path)}-`
+			// Claim text is hashed exactly as stored; the current bridge
+			// normalization preserves claim text verbatim.
+			const newClaims = generated.claims.map((c) => ({
+				id: `${claimIdPrefix}${computeMaintenanceHash(c.text)}`,
 				text: c.text,
 				confidence: c.confidence,
 			}))
@@ -243,19 +246,25 @@ export async function runGitDiffMaintenance(
 			// Upsert the page with the regenerated content + new claims.
 			const maintenanceHash = computeMaintenanceHash(source.content)
 			if (existing) {
-				// Pass only NEW claims — updateWikiPage preserves existing claims
-				// and appends accepted new ones through the pipeline gate.
-				await updateWikiPage(handle, slug, opts.scope, opts.scopeRef, {
-					summary: generated.summary,
-					body: generated.body,
-					frontmatter: {
-						...(existing.frontmatter as object),
-						type: (existing.frontmatter as { type?: string })?.type ?? "source",
-						resource: source.path,
-						maintenanceHash,
-					} as unknown as WikiPageInput["frontmatter"],
-					claims: newClaims as unknown as Array<{ id: string; text: string }>,
-				})
+				await updateWikiPage(
+					handle,
+					slug,
+					opts.scope,
+					opts.scopeRef,
+					{
+						summary: generated.summary,
+						body: generated.body,
+						frontmatter: {
+							...(existing.frontmatter as object),
+							type:
+								(existing.frontmatter as { type?: string })?.type ?? "source",
+							resource: source.path,
+							maintenanceHash,
+						} as unknown as WikiPageInput["frontmatter"],
+						claims: newClaims as unknown as Array<{ id: string; text: string }>,
+					},
+					{ claimsReplace: { idPrefix: claimIdPrefix } },
+				)
 				result.claimsAdded += newClaims.length
 			} else {
 				// createWikiPage runs the pipeline gate internally for each claim.

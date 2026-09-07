@@ -322,6 +322,220 @@ describe("runGitDiffMaintenance", () => {
 		expect(page?.summary).toBe("New summary.")
 	})
 
+	it("replaces only source-owned claims while preserving independent claims", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const key = store.key("sources/src/api.ts", SCOPE, SCOPE_REF)
+		store.docs.set(key, {
+			_id: { toString: () => "1" },
+			slug: "sources/src/api.ts",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			state: "active",
+			title: "API Source",
+			summary: "Old summary.",
+			body: "Old body.",
+			frontmatter: { type: "source", resource: "src/api.ts" },
+			claims: [
+				{
+					id: "claim-git-769911c416ccf851-787fd9438d4a313f",
+					text: "The API uses REST endpoints.",
+				},
+				{
+					id: "claim-git-769911c416ccf851-edb33b2badee665d",
+					text: "The API uses OAuth authentication.",
+				},
+				{
+					id: "claim-git-769911c416ccf851-84a55152dc76b052",
+					text: "Exports are generated nightly.",
+				},
+				{
+					id: "claim-dreamer-event-1",
+					text: "User prefers concise reports.",
+				},
+				{ id: "claim-manual-1", text: "Manual deployment notes." },
+			],
+			relationships: [],
+			revision: 1,
+		})
+		const llmGenerate = vi.fn(async () => ({
+			summary: "New summary.",
+			body: "New body.",
+			claims: [
+				{ text: "The API uses OAuth authentication." },
+				{ text: "Exports are generated hourly." },
+				{ text: "Metrics are retained for thirty days." },
+			],
+		}))
+
+		await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "new content" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+
+		const claims = store.docs.get(key)?.claims as Array<{
+			id: string
+			text: string
+		}>
+		expect(claims.map((claim) => claim.id)).toEqual([
+			"claim-dreamer-event-1",
+			"claim-manual-1",
+			"claim-git-769911c416ccf851-edb33b2badee665d",
+			"claim-git-769911c416ccf851-1074b3006b03cc90",
+			"claim-git-769911c416ccf851-d396dcc3c76aa2b7",
+		])
+		expect(
+			claims.find(
+				(claim) => claim.id === "claim-git-769911c416ccf851-edb33b2badee665d",
+			)?.text,
+		).toBe("The API uses OAuth authentication.")
+	})
+
+	it("keeps content-keyed claim IDs stable across reorder and clears only owned claims", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const key = store.key("sources/src/api.ts", SCOPE, SCOPE_REF)
+		let generatedClaims = [
+			{ text: "  Requests require OAuth authentication.  " },
+			{ text: "The service uses PostgreSQL for storage." },
+		]
+		const llmGenerate = vi.fn(async () => ({
+			title: "API Source",
+			summary: "API summary.",
+			body: "API body.",
+			claims: generatedClaims,
+		}))
+
+		await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "first version" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+		const firstIds = Object.fromEntries(
+			(
+				(store.docs.get(key)?.claims ?? []) as Array<{
+					id: string
+					text: string
+				}>
+			).map((claim) => [claim.text, claim.id]),
+		)
+		expect(firstIds).toEqual({
+			"  Requests require OAuth authentication.  ":
+				"claim-git-769911c416ccf851-8aaa7123aef43bad",
+			"The service uses PostgreSQL for storage.":
+				"claim-git-769911c416ccf851-a42d74d777df2816",
+		})
+
+		generatedClaims = [...generatedClaims].reverse()
+		await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "second version" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+		const reorderedIds = Object.fromEntries(
+			(
+				(store.docs.get(key)?.claims ?? []) as Array<{
+					id: string
+					text: string
+				}>
+			).map((claim) => [claim.text, claim.id]),
+		)
+		expect(reorderedIds).toEqual(firstIds)
+
+		const page = store.docs.get(key)!
+		page.claims.push({ id: "claim-manual-1", text: "Manual deployment notes." })
+		generatedClaims = []
+		await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "third version" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+		expect(store.docs.get(key)?.claims).toEqual([
+			{ id: "claim-manual-1", text: "Manual deployment notes." },
+		])
+	})
+
+	it("never retargets a removed owned claim ID to edited text", async () => {
+		const store = makeStore()
+		const h = handle(store)
+		const sourceKey = store.key("sources/src/api.ts", SCOPE, SCOPE_REF)
+		const targetKey = store.key("target", SCOPE, SCOPE_REF)
+		const oldClaimId = "claim-git-769911c416ccf851-a688e6e7c4514102"
+		const newClaimId = "claim-git-769911c416ccf851-17cfd6a371821585"
+		store.docs.set(sourceKey, {
+			_id: { toString: () => "source" },
+			slug: "sources/src/api.ts",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			state: "active",
+			title: "API Source",
+			summary: "Old summary.",
+			body: "Old body.",
+			frontmatter: { type: "source", resource: "src/api.ts" },
+			claims: [{ id: oldClaimId, text: "Legacy endpoint uses XML." }],
+			relationships: [],
+			revision: 1,
+		})
+		const historicalContradiction = {
+			id: "contra-history",
+			claimIds: [oldClaimId, "claim-target-1"],
+			detectedAt: new Date("2026-01-01T00:00:00.000Z"),
+			resolution: "unresolved",
+		}
+		store.docs.set(targetKey, {
+			_id: { toString: () => "target" },
+			slug: "target",
+			scope: SCOPE,
+			scopeRef: SCOPE_REF,
+			state: "active",
+			title: "Target",
+			claims: [{ id: "claim-target-1", text: "Target claim" }],
+			contradictions: [historicalContradiction],
+			relationships: [],
+			revision: 1,
+		})
+		const llmGenerate = vi.fn(async () => ({
+			summary: "New summary.",
+			body: "New body.",
+			claims: [{ text: "Legacy endpoint uses xml." }],
+		}))
+
+		await runGitDiffMaintenance(
+			h,
+			[{ path: "src/api.ts", content: "new content" }],
+			llmGenerate,
+			{ scope: SCOPE, scopeRef: SCOPE_REF },
+		)
+
+		expect(store.docs.get(sourceKey)?.claims).toEqual([
+			expect.objectContaining({
+				id: newClaimId,
+				text: "Legacy endpoint uses xml.",
+			}),
+		])
+		const allClaims = Array.from(store.docs.values()).flatMap(
+			(doc) =>
+				(doc.claims ?? []) as Array<{
+					id: string
+					text: string
+				}>,
+		)
+		expect(
+			allClaims.some(
+				(claim) =>
+					claim.id === oldClaimId && claim.text === "Legacy endpoint uses xml.",
+			),
+		).toBe(false)
+		expect(store.docs.get(targetKey)?.contradictions).toEqual([
+			historicalContradiction,
+		])
+	})
+
 	it("skips a superseded target without invoking the LLM or mutating it", async () => {
 		const store = makeStore()
 		const h = handle(store)

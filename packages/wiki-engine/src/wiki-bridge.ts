@@ -534,16 +534,21 @@ function upsertClaimsById(
  *  (stale-read RMW eliminated: the merged claims/relationships/text are
  *  applied against a known revision or not at all).
  *
- *  Claims: patch claims are merged into the existing claims by claim id —
- *  a patch claim whose id already exists REPLACES that claim (upsert-by-id),
- *  so no write can accumulate duplicate claim ids on a page. */
+ *  Claims: ordinary patch claims are merged into the existing claims by claim
+ *  id. Internal maintenance callers may replace one ID-prefixed owned subset
+ *  while preserving all independent claims. */
 export async function updateWikiPage(
 	handle: WikiDbHandle,
 	slug: string,
 	scope: string,
 	scopeRef: string,
 	patch: Partial<Omit<WikiPageInput, "slug" | "scope" | "scopeRef">>,
-	opts: { session?: ClientSession; editor?: WikiPageEditor } = {},
+	opts: {
+		session?: ClientSession
+		editor?: WikiPageEditor
+		/** Internal maintenance mode: replace only claims owned by this prefix. */
+		claimsReplace?: { idPrefix: string }
+	} = {},
 ): Promise<WikiPageView | undefined> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const now = new Date()
@@ -651,16 +656,25 @@ export async function updateWikiPage(
 
 	// Process claims through the write pipeline gate: contradiction detection
 	// FIRST (cross-page), then dedup (same-page near-duplicate). Claims rejected
-	// by dedup are filtered out — but contradictions are still recorded.
-	// CRITICAL: the final claims array = existing claims + accepted new claims
-	// (NOT just the accepted new claims — that would drop all existing claims).
+	// by dedup are filtered out, and contradictions are recorded only for
+	// accepted claims. Ordinary patches merge accepted claims into all existing
+	// claims. Internal owned-claim replacement preserves independent claims and
+	// replaces only claims whose IDs begin with the supplied prefix.
 	if (patch.claims !== undefined) {
+		const existingClaims = oldPage?.claims ?? []
+		const ownedClaimPrefix = opts.claimsReplace?.idPrefix
+		const baseClaims =
+			ownedClaimPrefix !== undefined
+				? existingClaims.filter(
+						(claim) => !claim.id.startsWith(ownedClaimPrefix),
+					)
+				: existingClaims
 		if (patch.claims.length === 0) {
-			// Clear all claims (empty array = clear).
-			setFields.claims = []
+			// Ordinary empty patches clear all claims. Owned replacement clears
+			// only the matching subset and preserves independent claims.
+			setFields.claims = opts.claimsReplace ? baseClaims : []
 		} else {
-			const existingClaims = oldPage?.claims ?? []
-			const existingClaimRecords: ClaimRecord[] = existingClaims.map((c) => ({
+			const dedupClaims: ClaimRecord[] = baseClaims.map((c) => ({
 				id: c.id,
 				text: c.text,
 				status: c.status,
@@ -677,13 +691,21 @@ export async function updateWikiPage(
 						status: newClaim.status,
 						confidence: newClaim.confidence,
 					},
-					existingClaimRecords,
+					dedupClaims,
 					scope,
 					scopeRef,
 					opts.session,
 				)
 				if (!gate.rejected) {
 					acceptedNewClaims.push(newClaim)
+					if (opts.claimsReplace) {
+						dedupClaims.push({
+							id: newClaim.id,
+							text: newClaim.text,
+							status: newClaim.status,
+							confidence: newClaim.confidence,
+						})
+					}
 				}
 			}
 			const newClaimsNormalized = acceptedNewClaims.map((c) => ({
@@ -707,7 +729,7 @@ export async function updateWikiPage(
 			// place; novel ids are appended. The page can never accumulate two
 			// claims with the same id.
 			setFields.claims = upsertClaimsById(
-				existingClaims as unknown as Record<string, unknown>[],
+				baseClaims as unknown as Record<string, unknown>[],
 				newClaimsNormalized as unknown as Record<string, unknown>[],
 			) as unknown as typeof setFields.claims
 		}

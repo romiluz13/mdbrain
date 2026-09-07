@@ -510,6 +510,54 @@ describe("updateWikiPage", () => {
 		expect(update.$set.claims).toEqual([])
 	})
 
+	it("replaces only claims owned by an internal prefix", async () => {
+		const { db, coll } = mockDb()
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		;(
+			coll.findOne as unknown as ReturnType<typeof vi.fn>
+		).mockResolvedValueOnce({
+			slug: "x",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			claims: [
+				{ id: "claim-git-source-t1", text: "Old source claim" },
+				{ id: "claim-git-source-t2", text: "Stable source claim" },
+				{ id: "claim-dreamer-event-1", text: "Dreamer claim" },
+				{ id: "claim-manual-1", text: "Manual claim" },
+			],
+			relationships: [],
+		})
+
+		await updateWikiPage(
+			h,
+			"x",
+			"workspace",
+			"ws-1",
+			{
+				claims: [
+					{ id: "claim-git-source-t2", text: "Stable source claim" },
+					{ id: "claim-git-source-t3-new", text: "Edited source claim" },
+					{ id: "claim-git-source-t4", text: "New source claim" },
+					{ id: "claim-git-source-t4-copy", text: "New source claim" },
+				],
+			},
+			{ claimsReplace: { idPrefix: "claim-git-source-" } },
+		)
+
+		const update = (
+			coll.findOneAndUpdate as unknown as ReturnType<typeof vi.fn>
+		).mock.calls[0][1]
+		expect(update.$set.claims.map((claim: { id: string }) => claim.id)).toEqual(
+			[
+				"claim-dreamer-event-1",
+				"claim-manual-1",
+				"claim-git-source-t2",
+				"claim-git-source-t3-new",
+				"claim-git-source-t4",
+			],
+		)
+	})
+
 	it("pins the observed revision in the update filter (compare-and-swap)", async () => {
 		const { db, coll } = mockDb()
 		const h: WikiDbHandle = { db, prefix: "test_" }
