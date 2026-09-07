@@ -357,6 +357,96 @@ function installSmoke(
 	)
 }
 
+function compileNestedAi7ToolsConsumer(tarballsByName: Map<string, string>) {
+	const clientTarball = tarballsByName.get("@mdbrain/client")
+	const toolsTarball = tarballsByName.get("@mdbrain/tools")
+	if (!clientTarball || !toolsTarball) {
+		fail("nested AI SDK consumer requires client and tools tarballs")
+	}
+
+	const installDir = fs.mkdtempSync(
+		path.join(os.tmpdir(), "mdbrain-tools-ai7-smoke-"),
+	)
+	const clientSpec = `file:${clientTarball}`
+
+	fs.writeFileSync(
+		path.join(installDir, "package.json"),
+		JSON.stringify(
+			{
+				name: "mdbrain-tools-ai7-smoke",
+				private: true,
+				type: "module",
+				dependencies: {
+					"@mdbrain/client": clientSpec,
+					"@mdbrain/tools": `file:${toolsTarball}`,
+					ai: "^7.0.0",
+				},
+				devDependencies: {
+					"@types/json-schema": "^7.0.15",
+					"@types/node": "^22.10.0",
+				},
+				overrides: {
+					"@mdbrain/client": clientSpec,
+				},
+			},
+			null,
+			2,
+		),
+	)
+	fs.writeFileSync(
+		path.join(installDir, "consumer-ai7-nested.ts"),
+		`import type { wrapLanguageModel } from "ai"
+import { withMdbrain } from "@mdbrain/tools/vercel"
+
+declare const model: Parameters<typeof wrapLanguageModel>[0]["model"]
+
+withMdbrain(model, {
+\tapiUrl: "http://smoke.invalid",
+\tapiKey: "smoke-key",
+\tuserId: "smoke-user",
+\tagentId: "smoke-agent",
+})
+`,
+	)
+
+	execFileSync(
+		"npm",
+		[
+			"install",
+			"--ignore-scripts",
+			"--no-package-lock",
+			"--install-strategy=nested",
+		],
+		{
+			cwd: installDir,
+			stdio: "pipe",
+		},
+	)
+	execFileSync(
+		"node",
+		[
+			path.join(rootDir, "node_modules/typescript/bin/tsc"),
+			"--noEmit",
+			"--strict",
+			"--target",
+			"ES2022",
+			"--module",
+			"NodeNext",
+			"--moduleResolution",
+			"NodeNext",
+			"--lib",
+			"ES2022,DOM",
+			"--types",
+			"node",
+			"consumer-ai7-nested.ts",
+		],
+		{
+			cwd: installDir,
+			stdio: "pipe",
+		},
+	)
+}
+
 function main() {
 	validatePublishablePackages(publishablePackages)
 	checkRemovedPaths()
@@ -388,6 +478,7 @@ function main() {
 	for (const packageSpec of publishablePackages) {
 		installSmoke(packageSpec, tarballsByName)
 	}
+	compileNestedAi7ToolsConsumer(tarballsByName)
 
 	const supportedCount = tarballs.filter(
 		(entry) => entry.supportedSurface,

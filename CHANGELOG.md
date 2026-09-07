@@ -29,6 +29,15 @@ All notable changes to Mdbrain will be documented in this file.
 
 ### Changed
 
+- `@mdbrain/tools` now derives `withMdbrain()` model and return types from the
+  installed AI SDK's `wrapLanguageModel` contract. Supported combinations are
+  AI SDK 5 with V2 models and AI SDK 6 with native V3 models on Node 20.19+
+  (verified on 20.20.2), plus AI SDK 7 with native V4 or V2 models on Node 22+
+  (verified on 22.23.2). AI SDK 6 with a V2 model previously compiled but is
+  now intentionally rejected because AI SDK 6 does not convert V2 result
+  shapes to its declared V3 wrapper shape. This is a type compatibility
+  narrowing, not a dependency-major upgrade; package version and dependency,
+  peer, and engine ranges remain unchanged.
 - Direct, sessionless `@mdbrain/wiki-engine` updates without
   `expectedRevision` can now serialize and retry under concurrent writes
   instead of surfacing a revision conflict. Unpinned replacement fields

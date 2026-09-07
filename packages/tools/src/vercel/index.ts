@@ -1,7 +1,4 @@
-import type {
-	LanguageModelV2,
-	LanguageModelV2CallOptions,
-} from "@ai-sdk/provider"
+import type { LanguageModelV2CallOptions } from "@ai-sdk/provider"
 import { wrapLanguageModel, type LanguageModelMiddleware } from "ai"
 import {
 	fetchRenderedContextBundle,
@@ -86,9 +83,9 @@ function withMemoryMessage(
 /* ------------------------------------------------------------------ */
 
 export function withMdbrain(
-	model: LanguageModelV2,
+	model: Parameters<typeof wrapLanguageModel>[0]["model"],
 	options: MdbrainCoreOptions,
-): LanguageModelV2 {
+): ReturnType<typeof wrapLanguageModel> {
 	const middleware: LanguageModelMiddleware = {
 		transformParams: async ({ params }) => {
 			const userQuery = extractUserQuery(params.prompt)

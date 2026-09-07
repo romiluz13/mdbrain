@@ -50,7 +50,24 @@ const memoryModel = withMdbrain(model, options)
 const memoryOpenAI = createOpenAIMiddleware(openai, options)
 ```
 
-`withMdbrain()` wraps a Vercel AI SDK language model.
+`withMdbrain()` wraps a Vercel AI SDK language model. Its accepted model and
+returned wrapper types follow the installed AI SDK's own `wrapLanguageModel`
+contract:
+
+| AI SDK | Supported model input | Runtime |
+| --- | --- | --- |
+| 5 | V2 | Node 20.19+ (verified on 20.20.2) |
+| 6 | Native V3 | Node 20.19+ (verified on 20.20.2) |
+| 7 | Native V4 or V2 | Node 22+ (verified on 22.23.2) |
+
+With AI SDK 6, passing a V2 model is intentionally rejected by TypeScript.
+Although that combination previously compiled, AI SDK 6 does not convert V2
+result shapes to its declared V3 wrapper shape. Use a native V3 model with AI
+SDK 6, or use AI SDK 5 or 7 for V2 models. This is a type compatibility
+narrowing, not an AI SDK dependency or peer-range upgrade. In particular, AI
+SDK 7's Node 22+ requirement means fresh AI SDK 7 resolution is not a Node 20
+consumer path.
+
 `createOpenAIMiddleware()` wraps an OpenAI-compatible client and intercepts
 `chat.completions.create()`. Both inject a context bundle and asynchronously
 write user and assistant events.
