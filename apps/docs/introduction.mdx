@@ -33,7 +33,7 @@ The fastest way to understand Mdbrain is:
 | Semantic facts | Preferences, profile details, decisions, and current state |
 | Procedural playbooks | Workflows, runbooks, and operating instructions |
 | Workspace knowledge | Documents, project context, and reference material |
-| Provenance | Source context, traces, citations, and lifecycle evidence |
+| Provenance | Source context, retrieval evidence, citations, and lifecycle evidence |
 
 ## Runtime shape
 
@@ -41,12 +41,13 @@ The fastest way to understand Mdbrain is:
 App / Agent / MCP client
   -> Mdbrain API or TypeScript client
   -> Memory bridge
-  -> MongoDB memory engine
-  -> MongoDB
+  -> Memongo HTTP
+  -> Memongo-owned memory storage
 ```
 
-Mdbrain keeps the integration surface small while the engine handles indexing,
-retrieval, telemetry, graph relationships, and memory lifecycle behavior.
+Mdbrain keeps the integration surface small. Memongo owns memory indexing,
+retrieval, telemetry, and lifecycle behavior; MDBrain owns its separate wiki
+MongoDB collections and graph relationships.
 
 ## Framework safety
 

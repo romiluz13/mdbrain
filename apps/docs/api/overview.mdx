@@ -60,8 +60,10 @@ Memongo bridge compatibility with wiki-store readiness.
 ## Authentication
 
 Set `MDBRAIN_API_KEY` for every shared or network-exposed deployment. If no
-admin or scoped key is configured, `/v1` routes stay open for trusted local
-development and the API logs a startup warning.
+admin or scoped key is configured, the API refuses to start. For trusted local
+development only, `MDBRAIN_ALLOW_DEV_PRINCIPAL=1` explicitly opts into the
+unauthenticated development principal and logs a startup warning. Production
+always refuses this mode.
 
 When `MDBRAIN_API_KEY` is set, all requests must include a `Bearer` token:
 

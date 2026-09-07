@@ -8,40 +8,19 @@ icon: "play"
 
 - Node.js 20+
 - Bun 1.2+
-- Docker, for the local wiki MongoDB
-- A compatible Memongo 2.0.1 HTTP deployment
+- Docker
+- A compatible Memongo 2.1.0 HTTP deployment
 
-## 1. Clone and install
+## 1. Start the supported full bundle
 
-```bash
-git clone https://github.com/romiluz13/mdbrain.git
-cd mdbrain
-bun install
-```
+Follow the repository's
+[maintained full-bundle quickstart](https://github.com/romiluz13/mdbrain#quickstart).
+It is the single pinned sequence for cloning the sibling Memongo checkout,
+selecting the compatible revision, and starting MongoDB with Atlas Search,
+Memongo, the API, and the web console. The API runs at
+`http://127.0.0.1:3847`; its compose default key is `dev-mdbrain-key`.
 
-## 2. Start the wiki database and configure Memongo
-
-For the default local path:
-
-```bash
-docker compose -f docker/docker-compose.minimal.yml up -d
-export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?replicaSet=rs0"
-export MEMONGO_API_URL="http://127.0.0.1:3900"
-export MEMONGO_API_KEY="YOUR_MEMONGO_API_KEY_HERE"
-export MEMONGO_ALLOW_INSECURE_LOCAL="1"
-export MDBRAIN_API_KEY="YOUR_API_KEY_HERE"
-```
-
-## 3. Start the API
-
-```bash
-cd apps/api
-bun run dev
-```
-
-The API runs at `http://127.0.0.1:3847`.
-
-## 4. Verify
+## 2. Verify
 
 ```bash
 curl -s http://127.0.0.1:3847/health
@@ -51,7 +30,7 @@ curl -s http://127.0.0.1:3847/ready
 Look for a healthy API response and ready dependencies. These are server-local
 liveness and readiness checks, not tenant diagnostics APIs.
 
-## 5. Add and search memory
+## 3. Add and search memory
 
 <Tabs>
 <Tab title="TypeScript">
@@ -60,7 +39,7 @@ import { MdbrainClient } from "@mdbrain/client";
 
 const client = new MdbrainClient({
   baseUrl: "http://127.0.0.1:3847",
-  apiKey: "YOUR_API_KEY_HERE",
+  apiKey: "dev-mdbrain-key",
 });
 
 await client.add({
@@ -72,7 +51,7 @@ await client.add({
 const results = await client.search({
   query: "What are the user's preferences?",
   sessionKey: "user-123",
-  maxResults: 5,
+  limit: 5,
 });
 
 console.log(results);
@@ -82,13 +61,13 @@ console.log(results);
 ```bash
 curl -s http://127.0.0.1:3847/v1/add \
   -H "content-type: application/json" \
-  -H "authorization: Bearer YOUR_API_KEY_HERE" \
+  -H "authorization: Bearer dev-mdbrain-key" \
   -H "idempotency-key: YOUR_IDEMPOTENCY_KEY_HERE" \
   -d '{"content":"The user prefers dark mode and TypeScript.","sessionId":"user-123"}'
 
 curl -s http://127.0.0.1:3847/v1/search \
   -H "content-type: application/json" \
-  -H "authorization: Bearer YOUR_API_KEY_HERE" \
+  -H "authorization: Bearer dev-mdbrain-key" \
   -d '{"query":"What are the user preferences?","sessionKey":"user-123","maxResults":5}'
 ```
 </Tab>

@@ -3,18 +3,10 @@
 ## One-command local bundle (compose)
 
 The full stack — MongoDB (Atlas Local + Search) → Memongo → MDBrain API →
-web console — boots with a single command when the
-[memongo](https://github.com/romiluz13/Memongo) repository is cloned as a
-sibling of mdbrain (the compose file builds the memongo image from
-`../../memongo`):
-
-```bash
-git clone https://github.com/romiluz13/mdbrain
-git clone https://github.com/romiluz13/Memongo memongo
-cd mdbrain
-docker compose -f docker/compose.full.yml up -d
-open http://127.0.0.1:3040
-```
+web console — uses the root README's
+[maintained full-bundle quickstart](../../README.md#quickstart). Follow that
+single sequence so the sibling Memongo checkout uses the revision matched to
+the captured contract before compose starts.
 
 Defaults and overrides:
 
@@ -62,3 +54,18 @@ tenant retrieval. To require server-local control checks, set
 `MEMONGO_CONTROL_API_KEY` and list `control`, `embedding`, and/or `vector` in
 `MEMONGO_READINESS_CONTROL_LANES`. Unlisted control lanes are optional and are
 not probed.
+
+## OKF filesystem access
+
+OKF import and export fail closed until filesystem roots are configured:
+
+```bash
+export MDBRAIN_OKF_ALLOWED_ROOTS="/srv/okf/vaults,/srv/okf/exports"
+```
+
+Both operations are confined to those comma-separated roots. MDBrain resolves
+the candidate path and configured roots through real paths before checking
+containment, so symlinks cannot escape the configured boundary. For trusted
+local development only, `MDBRAIN_OKF_ALLOW_UNRESTRICTED=true` opts into
+unrestricted import and export as the API process user. Do not enable that
+option in shared or production deployments.

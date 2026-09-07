@@ -11,5 +11,5 @@
 | Integrated proof | `scripts/proof-pack.ts`, `scripts/memory-eval-core.ts`, `scripts/real-agent-smoke.ts` |
 
 The captured upstream contract is immutable under
-`docs/contracts/memongo/2.0.1`. Update it only through the contract capture and
+`docs/contracts/memongo/2.1.0`. Update it only through the contract capture and
 compatibility review workflow.

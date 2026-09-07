@@ -1,6 +1,9 @@
 # Mdbrain MongoDB Setup
 
-Atlas Local preview is the canonical Mdbrain MongoDB stack.
+Atlas Local preview is the recommended MongoDB-only development stack. The
+canonical MDBrain product path is the root
+[full-bundle quickstart](../../README.md#quickstart), which also starts
+Memongo, the API, and the web console.
 
 ## Recommended: Preview (Single Container)
 
@@ -28,7 +31,11 @@ This uses `mongodb/mongodb-atlas-local:preview` (~584 MB) -- a single container 
 
 **Docker Compose file:** `docker/mongodb/docker-compose.preview.yml`
 
-For most users, this is all you need. The multi-container setup below is for advanced validation and environment-specific checks.
+For MongoDB development, this is usually all you need. MDBrain wiki search
+readiness requires a mongot-bearing tier: preview, fullstack, or the root full
+bundle. The standalone and replicaset tiers below cannot serve wiki search.
+The multi-container setup is for advanced validation and environment-specific
+checks.
 
 ---
 
@@ -50,7 +57,7 @@ Adapted from [mdb-community-search](https://github.com/JohnGUnderwood/mdb-commun
 | Tier           | Description                       | Transactions | Vector Search | Text Search | Auto-Embedding  |
 | -------------- | --------------------------------- | :----------: | :-----------: | :---------: | :-------------: |
 | **standalone** | Single mongod, simplest setup     |      No      |      No       | $text only  |       No        |
-| **replicaset** | Single-node replica set with auth |     Yes      |      No       | $text only  |       No        |
+| **replicaset** | Single-node replica set with auth |     Yes      |      No       | $text only (not MDBrain wiki search) |       No        |
 | **fullstack**  | mongod + mongot (search engine)   |     Yes      |      Yes      |   $search   | Yes (Voyage AI) |
 
 ## Quick Start
@@ -61,10 +68,10 @@ Adapted from [mdb-community-search](https://github.com/JohnGUnderwood/mdb-commun
 # Full stack (recommended) - transactions + vector search + auto-embedding
 ./docker/mongodb/start.sh fullstack
 
-# Replica set only - transactions + $text search
+# Replica set only - transactions; no MDBrain wiki search readiness
 ./docker/mongodb/start.sh replicaset
 
-# Standalone - simplest, no transactions or search
+# Standalone - simplest; no transactions or MDBrain wiki search readiness
 ./docker/mongodb/start.sh standalone
 
 # Stop all services

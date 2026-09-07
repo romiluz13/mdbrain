@@ -68,6 +68,11 @@ narrowing, not an AI SDK dependency or peer-range upgrade. In particular, AI
 SDK 7's Node 22+ requirement means fresh AI SDK 7 resolution is not a Node 20
 consumer path.
 
+AI SDK 5 can resolve `@ai-sdk/provider-utils` from the affected release line
+for a currently unpatched security advisory. Prefer a supported AI SDK 6 or 7
+combination from the table when its runtime and model constraints fit your
+application. The `@mdbrain/tools` peer range remains `ai >=5.0.0`.
+
 `createOpenAIMiddleware()` wraps an OpenAI-compatible client and intercepts
 `chat.completions.create()`. Both inject a context bundle and asynchronously
 write user and assistant events.

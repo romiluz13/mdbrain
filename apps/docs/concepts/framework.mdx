@@ -17,7 +17,7 @@ answer-ready context without requiring every client to invent a memory system.
 | Contract area | What Mdbrain provides |
 |---|---|
 | Memory taxonomy | Episodic events, semantic facts, procedures, profile preferences, workspace knowledge, and provenance |
-| Core operations | Recall, context bundles, remember, update, forget, feedback, and trace |
+| Core operations | Recall, context bundles, remember, update, forget, feedback, and detailed retrieval evidence |
 | Integration model | HTTP API, TypeScript SDK, AI SDK helpers, and MCP tools |
 | Scope model | `session`, `user`, `agent`, `workspace`, `tenant`, and `global` |
 | Safety model | Read by default; write only on explicit user or app intent |
@@ -44,7 +44,7 @@ need long-running context.
 | Update | Lifecycle update endpoints and MCP lifecycle tools | Revise structured or procedural memories |
 | Forget | Lifecycle delete endpoints and MCP lifecycle tools | Invalidate or remove scoped memory |
 | Feedback | `/v1/memory/feedback`, `mdbrain_memory_feedback` | Confirm, correct, or mark memory irrelevant |
-| Trace | `/v1/chain-trace`, admin trace tools | Inspect evidence and provenance |
+| Retrieval evidence | `/v1/search-detailed`, `searchDetailed` | Inspect plans, passes, metadata, and evidence |
 
 ## Scope rules
 

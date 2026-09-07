@@ -109,7 +109,7 @@ Note: `$vectorSearch`, `$search`, `$rankFusion`, and `$rerank` require Atlas Sea
 | **Governance** | None | None | None | **Scope, trust tiers, permissions** |
 | **Contradiction detection** | None | ADD-only bias (stores contradictions) | None | **Cross-page, runs before dedup** |
 | **Self-maintenance** | Scheduled runs | Reactive | Reactive | **Git-diff + Dreamer 5-phase (wiki Dreamer simplified)** |
-| **MCP tools** | Planned | None | None | **34 supported tools (6 wiki)** |
+| **MCP tools** | Planned | None | None | **30 supported tools (6 wiki)** |
 | **Connectors** | 6 (Gmail, Notion, Git, Twitter, HN, web) | None | None | **Obsidian (beta): discovery + export; ingest throws** |
 | **Web console** | None (CLI only) | None | None | **Next.js wiki browser** |
 | **Backlinks** | None | None | Graph edges | **Auto-computed from relationships** |
@@ -295,7 +295,7 @@ Clients -> MDBrain API -> Memongo HTTP gateway -> Memongo-owned memory
 
 **Self-maintenance** — Two strategies, unified through the same governance gates, both operator-triggered via `bun run wiki:maintenance` (never a silent background loop): git-diff maintenance (detects changed source files via `maintenanceHash`, regenerates only affected pages through the configured LLM) and Dreamer 5-phase promotion for event/conversation sources (novelty scan, vector similarity with a 0.65 floor, LLM injection classification — ignore/new/update/contradiction, per-claim confidence extraction with event provenance, promotion through the pipeline gate). Both require an LLM (`MDBRAIN_LLM_*`) and fail closed with `MaintenanceLlmUnconfiguredError` when it is not configured; the legacy whole-event importer is an explicit `--importer heuristic-importer` opt-in, disclosed in the run summary. Every LLM response is JSON-Schema-constrained and validated locally; there is no silent success path (refusals, truncation, and malformed output are hard errors).
 
-**MCP tools** — 34 tools for supported memory and wiki operations, including 6 wiki-specific tools. Connect from Claude Desktop, Cursor, or any MCP-compatible agent.
+**MCP tools** — 30 tools for supported memory and wiki operations, including 6 wiki-specific tools. Connect from Claude Desktop, Cursor, or any MCP-compatible agent.
 
 **Connectors** — Obsidian (beta): real vault discovery + path-contained export; `ingest` throws `ConnectorNotImplementedError` until the post-sale roadmap item lands. The GitHub/Confluence/Notion/Slack/CRM shell connectors were removed: they reported success while writing nothing.
 
@@ -354,7 +354,10 @@ Browse pages (filterable by kind), view full page details (claims, contradiction
 | `MEMONGO_CONTROL_API_KEY` | For control readiness lanes | Separate server-local key for Memongo status and probes |
 | `MEMONGO_READINESS_CONTROL_LANES` | Optional | Comma-separated required `control`, `embedding`, and/or `vector` lanes |
 | `MDBRAIN_API_KEY` | Yes | API authentication key (any string for local dev) |
+| `MDBRAIN_ALLOW_DEV_PRINCIPAL` | Trusted local development only | Set to `1` to opt into the unauthenticated development principal when no admin or scoped API key is configured. Production refuses this mode |
 | `MDBRAIN_API_URL` | MCP only | URL of the MDBrain API server (default: `http://127.0.0.1:3847`) |
+| `MDBRAIN_OKF_ALLOWED_ROOTS` | OKF import/export | Comma-separated filesystem roots allowed for OKF import and export. Paths and roots are realpath-resolved to prevent symlink escape |
+| `MDBRAIN_OKF_ALLOW_UNRESTRICTED` | Trusted local development only | Set to `true` to allow unrestricted OKF filesystem access when no allowed roots are configured. Do not use in shared or production deployments |
 | `MDBRAIN_LLM_BASE_URL` | Maintenance CLI only* | Base URL of an OpenAI-compatible `/chat/completions` endpoint for git-diff regeneration and Dreamer classification. *Required for non-dry-run `bun run wiki:maintenance` |
 | `MDBRAIN_LLM_API_KEY` | Maintenance CLI only* | API key for the LLM endpoint (never echoed in error messages) |
 | `MDBRAIN_LLM_MODEL` | Maintenance CLI only* | Model name for chat completions |

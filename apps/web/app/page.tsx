@@ -375,9 +375,9 @@ export default function Home() {
 					<p className={styles.eyebrow}>Run it yourself</p>
 					<h2 id="quickstart-heading">Install the entire system.</h2>
 					<p>
-						Clone the repository, start the transaction-capable local MongoDB
-						stack, connect a compatible Memongo 2.0.1 service, and boot the API.
-						No hosted MDBrain account is required.
+						Follow the maintained full-bundle sequence to start MongoDB with
+						Atlas Search, a compatible Memongo 2.1.0 service, the API, and the
+						web console. No hosted MDBrain account is required.
 					</p>
 					<a href={`${repository}#quickstart`}>Read the full quickstart ↗</a>
 				</div>
@@ -393,19 +393,11 @@ export default function Home() {
 					</div>
 					<pre>
 						<code>{`git clone https://github.com/romiluz13/mdbrain.git
-cd mdbrain && bun install
+cd mdbrain
 
-docker compose \\
-  -f docker/docker-compose.minimal.yml up -d
-
-# Configure a compatible Memongo 2.0.1 service
-export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?replicaSet=rs0"
-export MEMONGO_API_URL=http://127.0.0.1:3900
-export MEMONGO_API_KEY=local-memongo-secret
-export MEMONGO_ALLOW_INSECURE_LOCAL=1
-export MDBRAIN_API_KEY=local-dev-secret
-
-bun --cwd apps/api dev`}</code>
+# Continue with the maintained full-bundle sequence:
+# github.com/romiluz13/mdbrain#quickstart
+# It pins the sibling Memongo checkout before compose starts.`}</code>
 					</pre>
 				</section>
 			</section>

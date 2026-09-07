@@ -11,7 +11,7 @@ npm install @mdbrain/memory-bridge
 ## When to use this package
 
 - You are implementing the MDBrain HTTP API or another trusted server.
-- You need compatibility-checked access to a Memongo 2.0.1 deployment.
+- You need compatibility-checked access to a Memongo 2.1.0 deployment.
 - You do not need direct access to Memongo storage internals.
 
 ## Example

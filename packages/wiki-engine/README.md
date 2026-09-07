@@ -66,6 +66,7 @@ const results = await searchWikiPages(handle, {
 - **Governance** — scope filtering, trust-tier propagation, permissions, supersession audit
 - **Contradiction detection** — cross-page, runs before dedup
 - **Maintenance** — git-diff + Dreamer 5-phase consolidation
-- **Connectors** — Obsidian, GitHub, Confluence, Notion, Slack, CRM
+- **Connectors** — Obsidian (beta): discovery and path-contained export;
+  `ingest` throws `ConnectorNotImplementedError`
 
 If you need an HTTP client, use [`@mdbrain/client`](../client/README.md). If you need the bridge facade, use [`@mdbrain/memory-bridge`](../memory-bridge/README.md).

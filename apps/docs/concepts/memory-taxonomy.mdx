@@ -17,7 +17,7 @@ to store, how to retrieve it, and when it is safe to update.
 | Procedural playbooks | Procedure memory | Runbooks, workflows, operating rules | Repeatable action guidance |
 | Profile preferences | Profile synthesis over memory | User or account history | Personalization and response shaping |
 | Workspace knowledge | Knowledge base chunks, events, graph links | Docs, repo notes, research, project history | Shared Company Brain recall |
-| Provenance | Metadata, citations, source event IDs, traces | Every write path that can attach evidence | Trust, audit, correction, and invalidation |
+| Provenance | Metadata, citations, source event IDs, retrieval evidence | Every write path that can attach evidence | Trust, audit, correction, and invalidation |
 
 ## Operation model
 
@@ -32,7 +32,7 @@ Use the smallest operation that matches the user's intent:
 | Save a playbook | Remember procedure | `writeProcedure`, `/v1/write-procedure`, `mdbrain_write_procedure` |
 | Correct memory | Update or feedback | Lifecycle update, `applyMemoryFeedback`, MCP lifecycle tools |
 | Remove stale memory | Forget | Lifecycle delete or invalidation |
-| Explain why memory appeared | Trace provenance | `traceChain`, detailed search metadata, admin trace tools |
+| Explain why memory appeared | Inspect retrieval evidence | `searchDetailed`, including plans, passes, metadata, and evidence |
 
 ## Retrieval lanes
 
@@ -54,7 +54,8 @@ Provenance is part of the framework contract:
 - Preserve source text or source event identity where available.
 - Prefer structured memories with `scope`, `scopeRef`, and evidence metadata.
 - Treat corrections as lifecycle updates or feedback, not as hidden rewrites.
-- Use traces and detailed search when evaluating why a memory was retrieved.
+- Use detailed search plans, passes, metadata, and evidence when evaluating why
+  a memory was retrieved.
 - Do not turn diagnostic or benchmark artifacts into public product claims
   unless the evidence lane supports the claim.
 - Treat portable export as maintainer-level bundle support until a public export
