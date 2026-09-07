@@ -382,7 +382,7 @@ async function expandGraph(
 	// Build $graphLookup pipeline: match seed pages → traverse relationships
 	// Self-referential: from = same collection, connectFromField = relationships.targetPageSlug, connectToField = slug
 	const pipeline: Document[] = [
-		{ $match: { slug: { $in: startSlugs } } },
+		{ $match: { slug: { $in: startSlugs }, ...prefilter } },
 		{
 			$graphLookup: {
 				from: coll.collectionName,

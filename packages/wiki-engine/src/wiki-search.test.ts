@@ -489,6 +489,77 @@ describe("searchWikiPages with reranking", () => {
 })
 
 describe("searchWikiPages with graph expansion", () => {
+	async function captureGraphPipeline(state?: string): Promise<Document[]> {
+		const capturedPipelines: Document[][] = []
+		const coll = {
+			collectionName: "test_wiki_pages",
+			aggregate: vi.fn((pipeline: Document[]) => {
+				capturedPipelines.push(pipeline)
+				return {
+					toArray: async () =>
+						capturedPipelines.length === 1
+							? [makeDoc("tables/accounts", 1.5)]
+							: [],
+				}
+			}),
+		} as unknown as Collection
+		const db = { collection: vi.fn(() => coll) } as unknown as Db
+
+		await searchWikiPages(
+			{ db, prefix: "test_" },
+			{
+				query: "accounts",
+				recipe: "fast",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				state,
+				graphExpansion: { maxDepth: 1 },
+			},
+		)
+
+		return (
+			capturedPipelines.find((pipeline) =>
+				pipeline.some((stage) => "$graphLookup" in stage),
+			) ?? []
+		)
+	}
+
+	it("applies ordinary scope and live-state restrictions to graph seeds", async () => {
+		const graphPipeline = await captureGraphPipeline()
+		const seedMatch = graphPipeline.find((stage) => "$match" in stage)?.$match
+		const traversalMatch = graphPipeline.find(
+			(stage) => "$graphLookup" in stage,
+		)?.$graphLookup.restrictSearchWithMatch
+
+		expect(traversalMatch).toEqual({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			state: { $ne: "superseded" },
+		})
+		expect(seedMatch).toEqual({
+			slug: { $in: ["tables/accounts"] },
+			...traversalMatch,
+		})
+	})
+
+	it("applies explicit historical-state restrictions to graph seeds", async () => {
+		const graphPipeline = await captureGraphPipeline("superseded")
+		const seedMatch = graphPipeline.find((stage) => "$match" in stage)?.$match
+		const traversalMatch = graphPipeline.find(
+			(stage) => "$graphLookup" in stage,
+		)?.$graphLookup.restrictSearchWithMatch
+
+		expect(traversalMatch).toEqual({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			state: "superseded",
+		})
+		expect(seedMatch).toEqual({
+			slug: { $in: ["tables/accounts"] },
+			...traversalMatch,
+		})
+	})
+
 	it("uses $graphLookup in aggregation pipeline when graphExpansion is enabled", async () => {
 		const capturedPipelines: Document[][] = []
 		const coll = {
