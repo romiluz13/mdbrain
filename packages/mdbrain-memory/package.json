@@ -20,8 +20,13 @@
 	"types": "./dist/index.d.ts",
 	"files": [
 		"dist",
-		"README.md"
+		"README.md",
+		"LICENSE",
+		"NOTICE"
 	],
+	"engines": {
+		"node": ">=20.19.0"
+	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",

@@ -40,6 +40,7 @@ const removedPaths = [
 ] as const
 
 const requiredMetadata = ["license", "repository", "homepage", "bugs"] as const
+const legalFileNames = ["LICENSE", "NOTICE"] as const
 const forbiddenTarballPatterns = [
 	/^src\//,
 	/\.test\.ts$/,
@@ -129,6 +130,60 @@ function assertMetadata(
 	}
 }
 
+function readNodeEngine(
+	packageJson: Record<string, unknown>,
+	packageRelPath: string,
+): string {
+	const engines = packageJson.engines
+	if (
+		typeof engines !== "object" ||
+		engines === null ||
+		Array.isArray(engines)
+	) {
+		fail(`missing engines object in ${packageRelPath}`)
+	}
+	return assertStringField(
+		engines as Record<string, unknown>,
+		"node",
+		packageRelPath,
+	)
+}
+
+function assertNodeEngine(
+	packageJson: Record<string, unknown>,
+	packageRelPath: string,
+	expectedNodeEngine: string,
+) {
+	const nodeEngine = readNodeEngine(packageJson, packageRelPath)
+	if (nodeEngine !== expectedNodeEngine) {
+		fail(
+			`engines.node must equal ${expectedNodeEngine} in ${packageRelPath}, found ${nodeEngine}`,
+		)
+	}
+}
+
+function assertLegalFiles(
+	packageDir: string,
+	packageRelPath: string,
+	rootLegalFiles: ReadonlyMap<string, Buffer>,
+) {
+	for (const fileName of legalFileNames) {
+		const packageFilePath = path.join(packageDir, fileName)
+		if (!fs.existsSync(packageFilePath)) {
+			fail(`missing package legal file: ${packageRelPath}/${fileName}`)
+		}
+		const rootContents = rootLegalFiles.get(fileName)
+		if (!rootContents) {
+			fail(`missing root legal file: ${fileName}`)
+		}
+		if (!fs.readFileSync(packageFilePath).equals(rootContents)) {
+			fail(
+				`package legal file differs from root ${fileName}: ${packageRelPath}/${fileName}`,
+			)
+		}
+	}
+}
+
 function assertBuiltEntrypoints(
 	packageDir: string,
 	packageJson: Record<string, unknown>,
@@ -153,8 +208,10 @@ function assertTarballContents(
 	packResult: NpmPackDryRunResult,
 ) {
 	const tarballPaths = new Set(packResult.files.map((file) => file.path))
-	if (!tarballPaths.has("README.md")) {
-		fail(`package tarball is missing README.md: ${packageRelPath}`)
+	for (const requiredFile of ["README.md", ...legalFileNames]) {
+		if (!tarballPaths.has(requiredFile)) {
+			fail(`package tarball is missing ${requiredFile}: ${packageRelPath}`)
+		}
 	}
 
 	const main = assertStringField(packageJson, "main", packageRelPath).replace(
@@ -188,7 +245,13 @@ function assertPackedManifest(
 	packageSpec: PublishablePackage,
 	packedManifest: Record<string, unknown>,
 	cohortVersions: ReadonlyMap<string, string>,
+	expectedNodeEngine: string,
 ) {
+	assertNodeEngine(
+		packedManifest,
+		`${packageSpec.dir} packed package.json`,
+		expectedNodeEngine,
+	)
 	const deps = {
 		...(packedManifest.dependencies as Record<string, string> | undefined),
 		...(packedManifest.optionalDependencies as
@@ -222,6 +285,8 @@ function checkPackage(
 	packageSpec: PublishablePackage,
 	packDir: string,
 	cohortVersions: ReadonlyMap<string, string>,
+	expectedNodeEngine: string,
+	rootLegalFiles: ReadonlyMap<string, Buffer>,
 ): { name: string; tarballPath: string; supportedSurface: boolean } {
 	const packageDir = path.join(rootDir, packageSpec.dir)
 	const packageJsonPath = path.join(packageDir, "package.json")
@@ -254,6 +319,8 @@ function checkPackage(
 		`${packageSpec.dir}/package.json`,
 	)
 	assertMetadata(packageJson, packageSpec.dir)
+	assertNodeEngine(packageJson, packageSpec.dir, expectedNodeEngine)
+	assertLegalFiles(packageDir, packageSpec.dir, rootLegalFiles)
 	assertBuiltEntrypoints(packageDir, packageJson, packageSpec.dir)
 
 	const dryRun = runNpmPackDryRun(packageDir)
@@ -270,7 +337,12 @@ function checkPackage(
 	const packedManifest = readJson(
 		path.join(unpackDir, "package", "package.json"),
 	)
-	assertPackedManifest(packageSpec, packedManifest, cohortVersions)
+	assertPackedManifest(
+		packageSpec,
+		packedManifest,
+		cohortVersions,
+		expectedNodeEngine,
+	)
 
 	return {
 		name: packageSpec.name,
@@ -452,6 +524,14 @@ function main() {
 	checkRemovedPaths()
 	checkPublishWorkflow()
 
+	const rootPackageJson = readJson(path.join(rootDir, "package.json"))
+	const expectedNodeEngine = readNodeEngine(rootPackageJson, "package.json")
+	const rootLegalFiles = new Map(
+		legalFileNames.map((fileName) => [
+			fileName,
+			fs.readFileSync(path.join(rootDir, fileName)),
+		]),
+	)
 	const packDir = fs.mkdtempSync(path.join(os.tmpdir(), "mdbrain-packs-"))
 	const cohortVersions = new Map(
 		publishablePackages.map((packageSpec) => {
@@ -469,7 +549,13 @@ function main() {
 		}),
 	)
 	const tarballs = publishablePackages.map((packageSpec) =>
-		checkPackage(packageSpec, packDir, cohortVersions),
+		checkPackage(
+			packageSpec,
+			packDir,
+			cohortVersions,
+			expectedNodeEngine,
+			rootLegalFiles,
+		),
 	)
 	const tarballsByName = new Map(
 		tarballs.map((entry) => [entry.name, entry.tarballPath]),
