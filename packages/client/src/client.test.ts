@@ -15,6 +15,62 @@ describe("MdbrainClient public contract", () => {
 		expect(client).not.toHaveProperty("probeVector")
 	})
 
+	it("serializes explicit scope for every scoped retrieval wrapper", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () =>
+			Response.json({
+				results: [],
+				metadata: {},
+			}),
+		)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await client.searchKB({
+			query: "knowledge",
+			scope: "tenant",
+			scopeRef: "tenant-1",
+		})
+		await client.recallConversation({
+			query: "conversation",
+			scope: "tenant",
+			scopeRef: "tenant-1",
+		})
+		await client.searchDetailed({
+			query: "detailed",
+			scope: "tenant",
+			scopeRef: "tenant-1",
+		})
+
+		expect(
+			fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+		).toEqual([
+			expect.objectContaining({ scope: "tenant", scopeRef: "tenant-1" }),
+			expect.objectContaining({ scope: "tenant", scopeRef: "tenant-1" }),
+			expect.objectContaining({ scope: "tenant", scopeRef: "tenant-1" }),
+		])
+	})
+
+	it("omits scope fields when scoped retrieval callers do not provide them", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () =>
+			Response.json({
+				results: [],
+				metadata: {},
+			}),
+		)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await client.searchKB({ query: "knowledge" })
+		await client.recallConversation({ query: "conversation" })
+		await client.searchDetailed({ query: "detailed" })
+
+		for (const call of fetchMock.mock.calls) {
+			const body = JSON.parse(String(call[1]?.body))
+			expect(body).not.toHaveProperty("scope")
+			expect(body).not.toHaveProperty("scopeRef")
+		}
+	})
+
 	it("bounds requests with the default deadline", async () => {
 		vi.useFakeTimers()
 		const fetchMock = vi.fn(

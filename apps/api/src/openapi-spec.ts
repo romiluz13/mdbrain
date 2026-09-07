@@ -1377,6 +1377,24 @@ const openApiDocument = {
 										maximum: 200,
 										description: "Maximum results to return.",
 									},
+									scope: {
+										type: "string",
+										enum: [
+											"session",
+											"user",
+											"agent",
+											"workspace",
+											"tenant",
+											"global",
+										],
+										description:
+											"Optional memory isolation scope for retrieval.",
+									},
+									scopeRef: {
+										type: "string",
+										description:
+											"Optional scope reference, for example a workspace path.",
+									},
 								},
 							},
 						},
@@ -1722,8 +1740,27 @@ const openApiDocument = {
 								required: ["query"],
 								properties: {
 									query: { type: "string" },
+									agentId: { type: "string" },
 									limit: { type: "number" },
 									minScore: { type: "number" },
+									scope: {
+										type: "string",
+										enum: [
+											"session",
+											"user",
+											"agent",
+											"workspace",
+											"tenant",
+											"global",
+										],
+										description:
+											"Optional memory isolation scope for retrieval.",
+									},
+									scopeRef: {
+										type: "string",
+										description:
+											"Optional scope reference, for example a workspace path.",
+									},
 								},
 							},
 						},

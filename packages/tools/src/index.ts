@@ -32,6 +32,10 @@ const searchKbSchema = z.object({
 	query: z.string(),
 	agentId: z.string().optional(),
 	limit: z.number().optional(),
+	scope: z
+		.enum(["session", "user", "agent", "workspace", "tenant", "global"])
+		.optional(),
+	scopeRef: z.string().optional(),
 })
 
 const readFileSchema = z.object({
@@ -113,6 +117,10 @@ const recallConversationSchema = z.object({
 	timezone: z.string().optional(),
 	includeToolMessages: z.boolean().optional(),
 	limit: z.number().int().positive().max(200).optional(),
+	scope: z
+		.enum(["session", "user", "agent", "workspace", "tenant", "global"])
+		.optional(),
+	scopeRef: z.string().optional(),
 })
 
 const lifecycleScopeSchema = z.enum([
@@ -329,6 +337,8 @@ export function createMdbrainTools(client: MdbrainClient): MdbrainToolSet {
 					query: input.query,
 					agentId: input.agentId,
 					limit: input.limit,
+					scope: input.scope,
+					scopeRef: input.scopeRef,
 				})
 				return { results }
 			},

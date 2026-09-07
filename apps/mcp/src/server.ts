@@ -92,6 +92,8 @@ export const toolList = [
 				query: { type: "string" },
 				agentId: { type: "string" },
 				limit: { type: "number" },
+				scope: { type: "string", enum: [...MEMORY_SCOPES] },
+				scopeRef: { type: "string" },
 			},
 			required: ["query"],
 		},
@@ -236,6 +238,8 @@ export const toolList = [
 					type: "number",
 					description: "Maximum results to return. Default 50, max 200.",
 				},
+				scope: { type: "string", enum: [...MEMORY_SCOPES] },
+				scopeRef: { type: "string" },
 			},
 		},
 	},
@@ -287,6 +291,8 @@ export const toolList = [
 					type: "number",
 					description: "Maximum results to return. Default 50, max 200.",
 				},
+				scope: { type: "string", enum: [...MEMORY_SCOPES] },
+				scopeRef: { type: "string" },
 			},
 		},
 	},
@@ -544,6 +550,8 @@ export const toolList = [
 				limit: { type: "number" },
 				maxResults: { type: "number" },
 				minScore: { type: "number" },
+				scope: { type: "string", enum: [...MEMORY_SCOPES] },
+				scopeRef: { type: "string" },
 				searchMode: { type: "string", enum: ["auto", "direct", "agentic"] },
 				maxPasses: { type: "number" },
 				returnPlan: { type: "boolean" },
@@ -921,6 +929,8 @@ export async function handleToolCall(
 				query: typeof args.query === "string" ? args.query : "",
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 				limit: typeof args.limit === "number" ? args.limit : undefined,
+				scope: parseMemoryScope(args.scope),
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
@@ -1098,6 +1108,8 @@ export async function handleToolCall(
 					typeof args.limit === "number"
 						? Math.max(1, Math.min(200, Math.floor(args.limit)))
 						: undefined,
+				scope: parseMemoryScope(args.scope),
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : undefined,
 			})
 			return jsonResult(out)
 		}
@@ -1278,6 +1290,8 @@ export async function handleToolCall(
 			const out = await mdbrain.searchDetailed({
 				query: typeof args.query === "string" ? args.query : "",
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+				scope: parseMemoryScope(args.scope),
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : undefined,
 				limit: typeof args.limit === "number" ? args.limit : undefined,
 				maxResults:
 					typeof args.maxResults === "number" ? args.maxResults : undefined,

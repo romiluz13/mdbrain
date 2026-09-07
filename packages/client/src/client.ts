@@ -421,6 +421,8 @@ export class MdbrainClient {
 			}
 			proceduralScope?: { state?: string; intentTags?: string[] }
 			searchConfig?: SearchConfig
+			scope?: "session" | "user" | "agent" | "workspace" | "tenant" | "global"
+			scopeRef?: string
 			/** @deprecated This legacy alias is ignored by the canonical detailed search path. */
 			containerTag?: string
 		},
@@ -446,6 +448,8 @@ export class MdbrainClient {
 				referenceScope: input.referenceScope,
 				proceduralScope: input.proceduralScope,
 				searchConfig: input.searchConfig,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
 			},
 			undefined,
 			"safe",
@@ -460,6 +464,8 @@ export class MdbrainClient {
 			limit?: number
 			minScore?: number
 			filter?: { tags?: string[]; category?: string; source?: string }
+			scope?: "session" | "user" | "agent" | "workspace" | "tenant" | "global"
+			scopeRef?: string
 		},
 		requestOptions?: MdbrainRequestOptions,
 	): Promise<MdbrainSearchKBResponse> {
@@ -472,6 +478,8 @@ export class MdbrainClient {
 				limit: input.limit,
 				minScore: input.minScore,
 				filter: input.filter,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
 			},
 			undefined,
 			"safe",
@@ -496,6 +504,8 @@ export class MdbrainClient {
 				includeToolMessages: input.includeToolMessages,
 				limit: input.limit,
 				agentId: input.agentId,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
 			},
 			undefined,
 			"safe",

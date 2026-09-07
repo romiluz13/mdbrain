@@ -94,6 +94,8 @@ export type MdbrainConversationRecallInput = {
 	includeToolMessages?: boolean
 	limit?: number
 	agentId?: string
+	scope?: "session" | "user" | "agent" | "workspace" | "tenant" | "global"
+	scopeRef?: string
 }
 
 export type MdbrainConversationImportInput = {

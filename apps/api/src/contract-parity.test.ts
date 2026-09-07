@@ -165,6 +165,40 @@ describe("route ↔ OpenAPI parity", () => {
 			}
 		}
 	})
+
+	it("documents the same optional canonical scope on retrieval requests", () => {
+		const expectedScopes = [
+			"session",
+			"user",
+			"agent",
+			"workspace",
+			"tenant",
+			"global",
+		]
+
+		for (const path of [
+			"/v1/search-kb",
+			"/v1/search-detailed",
+			"/v1/recall-conversation",
+		]) {
+			const schema = requestBodySchema(path, "post")
+			const properties = schema.properties as Record<string, Json | undefined>
+			expect(properties.scope?.enum, path).toEqual(expectedScopes)
+			expect(properties.scopeRef, path).toMatchObject({ type: "string" })
+			expect(
+				(schema.required as string[] | undefined) ?? [],
+				path,
+			).not.toContain("scope")
+			expect(
+				(schema.required as string[] | undefined) ?? [],
+				path,
+			).not.toContain("scopeRef")
+		}
+
+		const kbProperties = requestBodySchema("/v1/search-kb", "post")
+			.properties as Record<string, Json | undefined>
+		expect(kbProperties.agentId).toMatchObject({ type: "string" })
+	})
 })
 
 describe("wiki contract matrix (runtime ↔ spec ↔ MCP)", () => {

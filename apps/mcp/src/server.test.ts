@@ -25,6 +25,45 @@ describe("toolList", () => {
 		expect(names.has("mdbrain_probe_embedding")).toBe(false)
 		expect(names.has("mdbrain_probe_vector")).toBe(false)
 	})
+
+	it("advertises optional canonical scope on every scoped retrieval tool", () => {
+		const expectedScopes = [
+			"session",
+			"user",
+			"agent",
+			"workspace",
+			"tenant",
+			"global",
+		]
+
+		for (const name of [
+			"mdbrain_search_kb",
+			"mdbrain_search_detailed",
+			"mdbrain_recall_conversation",
+			"mdbrain_recall_messages",
+		]) {
+			const tool = toolList.find((candidate) => candidate.name === name)
+			expect(tool, name).toBeDefined()
+			const inputSchema = tool?.inputSchema as
+				| {
+						properties: Record<
+							string,
+							{ type: string; enum?: readonly string[] } | undefined
+						>
+						required?: readonly string[]
+				  }
+				| undefined
+			expect(inputSchema?.properties.scope, name).toEqual({
+				type: "string",
+				enum: expectedScopes,
+			})
+			expect(inputSchema?.properties.scopeRef, name).toEqual({
+				type: "string",
+			})
+			expect(inputSchema?.required ?? [], name).not.toContain("scope")
+			expect(inputSchema?.required ?? [], name).not.toContain("scopeRef")
+		}
+	})
 })
 
 describe("handleToolCall", () => {
@@ -73,6 +112,82 @@ describe("handleToolCall", () => {
 			scope: "workspace",
 			scopeRef: "/workspace/mdbrain",
 		})
+	})
+
+	it("forwards canonical scope through every scoped retrieval dispatcher", async () => {
+		const searchKB = vi.fn().mockResolvedValue({ results: [] })
+		const searchDetailed = vi.fn().mockResolvedValue({ results: [] })
+		const recallConversation = vi.fn().mockResolvedValue({ results: [] })
+		const client = {
+			searchKB,
+			searchDetailed,
+			recallConversation,
+		} as never
+		const scope = { scope: "tenant", scopeRef: "tenant-1" }
+
+		await handleToolCall(
+			"mdbrain_search_kb",
+			{ query: "knowledge", ...scope },
+			client,
+		)
+		await handleToolCall(
+			"mdbrain_search_detailed",
+			{ query: "detailed", ...scope },
+			client,
+		)
+		await handleToolCall(
+			"mdbrain_recall_conversation",
+			{ query: "canonical", ...scope },
+			client,
+		)
+		await handleToolCall(
+			"mdbrain_recall_messages",
+			{ query: "alias", ...scope },
+			client,
+		)
+
+		expect(searchKB).toHaveBeenCalledWith(expect.objectContaining(scope))
+		expect(searchDetailed).toHaveBeenCalledWith(expect.objectContaining(scope))
+		expect(recallConversation).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining(scope),
+		)
+		expect(recallConversation).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining(scope),
+		)
+	})
+
+	it("keeps omitted scoped retrieval inputs undefined", async () => {
+		const searchKB = vi.fn().mockResolvedValue({ results: [] })
+		const searchDetailed = vi.fn().mockResolvedValue({ results: [] })
+		const recallConversation = vi.fn().mockResolvedValue({ results: [] })
+		const client = {
+			searchKB,
+			searchDetailed,
+			recallConversation,
+		} as never
+
+		await handleToolCall("mdbrain_search_kb", { query: "knowledge" }, client)
+		await handleToolCall(
+			"mdbrain_search_detailed",
+			{ query: "detailed" },
+			client,
+		)
+		await handleToolCall(
+			"mdbrain_recall_conversation",
+			{ query: "conversation" },
+			client,
+		)
+
+		for (const call of [
+			searchKB.mock.calls[0],
+			searchDetailed.mock.calls[0],
+			recallConversation.mock.calls[0],
+		]) {
+			expect(call?.[0]?.scope).toBeUndefined()
+			expect(call?.[0]?.scopeRef).toBeUndefined()
+		}
 	})
 
 	it("routes the semantic recall alias to the canonical recall runtime", async () => {
