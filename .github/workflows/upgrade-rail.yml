@@ -107,8 +107,9 @@ jobs:
         working-directory: mdbrain
         run: |
           report=$(cat pin-report.txt)
-          version=$(printf '%s' "$report" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)
-          sha=$(printf '%s' "$report" | sed -n 's/.*"canonicalSha256":"\([^"]*\)".*/\1/p' | head -1)
+          capture=$(find ../pin-scratch -name capture.json | head -1)
+          version=$(bun -e 'const captureJSON = await Bun.file(process.argv[1]).json(); console.log(captureJSON.openapi.version)' "$capture")
+          sha=$(bun -e 'const captureJSON = await Bun.file(process.argv[1]).json(); console.log(captureJSON.openapi.canonicalSha256)' "$capture")
           if [ -z "$version" ] || [ -z "$sha" ]; then
             echo "could not parse drift report"; cat pin-report.txt; exit 1
           fi
