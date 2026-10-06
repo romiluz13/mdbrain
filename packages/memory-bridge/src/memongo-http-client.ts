@@ -11,6 +11,7 @@ export type MemongoFailureCode =
 	| "FORBIDDEN"
 	| "NOT_FOUND"
 	| "IDEMPOTENCY_CONFLICT"
+	| "ERASURE_GATE_CONFLICT"
 	| "RATE_LIMITED"
 	| "UPSTREAM_UNAVAILABLE"
 	| "DEADLINE_EXCEEDED"
@@ -474,6 +475,20 @@ export class MemongoHttpClient {
 				signal: controller.signal,
 			})
 			if (!response.ok) {
+				if (response.status === 409 && isWrite(policy)) {
+					const body = (await response.json().catch(() => null)) as {
+						error?: { code?: unknown }
+					} | null
+					if (body?.error?.code === "ERASURE_GATE_CONFLICT") {
+						throw new MemongoHttpError(
+							"Memongo agent erasure is in progress",
+							"ERASURE_GATE_CONFLICT",
+							false,
+							"not-applied",
+							409,
+						)
+					}
+				}
 				throw statusError(response.status, response.headers, policy)
 			}
 			let value: unknown

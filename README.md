@@ -139,7 +139,7 @@ cd mdbrain
 # packages/memory-bridge/src/memongo-runtime.ts (MEMONGO_CONTRACT_SOURCE_REF)
 # and verified in docs/diligence/agreed-plan.md (PR1 implementation record)
 # — CI uses the same source.
-git -C ../memongo checkout fa0f19db6267e86d41e909b42e3d2be1bb207a35
+git -C ../memongo checkout 4b7d07fba8632dfc0cccf78fc790f50b739e0d07
 
 # Bring up MongoDB+Search, Memongo, the API, and the web console
 export VOYAGE_API_KEY=al-your-atlas-model-api-key

@@ -144,6 +144,7 @@ function memongoResponseStatus(status?: number) {
 		case 403:
 		case 404:
 		case 409:
+		case 422:
 		case 429:
 		case 500:
 		case 502:
@@ -879,7 +880,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			return jsonError(c, 400, "VALIDATION_ERROR", scopeError)
 		}
 		try {
-			const results = await mdbrainBridgeSearch({
+			const result = await mdbrainBridgeSearch({
 				query,
 				agentId: authorizedScope.agentId,
 				maxResults: readLimit(body),
@@ -888,7 +889,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				scope: authorizedScope.scope,
 				scopeRef: authorizedScope.scopeRef,
 			})
-			return c.json({ results })
+			return c.json(result)
 		} catch (err) {
 			return bridgeJsonError(c, "SEARCH_FAILED", err)
 		}
@@ -919,7 +920,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 							source?: string
 						})
 					: undefined
-			const results = await mdbrainBridgeSearchKB({
+			const result = await mdbrainBridgeSearchKB({
 				query,
 				agentId: authorizedScope.agentId,
 				maxResults: readLimit(body),
@@ -928,7 +929,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				scope: authorizedScope.scope,
 				scopeRef: authorizedScope.scopeRef,
 			})
-			return c.json({ results })
+			return c.json(result)
 		} catch (err) {
 			return bridgeJsonError(c, "SEARCH_KB_FAILED", err)
 		}
@@ -1353,6 +1354,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 							sourcePreference?: string[]
 							timeRange?: { preset?: string; start?: string; end?: string }
 							needExactEvidence?: boolean
+							allowConstraintRelaxation?: boolean
 							numCandidates?: number
 							fusionMethod?: "scoreFusion" | "rankFusion" | "js-merge"
 							hybridMode?: "hybrid" | "vector-only"

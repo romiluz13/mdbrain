@@ -61,6 +61,12 @@ export type MdbrainSearchInput = {
 	scopeRef?: string
 }
 
+export type MdbrainSearchDegradation = {
+	kind: "throttled"
+	scope: "denied" | "legacy-fallback-skipped" | "vector-lane-skipped"
+	retryAfterMs: number
+}
+
 export type SearchConfig = {
 	recipe?: "fast" | "hybrid" | "deep" | "temporal" | "chain-of-thought"
 	recallProfile?: "latency" | "balanced" | "proof"
@@ -77,6 +83,7 @@ export type SearchConfig = {
 	>
 	timeRange?: { preset?: string; start?: string; end?: string }
 	needExactEvidence?: boolean
+	allowConstraintRelaxation?: boolean
 	numCandidates?: number
 	fusionMethod?: "scoreFusion" | "rankFusion" | "js-merge"
 	hybridMode?: "hybrid" | "vector-only"
@@ -409,6 +416,7 @@ export type MdbrainConversationRecallResponse = {
 		filtersApplied: string[]
 		searchMethod: "standard" | "semantic" | "hybrid"
 		durationMs: number
+		throttled?: { retryAfterMs: number }
 	}
 }
 
@@ -818,6 +826,7 @@ export type MdbrainMemoryJob = {
 }
 
 export type MdbrainSearchKBResponse = {
+	degradation?: MdbrainSearchDegradation
 	results: Array<{
 		path: string
 		startLine: number
@@ -833,6 +842,7 @@ export type MdbrainSearchKBResponse = {
 }
 
 export type MdbrainSearchResponse = {
+	degradation?: MdbrainSearchDegradation
 	results: Array<{
 		path: string
 		startLine: number

@@ -190,6 +190,7 @@ export type ConversationRecallResponse = {
 		filtersApplied: string[]
 		searchMethod: "standard" | "semantic" | "hybrid"
 		durationMs: number
+		throttled?: { retryAfterMs: number }
 	}
 }
 

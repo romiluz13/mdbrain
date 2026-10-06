@@ -7,6 +7,36 @@ function parseTextPayload(result: { content: Array<{ text: string }> }) {
 }
 
 describe("toolList", () => {
+	it("advertises and forwards explicit constraint relaxation to detailed search", async () => {
+		const searchDetailed = vi
+			.fn()
+			.mockResolvedValue({ results: [], metadata: {} })
+		const tool = toolList.find(
+			(entry) => entry.name === "mdbrain_search_detailed",
+		)
+		const schema = tool?.inputSchema as {
+			properties: { searchConfig: { properties: Record<string, unknown> } }
+		}
+		expect(
+			schema.properties.searchConfig.properties.allowConstraintRelaxation,
+		).toEqual({ type: "boolean" })
+		await handleToolCall(
+			"mdbrain_search_detailed",
+			{
+				query: "decision",
+				searchConfig: { allowConstraintRelaxation: true },
+			},
+			{ searchDetailed } as never,
+		)
+		expect(searchDetailed).toHaveBeenCalledWith(
+			expect.objectContaining({
+				searchConfig: expect.objectContaining({
+					allowConstraintRelaxation: true,
+				}),
+			}),
+		)
+	})
+
 	it("includes Wave 5 semantic aliases for stable recall and memory flows", () => {
 		const names = new Set(toolList.map((tool) => tool.name))
 		expect(names.has("mdbrain_recall_messages")).toBe(true)

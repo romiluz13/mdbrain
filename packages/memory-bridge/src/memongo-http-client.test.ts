@@ -36,6 +36,40 @@ function options(
 }
 
 describe("MemongoHttpClient", () => {
+	it("distinguishes an erasure gate from an idempotency conflict without leaking upstream details", async () => {
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(response(openApiBody))
+			.mockResolvedValueOnce(
+				response(
+					JSON.stringify({
+						error: {
+							code: "ERASURE_GATE_CONFLICT",
+							message: "private gate details",
+							agentId: "private-agent",
+						},
+					}),
+					409,
+				),
+			)
+		const client = new MemongoHttpClient(options(fetchImpl))
+		await expect(
+			client.request({
+				operation: "writeEvent",
+				body: { role: "user", body: "hello" },
+				idempotencyKey: "test-operation",
+				validate: () => true,
+			}),
+		).rejects.toMatchObject({
+			code: "ERASURE_GATE_CONFLICT",
+			status: 409,
+			retryable: false,
+			outcome: "not-applied",
+			message: "Memongo agent erasure is in progress",
+		})
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+	})
+
 	it("locks the OpenAPI contract before sending a scoped tenant request", async () => {
 		const fetchImpl = vi
 			.fn<typeof fetch>()

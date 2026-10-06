@@ -16,6 +16,75 @@ function response(body: unknown, status = 200): Response {
 }
 
 describe("MemongoMemoryGateway", () => {
+	it.each([
+		"search",
+		"searchKb",
+	] as const)("rejects a non-string degradation scope from %s", async (operation) => {
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(new Response(openApiBody))
+			.mockResolvedValueOnce(
+				response({
+					results: [],
+					degradation: {
+						kind: "throttled",
+						scope: ["denied"],
+						retryAfterMs: 250,
+					},
+				}),
+			)
+		const gateway = new MemongoMemoryGateway(
+			new MemongoHttpClient({
+				baseUrl: "https://memongo.example.test",
+				tenantApiKey: "test-key",
+				expectedVersion: "2.0.1",
+				expectedContractSha256:
+					"0af839ab5bc5cde889a66234f190d8b4497e6701a18a3f6975ea43ec6601299b",
+				fetchImpl,
+			}),
+		)
+		await expect(
+			gateway.execute(operation, { query: "memory" }),
+		).rejects.toMatchObject({ code: "MALFORMED_RESPONSE" })
+	})
+
+	it("reports throttled retrieval as degraded instead of authoritative empty", async () => {
+		const degradation = {
+			kind: "throttled",
+			scope: "denied",
+			retryAfterMs: 250,
+		}
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(new Response(openApiBody))
+			.mockResolvedValueOnce(response({ results: [], degradation }))
+		const gateway = new MemongoMemoryGateway(
+			new MemongoHttpClient({
+				baseUrl: "https://memongo.example.test",
+				tenantApiKey: "test-key",
+				expectedVersion: "2.0.1",
+				expectedContractSha256:
+					"0af839ab5bc5cde889a66234f190d8b4497e6701a18a3f6975ea43ec6601299b",
+				fetchImpl,
+			}),
+		)
+		await expect(
+			gateway.retrieve(
+				{ kind: "search", query: "memory" },
+				{
+					agentId: "agent-1",
+					scope: "agent",
+					scopeRef: "agent:agent-1",
+				},
+			),
+		).resolves.toEqual({
+			state: "degraded",
+			omissions: ["denied"],
+			results: [],
+			degradation,
+		})
+	})
+
 	it("retrieves scoped search results through the domain interface", async () => {
 		const fetchImpl = vi
 			.fn<typeof fetch>()
@@ -274,7 +343,7 @@ describe("MemongoMemoryGateway", () => {
 			operation: "search",
 			input: { query: "contract" },
 			wire: { results: [] },
-			output: [],
+			output: { results: [] },
 			path: "/v1/search",
 		},
 		{
@@ -285,7 +354,7 @@ describe("MemongoMemoryGateway", () => {
 				scopeRef: "workspace-1",
 			},
 			wire: { results: [] },
-			output: [],
+			output: { results: [] },
 			path: "/v1/search-kb",
 		},
 		{

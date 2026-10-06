@@ -3,6 +3,7 @@ import {
 	RETAINED_OPERATION_DEFINITIONS,
 	type MemoryGatewayOperations,
 	type MemorySearchResult,
+	type MemorySearchDegradation,
 } from "./memongo-gateway-contract.js"
 import { MemongoHttpClient } from "./memongo-http-client.js"
 
@@ -36,6 +37,7 @@ export type MemoryRetrievalResult = {
 	state: "complete" | "partial" | "degraded" | "failed"
 	omissions: string[]
 	results: MemorySearchResult[]
+	degradation?: MemorySearchDegradation
 }
 
 export type MemoryGatewayRequestOptions = {
@@ -199,7 +201,7 @@ export class MemongoMemoryGateway implements MemoryGateway {
 		request: MemoryRetrievalRequest,
 		context: MemoryGatewayContext,
 	): Promise<MemoryRetrievalResult> {
-		const results = await this.execute(
+		const response = await this.execute(
 			"search",
 			{
 				query: request.query,
@@ -221,9 +223,9 @@ export class MemongoMemoryGateway implements MemoryGateway {
 			},
 		)
 		return {
-			state: "complete",
-			omissions: [],
-			results,
+			state: response.degradation ? "degraded" : "complete",
+			omissions: response.degradation ? [response.degradation.scope] : [],
+			...response,
 		}
 	}
 }

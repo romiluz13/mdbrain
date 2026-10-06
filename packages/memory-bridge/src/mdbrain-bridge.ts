@@ -551,6 +551,7 @@ export async function mdbrainBridgeSearchDetailed(params: {
 			end?: string
 		}
 		needExactEvidence?: boolean
+		allowConstraintRelaxation?: boolean
 		numCandidates?: number
 		fusionMethod?: "scoreFusion" | "rankFusion" | "js-merge"
 		hybridMode?: "hybrid" | "vector-only"

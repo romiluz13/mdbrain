@@ -47,6 +47,7 @@ export type {
 	MdbrainSearchInput,
 	MdbrainSearchKBResponse,
 	MdbrainSearchResponse,
+	MdbrainSearchDegradation,
 	SearchConfig,
 	MdbrainSourceAgent,
 	MdbrainStructuredLifecyclePatch,

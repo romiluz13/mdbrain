@@ -581,6 +581,7 @@ export const toolList = [
 							},
 						},
 						needExactEvidence: { type: "boolean" },
+						allowConstraintRelaxation: { type: "boolean" },
 						recallProfile: {
 							type: "string",
 							enum: ["latency", "balanced", "proof"],
@@ -1350,6 +1351,10 @@ export async function handleToolCall(
 							needExactEvidence:
 								typeof searchConfig.needExactEvidence === "boolean"
 									? searchConfig.needExactEvidence
+									: undefined,
+							allowConstraintRelaxation:
+								typeof searchConfig.allowConstraintRelaxation === "boolean"
+									? searchConfig.allowConstraintRelaxation
 									: undefined,
 							recallProfile:
 								searchConfig.recallProfile === "latency" ||

@@ -396,6 +396,34 @@ const lifecycleHistoryEntrySchema = {
 	],
 } as const
 
+const searchDegradationSchema = {
+	type: "object",
+	required: ["kind", "scope", "retryAfterMs"],
+	properties: {
+		kind: { type: "string", enum: ["throttled"] },
+		scope: {
+			type: "string",
+			enum: ["denied", "legacy-fallback-skipped", "vector-lane-skipped"],
+		},
+		retryAfterMs: { type: "number", minimum: 0 },
+	},
+} as const
+
+const searchResponseSchema = {
+	type: "object",
+	required: ["results"],
+	properties: {
+		results: { type: "array", items: { type: "object" } },
+		degradation: searchDegradationSchema,
+	},
+} as const
+
+const throttledSchema = {
+	type: "object",
+	required: ["retryAfterMs"],
+	properties: { retryAfterMs: { type: "number", minimum: 0 } },
+} as const
+
 // REV-07 C2: kept as a private literal; the exported `openApiSpec` (bottom of
 // file) runs `withStandardResponses` over it to add the cross-cutting auth
 // and middleware responses so they cannot drift out of sync with app.ts.
@@ -503,7 +531,13 @@ const openApiDocument = {
 						},
 					},
 				},
-				responses: { "200": { description: "Search results" } },
+				responses: {
+					"200": {
+						description:
+							"Search results; degradation marks a throttled retrieval verdict",
+						content: { "application/json": { schema: searchResponseSchema } },
+					},
+				},
 			},
 		},
 		"/v1/search-detailed": {
@@ -648,6 +682,7 @@ const openApiDocument = {
 												},
 											},
 											needExactEvidence: { type: "boolean" },
+											allowConstraintRelaxation: { type: "boolean" },
 											numCandidates: { type: "number" },
 											fusionMethod: {
 												type: "string",
@@ -787,6 +822,7 @@ const openApiDocument = {
 															},
 														},
 														needExactEvidence: { type: "boolean" },
+														allowConstraintRelaxation: { type: "boolean" },
 														numCandidates: { type: "number" },
 														fusionMethod: { type: "string" },
 														hybridMode: { type: "string" },
@@ -868,6 +904,7 @@ const openApiDocument = {
 												},
 												mmrApplied: { type: "boolean" },
 												mmrLambda: { type: "number" },
+												throttled: throttledSchema,
 												trustSummary: {
 													type: "object",
 													properties: {
@@ -1466,6 +1503,7 @@ const openApiDocument = {
 													enum: ["standard", "semantic", "hybrid"],
 												},
 												durationMs: { type: "number" },
+												throttled: throttledSchema,
 											},
 										},
 									},
@@ -1766,7 +1804,13 @@ const openApiDocument = {
 						},
 					},
 				},
-				responses: { "200": { description: "KB results" } },
+				responses: {
+					"200": {
+						description:
+							"KB results; degradation marks skipped retrieval lanes",
+						content: { "application/json": { schema: searchResponseSchema } },
+					},
+				},
 			},
 		},
 		"/v1/add": {
@@ -1836,7 +1880,11 @@ const openApiDocument = {
 				},
 				responses: {
 					"200": { description: "Event id" },
-					"409": { description: "Idempotency key payload conflict" },
+					"409": {
+						description:
+							"Idempotency, dispatch lease, or active erasure conflict",
+					},
+					"422": { description: "Upstream idempotency key payload conflict" },
 					"503": { description: "Delivery pending reconciliation" },
 				},
 			},
@@ -1904,7 +1952,11 @@ const openApiDocument = {
 				},
 				responses: {
 					"200": { description: "Event id" },
-					"409": { description: "Idempotency key payload conflict" },
+					"409": {
+						description:
+							"Idempotency, dispatch lease, or active erasure conflict",
+					},
+					"422": { description: "Upstream idempotency key payload conflict" },
 					"503": { description: "Delivery pending reconciliation" },
 				},
 			},

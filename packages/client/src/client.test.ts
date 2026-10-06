@@ -2,6 +2,23 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { MdbrainClient } from "./index.js"
 
 describe("MdbrainClient public contract", () => {
+	it("forwards constraint relaxation and retains throttling metadata", async () => {
+		const out = { results: [], metadata: { throttled: { retryAfterMs: 300 } } }
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValue(Response.json(out))
+		vi.stubGlobal("fetch", fetchMock)
+		await expect(
+			new MdbrainClient().searchDetailed({
+				query: "decision",
+				searchConfig: { allowConstraintRelaxation: true },
+			}),
+		).resolves.toEqual(out)
+		expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+			searchConfig: { allowConstraintRelaxation: true },
+		})
+	})
+
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.unstubAllGlobals()

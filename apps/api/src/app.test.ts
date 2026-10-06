@@ -104,6 +104,40 @@ vi.mock("./wiki-store-runtime.js", () => wikiStoreMocks)
 import { createApp } from "./app.js"
 
 describe("createApp", () => {
+	it.each([
+		["/v1/search", "mdbrainBridgeSearch", "denied"],
+		["/v1/search-kb", "mdbrainBridgeSearchKB", "vector-lane-skipped"],
+	] as const)("preserves degraded retrieval through %s", async (route, method, scope) => {
+		const degradation = { kind: "throttled", scope, retryAfterMs: 250 }
+		bridgeMocks[method].mockResolvedValueOnce({ results: [], degradation })
+		const response = await createApp().request(route, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ query: "memory" }),
+		})
+		expect(response.status).toBe(200)
+		await expect(response.json()).resolves.toEqual({ results: [], degradation })
+	})
+
+	it("forwards constraint relaxation and detailed throttling without changing their meaning", async () => {
+		const out = { results: [], metadata: { throttled: { retryAfterMs: 300 } } }
+		bridgeMocks.mdbrainBridgeSearchDetailed.mockResolvedValueOnce(out)
+		const response = await createApp().request("/v1/search-detailed", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				query: "decision",
+				searchConfig: { allowConstraintRelaxation: true },
+			}),
+		})
+		expect(bridgeMocks.mdbrainBridgeSearchDetailed).toHaveBeenCalledWith(
+			expect.objectContaining({
+				searchConfig: { allowConstraintRelaxation: true },
+			}),
+		)
+		await expect(response.json()).resolves.toEqual(out)
+	})
+
 	const prevEnv = { ...process.env }
 
 	beforeEach(() => {
@@ -162,7 +196,7 @@ describe("createApp", () => {
 		bridgeMocks.mdbrainBridgeUpdateLifecycleItem.mockReset()
 		bridgeMocks.mdbrainBridgeReportProcedureOutcome.mockReset()
 		bridgeMocks.mdbrainBridgeWriteConversationEvent.mockReset()
-		bridgeMocks.mdbrainBridgeSearch.mockResolvedValue([])
+		bridgeMocks.mdbrainBridgeSearch.mockResolvedValue({ results: [] })
 		bridgeMocks.mdbrainBridgeSearchDetailed.mockResolvedValue({
 			results: [],
 			metadata: {
@@ -1198,7 +1232,7 @@ describe("createApp", () => {
 				capabilities: ["read"],
 			},
 		])
-		bridgeMocks.mdbrainBridgeSearchKB.mockResolvedValueOnce([])
+		bridgeMocks.mdbrainBridgeSearchKB.mockResolvedValueOnce({ results: [] })
 
 		const res = await createApp().request(
 			"/v1/search-kb?agentId=codex&scope=workspace&scopeRef=%2Fworkspace%2Fmdbrain",

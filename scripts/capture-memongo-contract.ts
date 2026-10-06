@@ -164,6 +164,9 @@ async function main(): Promise<void> {
 	if (!isOpenApiDocument(openApi.body)) {
 		throw new Error("/openapi.json did not match the minimum OpenAPI shape")
 	}
+	if (!/^\d+\.\d+\.\d+$/.test(openApi.body.info.version)) {
+		throw new Error("Memongo contract version must use major.minor.patch")
+	}
 
 	const canonicalDocument = canonicalize(openApi.body as unknown as JsonValue)
 	const canonicalJson = JSON.stringify(canonicalDocument)
@@ -173,6 +176,7 @@ async function main(): Promise<void> {
 		"contracts",
 		"memongo",
 		openApi.body.info.version,
+		sha256(canonicalJson),
 	)
 	await mkdir(outputDir, { recursive: true })
 

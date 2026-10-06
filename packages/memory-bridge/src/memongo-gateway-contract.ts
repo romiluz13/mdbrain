@@ -44,6 +44,17 @@ export type MemoryDetailedSearchResult = {
 	metadata: Record<string, unknown>
 }
 
+export type MemorySearchDegradation = {
+	kind: "throttled"
+	scope: "denied" | "legacy-fallback-skipped" | "vector-lane-skipped"
+	retryAfterMs: number
+}
+
+export type MemorySearchResponse = {
+	results: MemorySearchResult[]
+	degradation?: MemorySearchDegradation
+}
+
 type Operation<Input, Output> = {
 	input: Input
 	output: Output
@@ -57,12 +68,12 @@ type Query = {
 }
 
 export type MemoryGatewayOperations = {
-	search: Operation<Body & { query: string }, MemorySearchResult[]>
+	search: Operation<Body & { query: string }, MemorySearchResponse>
 	searchDetailed: Operation<
 		Body & { query: string },
 		MemoryDetailedSearchResult
 	>
-	searchKb: Operation<Body & { query: string }, MemorySearchResult[]>
+	searchKb: Operation<Body & { query: string }, MemorySearchResponse>
 	recallConversation: Operation<
 		Body,
 		{ results: unknown[]; metadata: Record<string, unknown> }
@@ -155,20 +166,42 @@ function isSearchResult(value: unknown): value is MemorySearchResult {
 	)
 }
 
-function isSearchEnvelope(
-	value: unknown,
-): value is { results: MemorySearchResult[] } {
+function isSearchEnvelope(value: unknown): value is MemorySearchResponse {
 	return (
 		isRecord(value) &&
 		Array.isArray(value.results) &&
-		value.results.every(isSearchResult)
+		value.results.every(isSearchResult) &&
+		(value.degradation === undefined ||
+			(isRecord(value.degradation) &&
+				value.degradation.kind === "throttled" &&
+				typeof value.degradation.scope === "string" &&
+				["denied", "legacy-fallback-skipped", "vector-lane-skipped"].includes(
+					value.degradation.scope,
+				) &&
+				isRetryAfter(value.degradation.retryAfterMs)))
+	)
+}
+
+function isRetryAfter(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0
+}
+
+function hasValidThrottling(metadata: Record<string, unknown>): boolean {
+	return (
+		metadata.throttled === undefined ||
+		(isRecord(metadata.throttled) &&
+			isRetryAfter(metadata.throttled.retryAfterMs))
 	)
 }
 
 function isDetailedSearch(value: unknown): boolean {
 	if (!isRecord(value)) return false
 	const metadata = value.metadata
-	return isSearchEnvelope(value) && isRecord(metadata)
+	return (
+		isSearchEnvelope(value) &&
+		isRecord(metadata) &&
+		hasValidThrottling(metadata)
+	)
 }
 
 function isRecall(value: unknown): boolean {
@@ -180,7 +213,8 @@ function isRecall(value: unknown): boolean {
 		typeof value.metadata.totalMatched === "number" &&
 		Array.isArray(value.metadata.filtersApplied) &&
 		typeof value.metadata.searchMethod === "string" &&
-		typeof value.metadata.durationMs === "number"
+		typeof value.metadata.durationMs === "number" &&
+		hasValidThrottling(value.metadata)
 	)
 }
 
@@ -320,20 +354,23 @@ function isProbe(value: unknown): boolean {
 }
 
 const passthrough = (value: unknown) => value
-const results = (value: unknown) => (value as { results: unknown }).results
 const writeReceipt = (value: unknown) => {
 	const receipt = value as { eventId: string; chunkCreated: boolean }
 	return { eventId: receipt.eventId, chunkCreated: receipt.chunkCreated }
 }
 
 export const RETAINED_OPERATION_DEFINITIONS = {
-	search: { transport: "body", validate: isSearchEnvelope, adapt: results },
+	search: { transport: "body", validate: isSearchEnvelope, adapt: passthrough },
 	searchDetailed: {
 		transport: "body",
 		validate: isDetailedSearch,
 		adapt: passthrough,
 	},
-	searchKb: { transport: "body", validate: isSearchEnvelope, adapt: results },
+	searchKb: {
+		transport: "body",
+		validate: isSearchEnvelope,
+		adapt: passthrough,
+	},
 	recallConversation: {
 		transport: "body",
 		validate: isRecall,

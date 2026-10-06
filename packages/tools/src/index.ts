@@ -324,23 +324,19 @@ export function createMdbrainTools(client: MdbrainClient): MdbrainToolSet {
 		mdbrain_search: tool({
 			description: "Search Mdbrain memory (MongoDB-backed hybrid retrieval).",
 			inputSchema: searchSchema,
-			execute: async (input) => {
-				const { results } = await client.search(input)
-				return { results }
-			},
+			execute: async (input) => client.search(input),
 		}),
 		mdbrain_search_kb: tool({
 			description: "Search Mdbrain knowledge base chunks only.",
 			inputSchema: searchKbSchema,
 			execute: async (input) => {
-				const { results } = await client.searchKB({
+				return client.searchKB({
 					query: input.query,
 					agentId: input.agentId,
 					limit: input.limit,
 					scope: input.scope,
 					scopeRef: input.scopeRef,
 				})
-				return { results }
 			},
 		}),
 		mdbrain_add: tool({

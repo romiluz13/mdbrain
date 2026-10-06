@@ -3,15 +3,11 @@
 # actually serves.
 #
 # Conformant (version + canonical sha equal the pin): green, nothing to do.
-# Drift to a NEW version label: recapture contract evidence, move the pin,
-# and open/update a draft pin-bump PR on the automation-owned branch
-# rail/memongo-pin-bump. The PR's own CI run is the conformance gate: the
-# bundle-smoke job boots memongo main against the re-pinned bridge and the
-# full suite must pass before the PR is reviewable.
-# Drift under an EXISTING version label (same label, different sha): the
-# evidence recapture refuses to overwrite, the job fails loudly, and no PR
-# is opened — a relabeled contract is a memongo release-process violation
-# that needs a human, not an automation.
+# Contract drift: capture immutable evidence under <version>/<sha>, move the
+# exact pin, and open/update a draft PR on rail/memongo-pin-bump. A version
+# label may remain unchanged during upstream development; the hash and source
+# revision distinguish snapshots. Runtime compatibility remains exact.
+# The PR requires compatibility review and passing bundle-smoke/full-suite CI.
 
 name: Upgrade rail
 
@@ -99,8 +95,6 @@ jobs:
         run: |
           MEMONGO_API_URL=http://127.0.0.1:3848 \
             bun scripts/capture-memongo-contract.ts
-          # A same-label-different-sha drift lands here: the capture script
-          # refuses to overwrite the committed evidence and this step fails.
 
       - name: Move the pin
         if: steps.pin.outputs.status == '3'
@@ -131,7 +125,7 @@ jobs:
           git config user.name "mdbrain-upgrade-rail"
           git config user.email "actions@users.noreply.github.com"
           git checkout -B rail/memongo-pin-bump
-          git add docs/contracts/memongo packages/memory-bridge/src/memongo-runtime.ts
+          git add README.md docs/contracts/memongo packages/memory-bridge/src/memongo-runtime.ts
           if git diff --cached --quiet; then
             echo "pin already at ${PIN_VERSION}; nothing to commit"
           else
@@ -144,7 +138,8 @@ jobs:
           Automated pin-bump from the nightly upgrade rail: memongo main
           drifted from the pinned contract.
 
-          - Evidence recaptured under docs/contracts/memongo/<version>/
+          - Evidence recaptured under docs/contracts/memongo/<version>/<sha>/
+          - README quickstart checkout and MEMONGO_CONTRACT_SOURCE_REF updated together
           - MEMONGO_CONTRACT_VERSION / MEMONGO_CONTRACT_SHA256 moved in
             packages/memory-bridge/src/memongo-runtime.ts
 

@@ -13,7 +13,7 @@
 // Usage (capture first, e.g. into a scratch directory):
 //   cd <scratch-dir> && MEMONGO_API_URL=http://127.0.0.1:3848 \
 //     bun <repo>/scripts/capture-memongo-contract.ts
-//   bun <repo>/scripts/check-memongo-pin.ts <scratch-dir>/docs/contracts/memongo/<version>/capture.json
+//   bun <repo>/scripts/check-memongo-pin.ts <scratch-dir>/docs/contracts/memongo/<version>/<sha>/capture.json
 
 import { readFileSync } from "node:fs"
 import process from "node:process"

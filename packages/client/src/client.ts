@@ -125,6 +125,7 @@ export type MdbrainSearchDetailedMetadata = {
 		maxPasses: number
 		sourcePreference: string[]
 		needExactEvidence: boolean
+		allowConstraintRelaxation: boolean
 		numCandidates: number
 		fusionMethod: "scoreFusion" | "rankFusion" | "js-merge"
 		hybridMode: "hybrid" | "vector-only"
@@ -145,6 +146,7 @@ export type MdbrainSearchDetailedMetadata = {
 	resultsByPath: Record<string, number>
 	queryRewritten: boolean
 	reranked: boolean
+	throttled?: { retryAfterMs: number }
 	noDirectEvidenceReason?: string
 	constraintRelaxations?: Array<{ constraint: string; action: string }>
 	mmrApplied?: boolean

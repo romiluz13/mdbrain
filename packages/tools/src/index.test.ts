@@ -3,6 +3,28 @@ import { describe, expect, it, vi } from "vitest"
 import { createMdbrainTools } from "./index.js"
 
 describe("createMdbrainTools", () => {
+	it("preserves degradation for both AI search tools", async () => {
+		const out = {
+			results: [],
+			degradation: { kind: "throttled", scope: "denied", retryAfterMs: 250 },
+		}
+		const tools = createMdbrainTools({
+			search: vi.fn().mockResolvedValue(out),
+			searchKB: vi.fn().mockResolvedValue(out),
+		} as unknown as MdbrainClient)
+		for (const name of ["mdbrain_search", "mdbrain_search_kb"]) {
+			await expect(
+				tools[name]?.execute?.(
+					{ query: "memory" },
+					{
+						toolCallId: "test",
+						messages: [],
+					},
+				),
+			).resolves.toEqual(out)
+		}
+	})
+
 	it("does not expose the Memongo status control operation", () => {
 		const tools = createMdbrainTools({} as MdbrainClient)
 

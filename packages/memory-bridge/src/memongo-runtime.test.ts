@@ -31,7 +31,7 @@ describe("resolveMemongoRuntimeConfig", () => {
 		})
 		expect(MEMONGO_CONTRACT_VERSION).toBe("2.1.0")
 		expect(MEMONGO_CONTRACT_SHA256).toBe(
-			"bb1cb9fdd3eaa49699925980c775737d994fbba8774977c080ece7586a5d835f",
+			"2c5423b85ac808dd179fba3e42495b44e210ab30763254896ab408b9fdb52ebb",
 		)
 	})
 

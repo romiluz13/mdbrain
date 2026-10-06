@@ -23,7 +23,9 @@ describe("Mdbrain bridge over Memongo HTTP", () => {
 	})
 
 	it("maps search compatibility fields onto the retained HTTP operation", async () => {
-		gatewayMocks.execute.mockResolvedValue([{ path: "memory/item" }])
+		gatewayMocks.execute.mockResolvedValue({
+			results: [{ path: "memory/item" }],
+		})
 
 		await expect(
 			mdbrainBridgeSearch({
@@ -35,7 +37,7 @@ describe("Mdbrain bridge over Memongo HTTP", () => {
 				scope: "workspace",
 				scopeRef: "workspace-1",
 			}),
-		).resolves.toEqual([{ path: "memory/item" }])
+		).resolves.toEqual({ results: [{ path: "memory/item" }] })
 
 		expect(gatewayMocks.execute).toHaveBeenCalledWith("search", {
 			query: "contract",
@@ -49,7 +51,7 @@ describe("Mdbrain bridge over Memongo HTTP", () => {
 	})
 
 	it("preserves search-kb scope through the Memongo adapter", async () => {
-		gatewayMocks.execute.mockResolvedValue([])
+		gatewayMocks.execute.mockResolvedValue({ results: [] })
 
 		await mdbrainBridgeSearchKB({
 			query: "contract",
@@ -166,7 +168,7 @@ describe("Mdbrain bridge over Memongo HTTP", () => {
 			state: "active" as const,
 			structured: { type: "fact", key: "contract" },
 		}
-		gatewayMocks.execute.mockResolvedValue([])
+		gatewayMocks.execute.mockResolvedValue({ results: [] })
 
 		await mdbrainBridgeGetLifecycleHistory({ handle, limit: 20 })
 
