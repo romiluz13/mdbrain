@@ -12,6 +12,8 @@ export type MemongoFailureCode =
 	| "NOT_FOUND"
 	| "IDEMPOTENCY_CONFLICT"
 	| "ERASURE_GATE_CONFLICT"
+	| "MEMORY_LIFECYCLE_CONFLICT"
+	| "STRUCTURED_MEMORY_REVISION_CONFLICT"
 	| "RATE_LIMITED"
 	| "UPSTREAM_UNAVAILABLE"
 	| "DEADLINE_EXCEEDED"
@@ -479,6 +481,19 @@ export class MemongoHttpClient {
 					const body = (await response.json().catch(() => null)) as {
 						error?: { code?: unknown }
 					} | null
+					const conflictCode = body?.error?.code
+					if (
+						conflictCode === "MEMORY_LIFECYCLE_CONFLICT" ||
+						conflictCode === "STRUCTURED_MEMORY_REVISION_CONFLICT"
+					) {
+						throw new MemongoHttpError(
+							"Memongo memory revision changed; fetch current state before retrying",
+							conflictCode,
+							false,
+							"not-applied",
+							409,
+						)
+					}
 					if (body?.error?.code === "ERASURE_GATE_CONFLICT") {
 						throw new MemongoHttpError(
 							"Memongo agent erasure is in progress",

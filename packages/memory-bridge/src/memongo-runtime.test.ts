@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import { MemongoHttpClient } from "./memongo-http-client.js"
 import {
@@ -7,6 +8,25 @@ import {
 } from "./memongo-runtime.js"
 
 describe("resolveMemongoRuntimeConfig", () => {
+	it("accepts the captured public v2.2.3 contract before tenant traffic", async () => {
+		const document = readFileSync(
+			new URL(
+				"../../../docs/contracts/memongo/2.2.3/1cbc1bbe7b60e415a2ee24368f9f5d04ab8f43f2faee1321a1be9a0b65b4d23a/openapi.json",
+				import.meta.url,
+			),
+			"utf8",
+		)
+		const config = resolveMemongoRuntimeConfig({
+			MEMONGO_API_URL: "https://memongo.example.test",
+			MEMONGO_API_KEY: "test-key",
+		})
+		const client = new MemongoHttpClient({
+			...config,
+			fetchImpl: async () => new Response(document),
+		})
+		await expect(client.checkCompatibility()).resolves.toBeUndefined()
+	})
+
 	it("resolves only Memongo HTTP settings against the pinned contract", () => {
 		const config = resolveMemongoRuntimeConfig({
 			MEMONGO_API_URL: "https://memongo.example.test",
@@ -29,9 +49,9 @@ describe("resolveMemongoRuntimeConfig", () => {
 			allowInsecureHttp: false,
 			readinessControlLanes: [],
 		})
-		expect(MEMONGO_CONTRACT_VERSION).toBe("2.1.0")
+		expect(MEMONGO_CONTRACT_VERSION).toBe("2.2.3")
 		expect(MEMONGO_CONTRACT_SHA256).toBe(
-			"2c5423b85ac808dd179fba3e42495b44e210ab30763254896ab408b9fdb52ebb",
+			"1cbc1bbe7b60e415a2ee24368f9f5d04ab8f43f2faee1321a1be9a0b65b4d23a",
 		)
 	})
 
