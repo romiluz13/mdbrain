@@ -58,7 +58,7 @@ jobs:
       - name: Boot mongodb + memongo only
         run: |
           cd mdbrain
-          docker compose -f docker/compose.full.yml up -d mongodb memongo
+          docker compose -f docker/compose.full.yml up -d --wait --wait-timeout 180 mongodb memongo
 
       - name: Capture served contract (scratch)
         run: |
