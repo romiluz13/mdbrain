@@ -36,6 +36,37 @@ function options(
 }
 
 describe("MemongoHttpClient", () => {
+	it.each([
+		["writeStructured", "STRUCTURED_MEMORY_REVISION_CONFLICT"],
+		["lifecycleUpdate", "MEMORY_LIFECYCLE_CONFLICT"],
+		["lifecycleDelete", "STRUCTURED_MEMORY_REVISION_CONFLICT"],
+		["memoryFeedback", "MEMORY_LIFECYCLE_CONFLICT"],
+	] as const)("preserves %s conflict %s without retrying or exposing details", async (operation, code) => {
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(response(openApiBody))
+			.mockResolvedValueOnce(
+				response(
+					JSON.stringify({
+						error: { code, message: "private revision details" },
+					}),
+					409,
+				),
+			)
+		const client = new MemongoHttpClient(options(fetchImpl))
+		await expect(
+			client.request({ operation, body: {}, validate: () => true }),
+		).rejects.toMatchObject({
+			code,
+			status: 409,
+			retryable: false,
+			outcome: "not-applied",
+			message:
+				"Memongo memory revision changed; fetch current state before retrying",
+		})
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+	})
+
 	it("distinguishes an erasure gate from an idempotency conflict without leaking upstream details", async () => {
 		const fetchImpl = vi
 			.fn<typeof fetch>()

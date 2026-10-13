@@ -137,9 +137,10 @@ cd mdbrain
 # Memongo prerequisite: pin the sibling checkout to the revision matching
 # the pinned contract. The exact ref is recorded beside the pin in
 # packages/memory-bridge/src/memongo-runtime.ts (MEMONGO_CONTRACT_SOURCE_REF)
-# and verified in docs/diligence/agreed-plan.md (PR1 implementation record)
-# — CI uses the same source.
-git -C ../memongo checkout 4b7d07fba8632dfc0cccf78fc790f50b739e0d07
+# — public release v2.2.3, pinned by full commit SHA. CI fetches the same
+# source; compatibility notes and captured evidence are under
+# docs/contracts/memongo/2.2.3/README.md.
+git -C ../memongo checkout 08d4828d0432f348461f1bed78ce476dad9f31ab
 
 # Bring up MongoDB+Search, Memongo, the API, and the web console
 export VOYAGE_API_KEY=al-your-atlas-model-api-key
@@ -209,26 +210,46 @@ Tear down (keeps data in named volumes) with `docker compose -f docker/compose.f
 
 Without an Atlas Model API key you can still develop against the text search lane:
 
+Start from the sibling checkouts and pinned Memongo revision in the Quickstart above. Use two terminals: Memongo listens on **3848**, and Mdbrain listens on **3847**, matching the bundle's host ports. Install dependencies and build each API's workspace dependencies before starting it; a fresh checkout has no `dist/` files.
+
+Terminal 1 (from the Mdbrain repository root):
+
 ```bash
 # MongoDB + mongot, no key (official image quickstart form). Loopback-only
 # binding: atlas-local runs unauthenticated, so it must never listen on
 # other interfaces.
 docker run -d -p 127.0.0.1:27017:27017 --name atlas-local mongodb/mongodb-atlas-local:preview
 
-# Run the API on the host
-export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?directConnection=true"
-export MDBRAIN_API_KEY="local-dev-secret"
-cd apps/api && bun run dev
+# Build and start the pinned Memongo API on its own port.
+cd ../memongo
+PUPPETEER_SKIP_DOWNLOAD=1 bun install --frozen-lockfile
+bunx turbo run build --filter '@memongo/api...'
+export MEMONGO_MONGODB_URI="mongodb://127.0.0.1:27017/?directConnection=true"
+export MEMONGO_API_KEY="local-memongo-secret"
+export MEMONGO_API_HOST="127.0.0.1"
+export MEMONGO_API_PORT="3848"
+bun run --cwd apps/api dev
 ```
 
-`/ready` reports `wiki.search.vector` / `autoEmbed` as `"unavailable"` (the auto-embed index cannot be registered without a model key); the text lane serves searches. Memory features still require a compatible Memongo HTTP service matching the pinned contract (2.1.0, SHA-256 verified at runtime) — same sibling checkout as above (pinned to `MEMONGO_CONTRACT_SOURCE_REF`), run locally, with the API pointed at it:
+Terminal 2 (from the Mdbrain repository root):
 
 ```bash
-export MEMONGO_API_URL="http://127.0.0.1:3847"   # your locally running Memongo
-export MEMONGO_API_KEY="your-memongo-key"        # required by the bridge
+PUPPETEER_SKIP_DOWNLOAD=1 bun install --frozen-lockfile
+bunx turbo run build --filter '@mdbrain/api...'
+export MDBRAIN_WIKI_MONGODB_URI="mongodb://127.0.0.1:27017/?directConnection=true"
+export MDBRAIN_API_KEY="local-dev-secret"
+export MDBRAIN_API_HOST="127.0.0.1"
+export MDBRAIN_API_PORT="3847"
+export MEMONGO_API_URL="http://127.0.0.1:3848"
+export MEMONGO_API_KEY="local-memongo-secret"   # same key as Terminal 1
 # A plain-HTTP loopback Memongo needs this explicit opt-in:
 export MEMONGO_ALLOW_INSECURE_LOCAL="1"
+# Allow the first keyless memory write to finish index bootstrap.
+export MEMONGO_TIMEOUT_MS="120000"
+bun run --cwd apps/api dev
 ```
+
+The filtered builds compile only each API and its workspace dependencies; they skip the web/docs builds. Build time varies by machine and cache; the clean Mdbrain API build took about 6 seconds locally, after dependencies were installed. `PUPPETEER_SKIP_DOWNLOAD=1` skips the optional documentation browser download. After both APIs finish starting, check Mdbrain with `curl -fsS http://127.0.0.1:3847/ready`. It reports `wiki.search.vector` / `autoEmbed` as `"unavailable"` without a model key; the text lane serves searches. Memory features require the pinned Memongo **2.2.3** contract, with its SHA-256 verified at runtime. The canonical bundle's curl examples above also use Mdbrain port 3847.
 
 ### Client SDK
 
