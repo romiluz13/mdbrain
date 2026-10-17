@@ -140,7 +140,7 @@ cd mdbrain
 # — public release v2.2.3, pinned by full commit SHA. CI fetches the same
 # source; compatibility notes and captured evidence are under
 # docs/contracts/memongo/2.2.3/README.md.
-git -C ../memongo checkout 08d4828d0432f348461f1bed78ce476dad9f31ab
+git -C ../memongo checkout 49d8519f5018e4b07933037f5bfb65d43c1316ec
 
 # Bring up MongoDB+Search, Memongo, the API, and the web console
 export VOYAGE_API_KEY=al-your-atlas-model-api-key
