@@ -2519,7 +2519,9 @@ const openApiDocument = {
 									privacyTier: { type: "string" },
 									recipe: {
 										type: "string",
-										enum: ["fast", "hybrid", "deep"],
+										enum: ["fast", "hybrid", "deep", "text"],
+										description:
+											"fast is vector-only, hybrid and deep fuse vector and text, text uses only the text index and works while the vector lane is unavailable",
 									},
 									maxResults: { type: "integer" },
 									minScore: { type: "number" },

@@ -5,5 +5,10 @@
 		"types": ["node"],
 		"noEmit": true
 	},
-	"include": ["lib/**/*.ts", "maintenance-run.ts", "maintenance-run.test.ts"]
+	"include": [
+		"lib/**/*.ts",
+		"maintenance-run.ts",
+		"maintenance-run.test.ts",
+		"demo-*.ts"
+	]
 }

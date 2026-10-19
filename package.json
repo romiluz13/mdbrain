@@ -32,7 +32,8 @@
 		"wiki:init": "bun run scripts/mdbrain-init.ts",
 		"wiki:maintenance": "node --import tsx scripts/maintenance-run.ts",
 		"wiki:backfill-permissions": "node --import tsx scripts/backfill-okf-permissions.ts",
-		"stress-test": "bun run scripts/stress-test.ts"
+		"stress-test": "bun run scripts/stress-test.ts",
+		"demo:stack": "bun scripts/demo-stack.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.0",

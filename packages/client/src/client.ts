@@ -853,7 +853,7 @@ export class MdbrainClient {
 			trustTier?: string
 			state?: string
 			privacyTier?: string
-			recipe?: "fast" | "hybrid" | "deep"
+			recipe?: "fast" | "hybrid" | "deep" | "text"
 			maxResults?: number
 			minScore?: number
 			agentId?: string

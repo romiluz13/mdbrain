@@ -1136,6 +1136,27 @@ describe("wiki routes", () => {
 			expect((await asJson(res)).error?.message).toMatch(/query is required/)
 		})
 
+		it("forwards the text-only recipe", async () => {
+			wikiMocks.searchWikiPages.mockResolvedValue({
+				results: [],
+				total: 0,
+				recipe: "text",
+				mode: "text-only",
+			})
+			await createApp().request("/v1/wiki/search", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					query: "x",
+					scope: "workspace",
+					scopeRef: "ws-1",
+					recipe: "text",
+				}),
+			})
+			const [, params] = wikiMocks.searchWikiPages.mock.calls[0]
+			expect(params.recipe).toBe("text")
+		})
+
 		it("forwards recipe + filter params", async () => {
 			wikiMocks.searchWikiPages.mockResolvedValue({
 				results: [],

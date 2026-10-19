@@ -45,7 +45,7 @@ export class WikiSearchUnavailableError extends Error {
 // Recipe profiles (fast/hybrid/deep) — mirrors memory-engine SearchRecipe.
 // ---------------------------------------------------------------------------
 
-export type WikiSearchRecipe = "fast" | "hybrid" | "deep"
+export type WikiSearchRecipe = "fast" | "hybrid" | "deep" | "text"
 
 /** Rerank function signature — receives the query and candidate docs, returns reranked docs with updated scores. */
 export type WikiRerankFn = (
@@ -88,6 +88,14 @@ function recipeDefaults(
 				maxResults,
 				mode: "hybrid",
 				numCandidatesMultiplier: 40,
+				minScore: 0.0,
+			}
+		case "text":
+			return {
+				recipe,
+				maxResults,
+				mode: "text-only",
+				numCandidatesMultiplier: 0,
 				minScore: 0.0,
 			}
 	}

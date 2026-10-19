@@ -143,6 +143,24 @@ describe("searchWikiPages", () => {
 		expect(addFields?.$addFields?.searchScore?.$meta).toBe("vectorSearchScore")
 	})
 
+	it("uses only the text index for the 'text' recipe, so it works without the vector lane", async () => {
+		const captured: Document[][] = []
+		const { db } = mockDb({ push: (p) => captured.push(p) })
+		const h: WikiDbHandle = { db, prefix: "test_" }
+		const res = await searchWikiPages(h, { query: "accounts", recipe: "text" })
+		expect(captured[0][0]).toHaveProperty("$search")
+		expect(captured[0][0].$search.index).toBe(
+			WIKI_PAGES_SEARCH_INDEX_TARGETS.text.name,
+		)
+		const usesVector = captured[0].some(
+			(s) => "$vectorSearch" in s || "$rankFusion" in s,
+		)
+		expect(usesVector).toBe(false)
+		expect(res.recipe).toBe("text")
+		expect(res.mode).toBe("text-only")
+		expect(res.results.every((r) => r.source === "text")).toBe(true)
+	})
+
 	it("uses $rankFusion for hybrid mode (auto-embed vector + text)", async () => {
 		const captured: Document[][] = []
 		const { db } = mockDb({ push: (p) => captured.push(p) })

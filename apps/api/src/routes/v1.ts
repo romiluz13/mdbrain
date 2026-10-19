@@ -2845,7 +2845,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				recipe:
 					body.recipe === "fast" ||
 					body.recipe === "hybrid" ||
-					body.recipe === "deep"
+					body.recipe === "deep" ||
+					body.recipe === "text"
 						? body.recipe
 						: undefined,
 				maxResults:
