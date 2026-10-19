@@ -21,7 +21,13 @@ import type {
 	MdbrainSearchKBResponse,
 	MdbrainSearchResponse,
 	SearchConfig,
+	MdbrainWikiPageCreateInput,
+	MdbrainWikiPageListResponse,
+	MdbrainWikiPageUpdateInput,
+	MdbrainWikiPageView,
 	MdbrainWikiPromotion,
+	MdbrainWikiRevisionListResponse,
+	MdbrainWikiRevisionRecord,
 } from "./types.js"
 import {
 	apiDelete,
@@ -881,12 +887,47 @@ export class MdbrainClient {
 			slug: string
 			scope: string
 			scopeRef: string
+			format?: "json"
+			transclude?: boolean
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiPageView>
+	async wikiGet(
+		input: {
+			slug: string
+			scope: string
+			scopeRef: string
+			format: "markdown" | "html"
+			transclude?: boolean
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<string>
+	// Fallback overload for callers that hold the format as a runtime union
+	// (e.g. MCP tool args); they receive the un-narrowed union.
+	async wikiGet(
+		input: {
+			slug: string
+			scope: string
+			scopeRef: string
 			format?: "json" | "markdown" | "html"
 			transclude?: boolean
 			agentId?: string
 		},
 		requestOptions?: MdbrainRequestOptions,
-	): Promise<unknown> {
+	): Promise<MdbrainWikiPageView | string>
+	async wikiGet(
+		input: {
+			slug: string
+			scope: string
+			scopeRef: string
+			format?: "json" | "markdown" | "html"
+			transclude?: boolean
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiPageView | string> {
 		const qs = new URLSearchParams({
 			scope: input.scope,
 			scopeRef: input.scopeRef,
@@ -904,7 +945,137 @@ export class MdbrainClient {
 			// formats; resolve to the raw string instead of parsing.
 			return apiGetText(this._opts, path, requestOptions)
 		}
-		return apiGet(this._opts, path, requestOptions)
+		return apiGet<MdbrainWikiPageView>(this._opts, path, requestOptions)
+	}
+
+	/** Lists wiki pages in a scope with optional filters and pagination. */
+	async wikiList(
+		input: {
+			scope: string
+			scopeRef: string
+			kind?: string
+			trustTier?: string
+			state?: string
+			limit?: number
+			skip?: number
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiPageListResponse> {
+		const qs = new URLSearchParams({
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.kind) qs.set("kind", input.kind)
+		if (input.trustTier) qs.set("trustTier", input.trustTier)
+		if (input.state) qs.set("state", input.state)
+		if (input.limit !== undefined) qs.set("limit", String(input.limit))
+		if (input.skip !== undefined) qs.set("skip", String(input.skip))
+		if (input.agentId) qs.set("agentId", input.agentId)
+		return apiGet<MdbrainWikiPageListResponse>(
+			this._opts,
+			`/v1/wiki?${qs}`,
+			requestOptions,
+		)
+	}
+
+	/** Explicitly creates a wiki page. Fails with 409 DUPLICATE_SLUG when the
+	 *  slug already exists in scope — it never silently updates. */
+	async wikiCreate(
+		input: MdbrainWikiPageCreateInput,
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiPageView> {
+		return apiPost<MdbrainWikiPageView>(
+			this._opts,
+			"/v1/wiki",
+			{
+				kind: input.kind,
+				title: input.title,
+				slug: input.slug,
+				aliases: input.aliases,
+				summary: input.summary,
+				body: input.body,
+				frontmatter: input.frontmatter,
+				scope: input.scope,
+				scopeRef: input.scopeRef,
+				trustTier: input.trustTier,
+				agentId: input.agentId,
+			},
+			undefined,
+			"never",
+			requestOptions,
+		)
+	}
+
+	/** Explicitly updates a wiki page. `expectedRevision` is sent unchanged
+	 *  as the CAS precondition; a concurrent writer surfaces as 409
+	 *  REVISION_CONFLICT (never a silent overwrite, and no retry). */
+	async wikiUpdate(
+		input: MdbrainWikiPageUpdateInput,
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiPageView> {
+		const { slug, scope, scopeRef, expectedRevision, agentId, ...patch } = input
+		return apiPatch<MdbrainWikiPageView>(
+			this._opts,
+			`/v1/wiki/${encodeURIComponent(slug)}`,
+			{
+				...patch,
+				scope,
+				scopeRef,
+				expectedRevision,
+				...(agentId ? { agentId } : {}),
+			},
+			requestOptions,
+		)
+	}
+
+	/** Lists revision summaries (no snapshots) for one wiki page. */
+	async wikiRevisions(
+		input: {
+			slug: string
+			scope: string
+			scopeRef: string
+			limit?: number
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiRevisionListResponse> {
+		const qs = new URLSearchParams({
+			slug: input.slug,
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.limit !== undefined) qs.set("limit", String(input.limit))
+		if (input.agentId) qs.set("agentId", input.agentId)
+		return apiGet<MdbrainWikiRevisionListResponse>(
+			this._opts,
+			`/v1/wiki/revisions?${qs}`,
+			requestOptions,
+		)
+	}
+
+	/** Fetches one full revision snapshot by revision number. */
+	async wikiRevision(
+		input: {
+			slug: string
+			scope: string
+			scopeRef: string
+			revision: number
+			agentId?: string
+		},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiRevisionRecord> {
+		const qs = new URLSearchParams({
+			slug: input.slug,
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.agentId) qs.set("agentId", input.agentId)
+		return apiGet<MdbrainWikiRevisionRecord>(
+			this._opts,
+			`/v1/wiki/revisions/${input.revision}?${qs}`,
+			requestOptions,
+		)
 	}
 
 	async wikiApply(

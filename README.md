@@ -170,6 +170,8 @@ Keyless boot: same call returns 200 with `wiki.search.vector` / `autoEmbed` repo
 
 The web console is at http://127.0.0.1:3040. The compose default API key is `dev-mdbrain-key` (substitute the `authorization` header below if you set `MDBRAIN_API_KEY`).
 
+The workspace at http://127.0.0.1:3040/workspace connects to the API with a scoped key (held in the tab's memory only) and lets you create and edit knowledge pages, read their revision history, capture conversation events, and inspect what retrieval returns. Knowledge pages and conversation memory are separate stores; the page labels each one. `/console` remains the raw API inspector and `/demo` remains a labelled synthetic simulation. See the [workspace guide](docs/platform/workspace.md) for connection, editing, history, and retrieval behavior.
+
 ### Create and search wiki pages
 
 ```bash

@@ -594,4 +594,288 @@ describe("MdbrainClient public contract", () => {
 		const url = String(fetchMock.mock.calls[0]?.[0])
 		expect(url).toContain(`/v1/wiki/${encodeURIComponent("tables/a b")}?`)
 	})
+
+	const pageView = {
+		_id: "681a",
+		kind: "note",
+		title: "Deploy windows",
+		slug: "notes/deploy windows",
+		aliases: [],
+		summary: "Friday deploy windows only",
+		body: "Deploys happen on Fridays.",
+		frontmatter: { type: "note" },
+		claims: [],
+		contradictions: [],
+		questions: [],
+		relationships: [],
+		personCard: null,
+		scope: "workspace",
+		scopeRef: "ws-1",
+		trustTier: "standard",
+		permissions: {},
+		state: "active",
+		revision: 2,
+		validFrom: "2026-10-06T10:00:00.000Z",
+		freshness: "fresh",
+		backlinks: [],
+		transcludes: [],
+		createdAt: "2026-10-06T10:00:00.000Z",
+		updatedAt: "2026-10-06T10:05:00.000Z",
+	}
+
+	it("wikiGet JSON resolves to the typed page view and still returns strings for markdown", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(pageView))
+			.mockResolvedValueOnce(
+				new Response("# Deploy", {
+					status: 200,
+					headers: { "Content-Type": "text/markdown" },
+				}),
+			)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const page = await client.wikiGet({
+			slug: "notes/deploy windows",
+			scope: "workspace",
+			scopeRef: "ws-1",
+		})
+		const markdown = await client.wikiGet({
+			slug: "notes/deploy windows",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			format: "markdown",
+		})
+
+		expect(page).toEqual(pageView)
+		expect(page.state).toBe("active")
+		expect(page.revision).toBe(2)
+		expect(markdown).toBe("# Deploy")
+	})
+
+	it("wikiList requests the list route with filters and returns the page envelope", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json({ pages: [pageView], total: 1 }))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const out = await client.wikiList({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			kind: "note",
+			state: "all",
+			limit: 25,
+			skip: 50,
+			agentId: "main",
+		})
+
+		expect(out).toEqual({ pages: [pageView], total: 1 })
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]))
+		expect(url.pathname).toBe("/v1/wiki")
+		expect(url.searchParams.get("scope")).toBe("workspace")
+		expect(url.searchParams.get("scopeRef")).toBe("ws-1")
+		expect(url.searchParams.get("kind")).toBe("note")
+		expect(url.searchParams.get("state")).toBe("all")
+		expect(url.searchParams.get("limit")).toBe("25")
+		expect(url.searchParams.get("skip")).toBe("50")
+		expect(url.searchParams.get("agentId")).toBe("main")
+	})
+
+	it("wikiCreate posts the page input to the create route", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(pageView, { status: 201 }))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const out = await client.wikiCreate({
+			kind: "note",
+			title: "Deploy windows",
+			slug: "notes/deploy windows",
+			summary: "Friday deploy windows only",
+			body: "Deploys happen on Fridays.",
+			frontmatter: { type: "note" },
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			agentId: "main",
+		})
+
+		expect(out).toEqual(pageView)
+		const init = fetchMock.mock.calls[0]?.[1]
+		expect(init?.method).toBe("POST")
+		expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/v1/wiki")
+		expect(JSON.parse(String(init?.body))).toEqual({
+			kind: "note",
+			title: "Deploy windows",
+			slug: "notes/deploy windows",
+			summary: "Friday deploy windows only",
+			body: "Deploys happen on Fridays.",
+			frontmatter: { type: "note" },
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			agentId: "main",
+		})
+	})
+
+	it("wikiUpdate sends the inspected revision unchanged and URL-encodes the slug", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(pageView))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const out = await client.wikiUpdate({
+			slug: "notes/deploy windows?v2",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			expectedRevision: 2,
+			title: "Deploy windows (revised)",
+			body: "Deploys happen on Fridays, before 16:00.",
+			agentId: "main",
+		})
+
+		expect(out).toEqual(pageView)
+		const init = fetchMock.mock.calls[0]?.[1]
+		expect(init?.method).toBe("PATCH")
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]))
+		expect(url.pathname).toBe(
+			`/v1/wiki/${encodeURIComponent("notes/deploy windows?v2")}`,
+		)
+		expect(JSON.parse(String(init?.body))).toEqual({
+			title: "Deploy windows (revised)",
+			body: "Deploys happen on Fridays, before 16:00.",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			expectedRevision: 2,
+			agentId: "main",
+		})
+	})
+
+	it("wikiUpdate propagates REVISION_CONFLICT without retrying an overwrite", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			Response.json(
+				{
+					error: {
+						code: "REVISION_CONFLICT",
+						message: "stale precondition",
+					},
+				},
+				{ status: 409 },
+			),
+		)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await expect(
+			client.wikiUpdate({
+				slug: "notes/deploy windows",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				expectedRevision: 2,
+				body: "Stale draft",
+			}),
+		).rejects.toMatchObject({
+			status: 409,
+			envelope: { code: "REVISION_CONFLICT" },
+		})
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it("wikiRevisions requests the revision list with slug and scope in the query", async () => {
+		const revisions = [
+			{
+				pageSlug: "notes/deploy windows",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				revision: 2,
+				editKind: "update",
+				editor: { id: "api-key:admin", name: "MDBrain administrator" },
+				createdAt: "2026-10-06T10:05:00.000Z",
+			},
+		]
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json({ revisions }))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const out = await client.wikiRevisions({
+			slug: "notes/deploy windows",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			limit: 10,
+			agentId: "main",
+		})
+
+		expect(out).toEqual({ revisions })
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]))
+		expect(url.pathname).toBe("/v1/wiki/revisions")
+		expect(url.searchParams.get("slug")).toBe("notes/deploy windows")
+		expect(url.searchParams.get("scope")).toBe("workspace")
+		expect(url.searchParams.get("scopeRef")).toBe("ws-1")
+		expect(url.searchParams.get("limit")).toBe("10")
+		expect(url.searchParams.get("agentId")).toBe("main")
+	})
+
+	it("wikiRevision fetches one revision snapshot by number", async () => {
+		const record = {
+			pageSlug: "notes/deploy windows",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 1,
+			editKind: "create",
+			createdAt: "2026-10-06T10:00:00.000Z",
+			snapshot: pageView,
+		}
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(record))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const out = await client.wikiRevision({
+			slug: "notes/deploy windows",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			revision: 1,
+			agentId: "main",
+		})
+
+		expect(out).toEqual(record)
+		expect(out.snapshot.slug).toBe("notes/deploy windows")
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]))
+		expect(url.pathname).toBe("/v1/wiki/revisions/1")
+		expect(url.searchParams.get("slug")).toBe("notes/deploy windows")
+		expect(url.searchParams.get("agentId")).toBe("main")
+	})
+
+	it("wikiGet accepts a runtime format of any JSON value for MCP-style callers", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(pageView))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const args: Record<string, unknown> = { format: "json" }
+		const format =
+			args.format === "markdown" ||
+			args.format === "html" ||
+			args.format === "json"
+				? args.format
+				: undefined
+		const out = await client.wikiGet({
+			slug: "notes/deploy windows",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			format,
+		})
+
+		expect(typeof out === "string" ? out : out.slug).toBe(
+			"notes/deploy windows",
+		)
+	})
 })

@@ -120,6 +120,7 @@ export default function Home() {
 				</Link>
 				<nav aria-label="Primary navigation">
 					<Link href="/demo">Demo</Link>
+					<Link href="/workspace">Workspace</Link>
 					<a href="#architecture">Architecture</a>
 					<a href="#proof">Proof</a>
 					<a href="#comparison">Comparison</a>

@@ -49,6 +49,7 @@ export default function DemoPage() {
 				<p>Sales demo / Retrieval quality</p>
 				<nav aria-label="Demo navigation">
 					<Link href="/">System atlas</Link>
+					<Link href="/workspace">Workspace</Link>
 					<Link href="/compare">Field guide</Link>
 					<a href={repository}>Source ↗</a>
 				</nav>

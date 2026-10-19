@@ -879,3 +879,143 @@ export type MdbrainContextBundleInput = {
 	/** "wake-up" returns a compact 250-token projection for session start. Default: "full". */
 	mode?: "full" | "wake-up"
 }
+
+// ---------------------------------------------------------------------------
+// Wiki workspace (typed views of /v1/wiki and /v1/wiki/revisions)
+// ---------------------------------------------------------------------------
+
+/** Evidence attached to a wiki claim. Mirrors the API's claim evidence objects. */
+export type MdbrainWikiClaimEvidence = {
+	kind: "file" | "url" | "event" | "api" | "manual" | "agent"
+	sourceId: string
+	path?: string
+	lines?: string
+	weight?: number
+	confidence?: number
+	privacyTier?: string
+	note?: string
+}
+
+/** A governed claim on a wiki page, as returned by the API. */
+export type MdbrainWikiClaim = {
+	id: string
+	text: string
+	status: "active" | "superseded" | "contradicted" | "disputed"
+	confidence: number
+	evidence: MdbrainWikiClaimEvidence[]
+	derivedFrom: string[]
+	supersedesClaimId?: string
+	sourceMemId?: string
+	validFrom?: string
+	validTo?: string
+	writerAgent?: MdbrainSourceAgent
+}
+
+/** A wiki page as served by GET /v1/wiki/:slug (format=json) and the wiki
+ *  mutation routes. JSON-serialized: timestamps are ISO strings. */
+export type MdbrainWikiPageView = {
+	_id: string
+	kind: string
+	title: string
+	slug: string
+	aliases: string[]
+	summary: string
+	body: string
+	frontmatter: Record<string, unknown>
+	claims: MdbrainWikiClaim[]
+	contradictions: unknown[]
+	questions: unknown[]
+	relationships: unknown[]
+	personCard: unknown
+	entityId?: string
+	okfConceptId?: string
+	okfBundleId?: string
+	scope: string
+	scopeRef: string
+	trustTier: string
+	permissions: Record<string, unknown>
+	state: string
+	revision: number
+	validFrom: string | null
+	validTo?: string
+	freshness: string
+	lastMaintainedAt?: string
+	backlinks: unknown[]
+	transcludes: string[]
+	createdAt: string
+	updatedAt: string
+}
+
+/** Envelope returned by GET /v1/wiki (page list with filters + pagination). */
+export type MdbrainWikiPageListResponse = {
+	pages: MdbrainWikiPageView[]
+	total: number
+}
+
+/** Input for POST /v1/wiki (explicit create). */
+export type MdbrainWikiPageCreateInput = {
+	kind: string
+	title: string
+	slug: string
+	aliases?: string[]
+	summary: string
+	body: string
+	frontmatter: { type: string } & Record<string, unknown>
+	scope: string
+	scopeRef: string
+	/** Required by the server: one of "restricted" | "standard" | "admin".
+	 *  The API rejects create bodies with an omitted/empty tier, so the SDK
+	 *  does not default it. */
+	trustTier: string
+	agentId?: string
+}
+
+/** Input for PATCH /v1/wiki/:slug (explicit update). `expectedRevision` is
+ *  the revision the caller inspected; it is sent unchanged as the CAS
+ *  precondition and never silently refreshed. The server returns
+ *  REVISION_CONFLICT (409) when it no longer matches. */
+export type MdbrainWikiPageUpdateInput = {
+	slug: string
+	scope: string
+	scopeRef: string
+	expectedRevision: number
+	title?: string
+	aliases?: string[]
+	summary?: string
+	body?: string
+	frontmatter?: { type: string } & Record<string, unknown>
+	trustTier?: string
+	permissions?: Record<string, unknown>
+	agentId?: string
+}
+
+/** Who performed a wiki write; recorded on every revision. */
+export type MdbrainWikiPageEditor = {
+	id: string
+	name: string
+	runId?: string
+}
+
+export type MdbrainWikiRevisionEditKind = "create" | "update" | "delete"
+
+/** One revision summary from GET /v1/wiki/revisions (no snapshot). */
+export type MdbrainWikiRevisionSummary = {
+	pageSlug: string
+	scope: string
+	scopeRef: string
+	revision: number
+	editKind: MdbrainWikiRevisionEditKind
+	editor?: MdbrainWikiPageEditor
+	createdAt: string
+}
+
+/** Envelope returned by GET /v1/wiki/revisions. */
+export type MdbrainWikiRevisionListResponse = {
+	revisions: MdbrainWikiRevisionSummary[]
+}
+
+/** Full revision record from GET /v1/wiki/revisions/:revision, including the
+ *  page document as of that revision. */
+export type MdbrainWikiRevisionRecord = MdbrainWikiRevisionSummary & {
+	snapshot: Record<string, unknown>
+}
