@@ -17,6 +17,7 @@ import {
 	type GovernanceContext,
 } from "./wiki-governance.js"
 import { wikiPagesCollection } from "./wiki-schema.js"
+import { resolveContradictionClaims } from "./wiki-contradiction-owners.js"
 import type { WikiDbHandle } from "./wiki-bridge.js"
 import { omitUndefined } from "./omit-undefined.js"
 
@@ -30,9 +31,19 @@ export type ContradictionResolution =
 	| "authority_wins"
 	| "human_escalation"
 
+/** Claim ids are unique only within a page, so a claim is named by its page
+ *  and its id together. */
+export interface ClaimRef {
+	pageSlug: string
+	claimId: string
+}
+
 export interface Contradiction {
 	id: string
 	claimIds: string[] // always ≥2: the conflicting claims
+	/** Same order and length as claimIds. Absent on records written before
+	 *  provenance existed; readers must not guess the owner of those. */
+	claimRefs?: ClaimRef[]
 	detectedAt: Date
 	resolution: ContradictionResolution
 	resolvedBy?: string
@@ -235,6 +246,10 @@ export async function detectContradictions(
 				const contradiction: Contradiction = {
 					id: `contra-${newClaim.id}-${existingClaim.id}`,
 					claimIds: [newClaim.id, existingClaim.id],
+					claimRefs: [
+						{ pageSlug, claimId: newClaim.id },
+						{ pageSlug: targetSlug, claimId: existingClaim.id },
+					],
 					detectedAt: new Date(),
 					resolution: "unresolved",
 				}
@@ -327,7 +342,15 @@ export async function listUnresolvedContradictions(
 			}
 		}
 	}
-	return results
+	if (!governance) return results
+	// Each record also names the page that holds its other claim, which this
+	// caller may not read; only a record that fully resolves for them is listed.
+	const owners = await resolveContradictionClaims(
+		handle,
+		{ scope, scopeRef, governance },
+		results.map((entry) => entry.contradiction),
+	)
+	return results.filter((_, index) => owners[index] !== undefined)
 }
 
 // ---------------------------------------------------------------------------

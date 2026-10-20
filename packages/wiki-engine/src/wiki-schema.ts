@@ -291,6 +291,19 @@ const WIKI_PAGES_SCHEMA: Document = {
 							items: { bsonType: "string" },
 							minItems: 2,
 						},
+						// Optional: records written before provenance existed have none.
+						claimRefs: {
+							bsonType: "array",
+							minItems: 2,
+							items: {
+								bsonType: "object",
+								required: ["pageSlug", "claimId"],
+								properties: {
+									pageSlug: { bsonType: "string" },
+									claimId: { bsonType: "string" },
+								},
+							},
+						},
 						detectedAt: { bsonType: "date" },
 						resolution: { enum: CONTRADICTION_RESOLUTION_VALUES },
 						resolvedBy: { bsonType: "string" },

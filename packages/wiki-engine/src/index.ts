@@ -220,6 +220,7 @@ export {
 	areContradictory,
 	hasNegation,
 	textOverlap,
+	type ClaimRef,
 	type Contradiction,
 	type ContradictionResolution,
 	type DedupResult,

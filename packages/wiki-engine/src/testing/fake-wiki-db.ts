@@ -2,8 +2,9 @@
 // real query filters (governance, $in lookups, sort, limit) to be evaluated
 // rather than mocked. It implements only the operators the engine's reads use;
 // a method it does not implement throws, so a query that sneaks in a count or
-// a scan fails loudly instead of passing. Writes are limited to the single
-// document updates the delivery ledger makes.
+// a scan fails loudly instead of passing. Writes are limited to single-document
+// updates ($set, $unset, $inc, $addToSet, $push); aggregate runs only $match
+// and $project; a dotted projection reaches through arrays, as MongoDB does.
 
 import type { Db, Document } from "mongodb"
 
@@ -29,15 +30,6 @@ function existsAt(value: unknown, path: string[]): boolean {
 	if (value === null || typeof value !== "object") return false
 	const [head, ...rest] = path as [string, ...string[]]
 	return existsAt((value as Document)[head], rest)
-}
-
-function getPath(doc: Document, path: string[]): unknown {
-	let current: unknown = doc
-	for (const key of path) {
-		if (current === null || typeof current !== "object") return undefined
-		current = (current as Document)[key]
-	}
-	return current
 }
 
 // Inequality operators use type bracketing: a comparison matches only values of
@@ -139,15 +131,47 @@ function setPath(target: Document, path: string[], value: unknown): void {
 
 // Reads hand out copies, as a server does: a later write must not change a
 // document a caller already holds.
+// A dotted path reaches through arrays, as in MongoDB: "claims.id" keeps the id
+// of each claim and nothing else.
+type ProjectionTree = { [key: string]: ProjectionTree | true }
+
+function include(value: unknown, tree: ProjectionTree | true): unknown {
+	if (tree === true) return structuredClone(value)
+	if (Array.isArray(value)) {
+		return value
+			.map((item) => include(item, tree))
+			.filter((item) => item !== undefined)
+	}
+	if (value === null || typeof value !== "object") return undefined
+	const out: Document = {}
+	for (const [key, sub] of Object.entries(tree)) {
+		const picked = include((value as Document)[key], sub)
+		if (picked !== undefined) out[key] = picked
+	}
+	return out
+}
+
 function project(doc: Document, projection?: Document): Document {
 	if (!projection) return structuredClone(doc)
-	const out: Document = {}
-	if (projection._id !== 0 && doc._id !== undefined) out._id = doc._id
-	for (const [path, include] of Object.entries(projection)) {
-		if (path === "_id" || !include) continue
-		const found = getPath(doc, path.split("."))
-		if (found !== undefined) setPath(out, path.split("."), found)
+	const tree: ProjectionTree = {}
+	for (const [path, keep] of Object.entries(projection)) {
+		if (path === "_id" || !keep) continue
+		let node = tree
+		const keys = path.split(".")
+		for (const key of keys.slice(0, -1)) {
+			const next = node[key]
+			if (typeof next === "object") {
+				node = next
+				continue
+			}
+			const child: ProjectionTree = {}
+			node[key] = child
+			node = child
+		}
+		node[keys[keys.length - 1] as string] = true
 	}
+	const out = include(doc, tree) as Document
+	if (projection._id !== 0 && doc._id !== undefined) out._id = doc._id
 	return out
 }
 
@@ -164,6 +188,13 @@ function applyUpdate(doc: Document, update: Document): void {
 		} else if (op === "$inc") {
 			for (const [path, by] of Object.entries(spec)) {
 				doc[path] = ((doc[path] as number | undefined) ?? 0) + (by as number)
+			}
+		} else if (op === "$push") {
+			for (const [path, item] of Object.entries(spec)) {
+				doc[path] = [
+					...((doc[path] as unknown[] | undefined) ?? []),
+					structuredClone(item),
+				]
 			}
 		} else if (op === "$addToSet") {
 			for (const [path, add] of Object.entries(spec)) {
@@ -262,6 +293,29 @@ export function createFakeWikiDb(
 					const found = docs.find((doc) => matches(doc, filter))
 					if (found) applyUpdate(found, update)
 					return { matchedCount: found ? 1 : 0 }
+				},
+				// Only the $match and $project stages the engine's reads use.
+				aggregate(pipeline: Document[]) {
+					queries.push({
+						collection: name,
+						filter: pipeline[0]?.$match ?? {},
+						options: { pipeline },
+					})
+					return {
+						async toArray() {
+							let found = docs
+							for (const stage of pipeline) {
+								if (stage.$match) {
+									found = found.filter((doc) => matches(doc, stage.$match))
+								} else if (stage.$project) {
+									found = found.map((doc) => project(doc, stage.$project))
+								} else {
+									throw new Error(`unsupported stage ${Object.keys(stage)[0]}`)
+								}
+							}
+							return found.map((doc) => structuredClone(doc))
+						},
+					}
 				},
 				// The filter is evaluated and the write applied in one synchronous
 				// step, as a server does for a single document, so two callers

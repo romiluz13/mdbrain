@@ -18,6 +18,7 @@ import {
 } from "./wiki-schema.js"
 import { renderWikiPageMarkdown, renderWikiPageHtml } from "./wiki-renderer.js"
 import { recomputeBacklinksAfterChange } from "./wiki-backlinks.js"
+import { governContradictions } from "./wiki-contradiction-owners.js"
 import {
 	runWritePipelineGate,
 	type ClaimRecord,
@@ -226,13 +227,29 @@ export interface WikiDbHandle {
 // CRUD
 // ---------------------------------------------------------------------------
 
-function toView(doc: Record<string, unknown>): WikiPageView {
+// claimRefs name the page of each claim in a contradiction, and a reader of this
+// page may not be able to read those pages. A view never carries them; readers
+// that may show a page name resolve it themselves (wiki-contradiction-owners.ts).
+function withoutClaimRefs(record: unknown): unknown {
+	if (record === null || typeof record !== "object") return record
+	const { claimRefs, ...rest } = record as Record<string, unknown>
+	void claimRefs
+	return rest
+}
+
+function toView(
+	doc: Record<string, unknown>,
+	opts: { provenance?: boolean } = {},
+): WikiPageView {
 	const { _id, embedding, text, ...rest } = doc as Record<string, unknown> & {
 		_id: { toString(): string }
 	}
 	void embedding // omitted from the view
 	void text // internal auto-embed field, not exposed via API
 	const out: Record<string, unknown> = { _id: _id.toString(), ...rest }
+	if (!opts.provenance && Array.isArray(out.contradictions)) {
+		out.contradictions = out.contradictions.map(withoutClaimRefs)
+	}
 	for (const dateField of [
 		"validFrom",
 		"validTo",
@@ -450,7 +467,9 @@ export async function createWikiPage(
 
 /** Gets a wiki page by slug within a scope. Returns undefined if not found.
  *  Superseded pages are hidden unless an administrative caller explicitly
- *  requests them. */
+ *  requests them. With governance, the page's contradictions are only those
+ *  this caller may see (see wiki-contradiction-owners.ts); `rawContradictions`
+ *  is for a caller that resolves them itself and keeps their claimRefs. */
 export async function getWikiPage(
 	handle: WikiDbHandle,
 	slug: string,
@@ -458,7 +477,7 @@ export async function getWikiPage(
 	scopeRef: string,
 	governance?: GovernanceContext,
 	session?: ClientSession,
-	opts: { includeSuperseded?: boolean } = {},
+	opts: { includeSuperseded?: boolean; rawContradictions?: boolean } = {},
 ): Promise<WikiPageView | undefined> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
 	const baseFilter: Record<string, unknown> = {
@@ -480,7 +499,13 @@ export async function getWikiPage(
 			session ? { session } : undefined,
 		)) as unknown as Record<string, unknown> | null
 		if (!doc) return undefined
-		return toView(doc)
+		if (opts.rawContradictions) return toView(doc, { provenance: true })
+		const [governed] = await governContradictions(
+			handle,
+			{ scope, scopeRef, governance, session },
+			[doc],
+		)
+		return toView(governed as Record<string, unknown>)
 	}
 	const doc = (await coll.findOne(
 		baseFilter,
@@ -502,6 +527,9 @@ export async function listWikiPages(
 		limit?: number
 		skip?: number
 		governance?: GovernanceContext
+		/** For a caller that resolves the contradictions itself: they keep their
+		 *  claimRefs and are not filtered by `governance`. */
+		rawContradictions?: boolean
 	} = {},
 ): Promise<{ pages: WikiPageView[]; total: number }> {
 	const coll = wikiPagesCollection(handle.db, handle.prefix)
@@ -532,8 +560,23 @@ export async function listWikiPages(
 		coll.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(limit).toArray(),
 		coll.countDocuments(filter),
 	])
+	const stored = docs as unknown as Array<Record<string, unknown>>
+	const visible =
+		opts.governance && !opts.rawContradictions
+			? await governContradictions(
+					handle,
+					{
+						scope: opts.governance.scope,
+						scopeRef: opts.governance.scopeRef,
+						governance: opts.governance,
+					},
+					stored,
+				)
+			: stored
 	return {
-		pages: docs.map((d) => toView(d as unknown as Record<string, unknown>)),
+		pages: visible.map((d) =>
+			toView(d, { provenance: opts.rawContradictions }),
+		),
 		total,
 	}
 }

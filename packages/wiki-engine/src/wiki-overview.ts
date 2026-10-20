@@ -19,6 +19,7 @@ import {
 	type GovernanceContext,
 } from "./wiki-governance.js"
 import { revisionPermissionsFilter } from "./wiki-changes-governance.js"
+import { resolveContradictionClaims } from "./wiki-contradiction-owners.js"
 import {
 	toRevisionSummary,
 	type WikiPageRevisionRecord,
@@ -334,85 +335,39 @@ function timeOf(value: unknown): number {
 		: new Date(String(value)).getTime()
 }
 
-// A contradiction names claim ids. Its other claim usually lives on a page
-// that links here, so ids are resolved on this page first, then on the
-// readable pages that link to it. One whose claims cannot all be shown to this
-// caller is dropped whole: showing half of it, or an id, would leak the page
-// that holds the rest.
+// A contradiction names claims by page, or by bare id when it predates that.
+// Each is resolved from the page that owns it (wiki-contradiction-owners.ts);
+// one whose claims cannot all be shown to this caller is dropped whole: showing
+// half of it, or an id, would leak the page that holds the rest.
 async function readContradictions(
 	handle: WikiDbHandle,
 	params: WikiEntityOverviewParams,
 	view: WikiPageView,
 	limit: number,
 ): Promise<WikiOverviewSection<WikiOverviewContradiction>> {
-	const open = arrayOf(view.contradictions).filter(
-		(c) => c.resolution === "unresolved" && Array.isArray(c.claimIds),
-	)
+	const open = arrayOf(view.contradictions)
+		.filter((c) => c.resolution === "unresolved" && Array.isArray(c.claimIds))
+		.sort((a, b) => timeOf(b.detectedAt) - timeOf(a.detectedAt))
 	if (open.length === 0) return { items: [], hasMore: false }
 
-	const owned = new Map<string, Document>(
-		arrayOf(view.claims).map((c) => [c.id as string, c]),
-	)
-	const foreignIds = [
-		...new Set(
-			open
-				.flatMap((c) => c.claimIds as string[])
-				.filter((id) => !owned.has(id)),
-		),
-	]
-	const foreign = new Map<string, { page: Document; claim: Document }>()
-	const sources = slugsOf(view.backlinks, "sourcePageSlug").filter(
-		(slug) => slug !== view.slug,
-	)
-	if (foreignIds.length > 0 && sources.length > 0) {
-		const { pages } = await readablePages(
-			handle,
-			params,
-			{ slug: { $in: sources }, "claims.id": { $in: foreignIds } },
-			sources.length,
-		)
-		for (const source of pages) {
-			for (const claim of arrayOf(source.claims)) {
-				const id = claim.id as string
-				if (foreignIds.includes(id) && !foreign.has(id)) {
-					foreign.set(id, { page: source, claim })
-				}
-			}
-		}
-	}
-
-	const here = { slug: view.slug, title: view.title, revision: view.revision }
+	const owners = await resolveContradictionClaims(handle, params, open, [
+		view as unknown as Document,
+	])
 	const shown: WikiOverviewContradiction[] = []
-	for (const c of [...open].sort(
-		(a, b) => timeOf(b.detectedAt) - timeOf(a.detectedAt),
-	)) {
-		const claims: WikiOverviewContradiction["claims"] = []
-		for (const id of c.claimIds as string[]) {
-			const mine = owned.get(id)
-			const theirs = foreign.get(id)
-			if (mine) {
-				claims.push({
-					pageSlug: here.slug,
-					pageTitle: here.title,
-					revision: here.revision,
-					claim: mine,
-				})
-			} else if (theirs) {
-				claims.push({
-					pageSlug: theirs.page.slug as string,
-					pageTitle: theirs.page.title as string,
-					revision: theirs.page.revision as number,
-					claim: theirs.claim,
-				})
-			}
-		}
-		if (claims.length !== (c.claimIds as string[]).length) continue
+	for (const [index, c] of open.entries()) {
+		const claims = owners[index]
+		if (!claims) continue
 		shown.push({
 			id: c.id as string,
 			detectedAt: new Date(timeOf(c.detectedAt)).toISOString(),
 			resolution: c.resolution as string,
 			...(typeof c.note === "string" ? { note: c.note } : {}),
-			claims,
+			claims: claims.map(({ page, claim }) => ({
+				pageSlug: page.slug as string,
+				pageTitle: page.title as string,
+				revision: page.revision as number,
+				claim,
+			})),
 		})
 	}
 	return { items: shown.slice(0, limit), hasMore: shown.length > limit }
@@ -447,6 +402,8 @@ export async function getWikiEntityOverview(
 		params.scope,
 		params.scopeRef,
 		params.governance,
+		undefined,
+		{ rawContradictions: true },
 	)
 	if (!view) return undefined
 

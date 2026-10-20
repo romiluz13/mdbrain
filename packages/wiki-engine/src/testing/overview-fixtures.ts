@@ -145,6 +145,10 @@ export function contradiction(
 	}
 }
 
+// Page-qualified claim references, as a provenance record stores them.
+export const refs = (...pairs: Array<[string, string]>) =>
+	pairs.map(([pageSlug, claimId]) => ({ pageSlug, claimId }))
+
 export function revision(
 	pageSlug: string,
 	number: number,

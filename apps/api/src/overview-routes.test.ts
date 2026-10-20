@@ -248,6 +248,51 @@ describe("GET /v1/wiki/overview/*", () => {
 		expect(json.limits).toEqual(noLimits.limits)
 	})
 
+	it("marks the two claims of a contradiction with their own pages when both use one claim id", async () => {
+		wikiMocks.getWikiEntityOverview.mockResolvedValue({
+			...noLimits,
+			page: SAMPLE_PAGE,
+			contradictions: {
+				items: [
+					{
+						id: "contra-status-status",
+						detectedAt: "2026-10-01T00:00:00.000Z",
+						resolution: "unresolved",
+						claims: [
+							{
+								pageSlug: "hr/layoffs",
+								pageTitle: "Layoffs",
+								revision: 2,
+								claim: claimOf("status", "Layoffs are planned."),
+							},
+							{
+								pageSlug: "accounts/halvorsen",
+								pageTitle: "Halvorsen",
+								revision: 4,
+								claim: claimOf("status", "Headcount is stable."),
+							},
+						],
+					},
+				],
+				hasMore: false,
+			},
+		})
+
+		const res = await getOverview(`overview/accounts/halvorsen?${SCOPE_QUERY}`)
+		const json = (await res.json()) as {
+			contradictions: {
+				items: Array<{ claims: Array<{ claim: { marker?: string } }> }>
+			}
+		}
+
+		expect(
+			json.contradictions.items[0]?.claims.map((c) => c.claim.marker),
+		).toEqual([
+			"[[wiki:hr/layoffs#status@r2]]",
+			"[[wiki:accounts/halvorsen#status@r4]]",
+		])
+	})
+
 	it("asks the engine for the page named after overview/, in the request's scope", async () => {
 		wikiMocks.getWikiEntityOverview.mockResolvedValue({
 			...noLimits,

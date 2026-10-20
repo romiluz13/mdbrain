@@ -142,6 +142,68 @@ describeConformance("live MongoDB conformance", { timeout: 30_000 }, () => {
 		).rejects.toThrow(/Document failed validation/)
 	})
 
+	// The live validator must take page-qualified contradiction records (claimRefs)
+	// and keep taking the older ones that have none, and the real write path must
+	// leave the page references on the page the other claim lives on.
+	it("stores a page-qualified contradiction and accepts records with and without claimRefs (T325)", async () => {
+		const targetSlug = "concepts/t325-target"
+		const sourceSlug = "concepts/t325-source"
+		await createWikiPage(
+			handle,
+			pageInput({
+				slug: targetSlug,
+				claims: [{ id: "status", text: "The API uses REST endpoints" }],
+			}),
+		)
+		await createWikiPage(
+			handle,
+			pageInput({
+				slug: sourceSlug,
+				relationships: [
+					{
+						targetPageSlug: targetSlug,
+						targetTitle: "T325 target",
+						kind: "relates_to",
+					},
+				],
+			}),
+		)
+		await updateWikiPage(handle, sourceSlug, SCOPE, SCOPE_REF, {
+			claims: [{ id: "status", text: "The API does not use REST endpoints" }],
+		})
+
+		const pages = wikiPagesCollection(handle.db, handle.prefix)
+		const filter = { slug: targetSlug, scope: SCOPE, scopeRef: SCOPE_REF }
+		const stored = (await pages.findOne(filter)) as Document
+		expect(stored.contradictions).toHaveLength(1)
+		expect(stored.contradictions[0].claimRefs).toEqual([
+			{ pageSlug: sourceSlug, claimId: "status" },
+			{ pageSlug: targetSlug, claimId: "status" },
+		])
+
+		const legacy = {
+			id: "legacy",
+			claimIds: ["a", "b"],
+			detectedAt: new Date(),
+			resolution: "unresolved",
+		}
+		await pages.updateOne(filter, { $push: { contradictions: legacy } })
+		await expect(
+			pages.updateOne(filter, {
+				$push: {
+					contradictions: {
+						...legacy,
+						id: "malformed",
+						claimRefs: [
+							{ pageSlug: 1, claimId: "a" },
+							{ pageSlug: "x", claimId: "b" },
+						],
+					},
+				},
+			}),
+		).rejects.toThrow(/Document failed validation/)
+	})
+
 	it("duplicate slug in the same scope throws WikiDuplicateSlugError", async () => {
 		await createWikiPage(handle, pageInput())
 		await expect(createWikiPage(handle, pageInput())).rejects.toThrow(

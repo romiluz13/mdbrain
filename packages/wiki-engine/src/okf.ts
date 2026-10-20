@@ -48,6 +48,7 @@ import {
 	type WikiRelationshipInput,
 	type WikiQuestionInput,
 } from "./wiki-bridge.js"
+import { governContradictions } from "./wiki-contradiction-owners.js"
 import {
 	filterPagesByGovernance,
 	type GovernanceContext,
@@ -1079,10 +1080,17 @@ export async function exportOkfBundle(
 		opts.scopeRef,
 		opts.okfBundleId,
 	)
-	const pages = filterPagesByGovernance(
-		allPages as unknown as Document[],
-		opts.governance,
-	) as unknown as WikiPageView[]
+	// The pages are listed ungoverned and filtered here, so their contradictions
+	// are governed only once the readable pages are known.
+	const pages = (await governContradictions(
+		handle,
+		{
+			scope: opts.scope,
+			scopeRef: opts.scopeRef,
+			governance: opts.governance,
+		},
+		filterPagesByGovernance(allPages as unknown as Document[], opts.governance),
+	)) as unknown as WikiPageView[]
 	const allowedRoots = parseOkfAllowedRoots()
 	const safeOutDir = validateOkfPath(opts.outDir, allowedRoots)
 	const files: string[] = []
@@ -1133,6 +1141,7 @@ async function listAllWikiPages(
 			limit,
 			skip,
 			state: "all",
+			rawContradictions: true,
 		})
 		// Filter by okfBundleId if specified (listWikiPages doesn't filter it).
 		const filtered = okfBundleId
