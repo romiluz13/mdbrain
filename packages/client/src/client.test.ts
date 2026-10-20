@@ -1037,6 +1037,93 @@ describe("MdbrainClient public contract", () => {
 		expect(url.searchParams.get("agentId")).toBe("main")
 	})
 
+	it("cite resolves a marker with the request's scope, citedBy and agentId in the query", async () => {
+		const resolved = {
+			status: "resolved",
+			kind: "claim",
+			marker: "[[wiki:accounts/halvorsen#renewal@r2]]",
+			page: {
+				slug: "accounts/halvorsen",
+				title: "Halvorsen",
+				revision: 2,
+				revisionCreatedAt: "2026-10-02T09:00:00.000Z",
+			},
+			claim: { id: "renewal", text: "The renewal is at risk." },
+		}
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(resolved))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		const out = await client.cite({
+			marker: "[[event:evt 1&2]]",
+			citedBy: "[[wiki:accounts/halvorsen#renewal@r2]]",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: "main",
+		})
+
+		expect(out).toEqual(resolved)
+		const [href, init] = fetchMock.mock.calls[0] ?? []
+		const url = new URL(String(href))
+		expect(url.pathname).toBe("/v1/cite")
+		expect(url.searchParams.get("marker")).toBe("[[event:evt 1&2]]")
+		expect(url.searchParams.get("citedBy")).toBe(
+			"[[wiki:accounts/halvorsen#renewal@r2]]",
+		)
+		expect(url.searchParams.get("scope")).toBe("workspace")
+		expect(url.searchParams.get("scopeRef")).toBe("ws-1")
+		expect(url.searchParams.get("agentId")).toBe("main")
+		expect(init?.method ?? "GET").toBe("GET")
+	})
+
+	it("cite leaves citedBy and agentId out when they are not given", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json({ status: "resolved" }))
+		vi.stubGlobal("fetch", fetchMock)
+
+		await new MdbrainClient().cite({
+			marker: "[[wiki:a#b@r1]]",
+			scope: "workspace",
+			scopeRef: "ws-1",
+		})
+
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]))
+		expect([...url.searchParams.keys()].sort()).toEqual([
+			"marker",
+			"scope",
+			"scopeRef",
+		])
+	})
+
+	it("cite surfaces an unresolved marker as a client error carrying the API's code and no content", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			Response.json(
+				{
+					error: {
+						code: "CITATION_NOT_FOUND",
+						message: "citation not found",
+					},
+				},
+				{ status: 404 },
+			),
+		)
+		vi.stubGlobal("fetch", fetchMock)
+
+		await expect(
+			new MdbrainClient().cite({
+				marker: "[[wiki:a#b@r1]]",
+				scope: "workspace",
+				scopeRef: "ws-1",
+			}),
+		).rejects.toMatchObject({
+			status: 404,
+			envelope: { code: "CITATION_NOT_FOUND" },
+		})
+	})
+
 	it("wikiGet accepts a runtime format of any JSON value for MCP-style callers", async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()

@@ -1,4 +1,10 @@
 export { MdbrainClient, MdbrainClientError } from "./client.js"
+export {
+	type CitationMarker,
+	type CitationMarkerParse,
+	formatCitationMarker,
+	parseCitationMarker,
+} from "./citation.js"
 export type {
 	MdbrainActiveSlateItem,
 	MdbrainActiveSlateResponse,
@@ -17,6 +23,10 @@ export type {
 	MdbrainAddInput,
 	MdbrainActiveSlateInput,
 	MdbrainActorRole,
+	MdbrainCitationClaimResponse,
+	MdbrainCitationEventResponse,
+	MdbrainCitationResponse,
+	MdbrainCiteInput,
 	MdbrainConversationRecallCitation,
 	MdbrainConversationRecallInput,
 	MdbrainConversationRecallResponse,
@@ -55,6 +65,7 @@ export type {
 	MdbrainStableHandle,
 	MdbrainWikiClaim,
 	MdbrainWikiClaimEvidence,
+	MdbrainWikiClaimEvidenceView,
 	MdbrainWikiClaimInput,
 	MdbrainWikiPageCreateInput,
 	MdbrainWikiPageEditor,

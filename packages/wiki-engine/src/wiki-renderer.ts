@@ -29,7 +29,8 @@ export function renderWikiPageMarkdown(view: WikiPageView): string {
 				typeof claim.confidence === "number"
 					? ` (conf: ${claim.confidence})`
 					: ""
-			lines.push(`- ${claim.text}${status}${conf}`)
+			const marker = typeof claim.marker === "string" ? ` ${claim.marker}` : ""
+			lines.push(`- ${claim.text}${status}${conf}${marker}`)
 		}
 		lines.push("")
 	}
@@ -123,7 +124,11 @@ export function renderWikiPageHtml(view: WikiPageView): string {
 		parts.push(`<h2>Claims</h2><ul>`)
 		for (const claim of view.claims as Array<Record<string, unknown>>) {
 			const status = claim.status ? ` <em>[${esc(claim.status)}]</em>` : ""
-			parts.push(`<li>${esc(claim.text)}${status}</li>`)
+			const marker =
+				typeof claim.marker === "string"
+					? ` <code>${esc(claim.marker)}</code>`
+					: ""
+			parts.push(`<li>${esc(claim.text)}${status}${marker}</li>`)
 		}
 		parts.push(`</ul>`)
 	}

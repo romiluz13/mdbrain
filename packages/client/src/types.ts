@@ -896,13 +896,22 @@ export type MdbrainWikiClaimEvidence = {
 	note?: string
 }
 
-/** A governed claim on a wiki page, as returned by the API. */
+/** Evidence as returned by the API: event evidence also carries the
+ *  `[[event:EVENT_ID]]` marker. The marker is response-only. */
+export type MdbrainWikiClaimEvidenceView = MdbrainWikiClaimEvidence & {
+	marker?: string
+}
+
+/** A governed claim on a wiki page, as returned by the API. `marker` is the
+ *  claim's `[[wiki:SLUG#CLAIM_ID@rREVISION]]` citation marker at the revision
+ *  the response shows; it is response-only. */
 export type MdbrainWikiClaim = {
 	id: string
 	text: string
 	status: "active" | "superseded" | "contradicted" | "disputed"
 	confidence: number
-	evidence: MdbrainWikiClaimEvidence[]
+	marker?: string
+	evidence: MdbrainWikiClaimEvidenceView[]
 	derivedFrom: string[]
 	supersedesClaimId?: string
 	sourceMemId?: string
@@ -1052,3 +1061,48 @@ export type MdbrainWikiRevisionListResponse = {
 export type MdbrainWikiRevisionRecord = MdbrainWikiRevisionSummary & {
 	snapshot: Record<string, unknown>
 }
+
+/** Input for GET /v1/cite. Scope and agent are the caller's, never read from
+ *  the marker. An event marker needs `citedBy`, the wiki marker of a claim
+ *  whose evidence cites the event. */
+export type MdbrainCiteInput = {
+	marker: string
+	citedBy?: string
+	scope: string
+	scopeRef: string
+	agentId?: string
+}
+
+/** A wiki marker resolved: the claim as stored at the marker's revision. */
+export type MdbrainCitationClaimResponse = {
+	status: "resolved"
+	kind: "claim"
+	marker: string
+	page: {
+		slug: string
+		title?: string
+		revision: number
+		revisionCreatedAt: string
+	}
+	claim: MdbrainWikiClaim
+}
+
+/** An event marker resolved through governed recall in the context of a citing claim. */
+export type MdbrainCitationEventResponse = {
+	status: "resolved"
+	kind: "event"
+	marker: string
+	citedBy: string
+	event: {
+		eventId: string
+		canonicalId: string
+		text?: string
+		timestamp?: string
+		scope: string
+		scopeRef: string
+	}
+}
+
+export type MdbrainCitationResponse =
+	| MdbrainCitationClaimResponse
+	| MdbrainCitationEventResponse

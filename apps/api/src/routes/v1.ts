@@ -54,6 +54,14 @@ import {
 	type WikiPageInput,
 	type GovernanceContext,
 } from "@mdbrain/wiki-engine"
+import { parseCitationMarker } from "@mdbrain/client"
+import {
+	CitationRecallError,
+	resolveClaimMarker,
+	resolveEventMarker,
+	withPageMarkers,
+	withRevisionMarkers,
+} from "../lib/citations.js"
 import { jsonError } from "../lib/errors.js"
 import {
 	approvePendingWikiPromotion,
@@ -2295,7 +2303,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				)
 				return created
 			})
-			return c.json(page, 201)
+			return c.json(withPageMarkers(page), 201)
 		} catch (err) {
 			if (err instanceof WikiDuplicateSlugError) {
 				return jsonError(c, 409, "DUPLICATE_SLUG", err.message)
@@ -2335,7 +2343,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				skip: Number.isFinite(skip) ? skip : undefined,
 				governance: buildWikiGovContext(c, scope, scopeRef),
 			})
-			return c.json(result)
+			return c.json({ ...result, pages: result.pages.map(withPageMarkers) })
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_LIST_FAILED", message)
@@ -2376,7 +2384,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				listUnresolvedContradictions(handle, scope, scopeRef, governance),
 			])
 			return c.json({
-				pages: pagesResult.pages,
+				pages: pagesResult.pages.map(withPageMarkers),
 				total: pagesResult.total,
 				unresolvedContradictions: contradictions,
 			})
@@ -2462,7 +2470,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					"WIKI_REVISION_NOT_FOUND",
 					`revision ${revision} of "${slug}" not found`,
 				)
-			return c.json(record)
+			return c.json(withRevisionMarkers(record))
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_REVISIONS_FAILED", message)
@@ -2501,12 +2509,14 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			// through the SAME governance context as the page itself, so a
 			// marker referencing a page the caller can't read never leaks
 			// content — see wiki-transclusion.ts.
-			const resolvedPage = transclude
-				? {
-						...page,
-						body: await resolveTransclusions(handle, page.body, governance),
-					}
-				: page
+			const resolvedPage = withPageMarkers(
+				transclude
+					? {
+							...page,
+							body: await resolveTransclusions(handle, page.body, governance),
+						}
+					: page,
+			)
 			if (format === "html") {
 				return c.html(renderHtml(resolvedPage))
 			}
@@ -2637,7 +2647,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					"WIKI_NOT_FOUND",
 					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
 				)
-			return c.json(updated)
+			return c.json(withPageMarkers(updated))
 		} catch (err) {
 			if (err instanceof WikiRevisionConflictError) {
 				return jsonError(c, 409, "REVISION_CONFLICT", err.message)
@@ -2871,7 +2881,13 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				minScore: typeof body.minScore === "number" ? body.minScore : undefined,
 				governance: buildWikiGovContext(c, scope, scopeRef),
 			})
-			return c.json(result)
+			return c.json({
+				...result,
+				results: result.results.map((hit) => ({
+					...hit,
+					page: withPageMarkers(hit.page),
+				})),
+			})
 		} catch (err) {
 			// Search subsystem outage (mongot down, index missing) is NOT a
 			// query failure — surface it as 503 so callers retry instead of
@@ -2886,6 +2902,96 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			}
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_SEARCH_FAILED", message)
+		}
+	})
+
+	// Citation resolver: GET /v1/cite?marker=...  Scope comes from the request
+	// like every other read; the marker carries none. A revision that is missing,
+	// lacks the claim, or is hidden by its own permissions all answer the same
+	// 404 without content. An event marker also needs citedBy, the claim marker
+	// that cites it (decision D9).
+	v1.get("/cite", async (c) => {
+		const parsed = parseCitationMarker(c.req.query("marker") ?? "")
+		if (!parsed.ok) return jsonError(c, 400, "INVALID_MARKER", parsed.reason)
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef are required",
+			)
+		try {
+			const request = {
+				agentId: authorizedScope.agentId,
+				scope,
+				scopeRef,
+				governance: buildWikiGovContext(c, scope, scopeRef),
+			}
+			if (parsed.marker.kind === "wiki") {
+				const handle = await readWikiDbHandle(authorizedScope.agentId)
+				const resolved = await resolveClaimMarker(
+					handle,
+					parsed.marker,
+					request,
+				)
+				return resolved
+					? c.json(resolved)
+					: jsonError(c, 404, "CITATION_NOT_FOUND", "citation not found")
+			}
+			const citedBy = parseCitationMarker(c.req.query("citedBy") ?? "")
+			if (!citedBy.ok)
+				return jsonError(c, 400, "INVALID_MARKER", `citedBy: ${citedBy.reason}`)
+			if (citedBy.marker.kind !== "wiki")
+				return jsonError(
+					c,
+					400,
+					"INVALID_MARKER",
+					"citedBy must be the wiki marker of the claim that cites the event",
+				)
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
+			const outcome = await resolveEventMarker(
+				handle,
+				parsed.marker,
+				citedBy.marker,
+				request,
+				(params) => mdbrainBridgeSearch(params),
+			)
+			if (outcome.outcome === "resolved") return c.json(outcome.body)
+			if (outcome.outcome === "claim-not-found")
+				return jsonError(c, 404, "CITATION_NOT_FOUND", "citation not found")
+			if (outcome.outcome === "degraded") {
+				if (outcome.retryAfterMs !== undefined)
+					c.header(
+						"Retry-After",
+						String(Math.max(1, Math.ceil(outcome.retryAfterMs / 1000))),
+					)
+				return jsonError(
+					c,
+					503,
+					"CITATION_RECALL_DEGRADED",
+					"recall was throttled, so the source could not be checked; retry",
+					{
+						retryable: true,
+						...(outcome.retryAfterMs !== undefined
+							? { retryAfterMs: outcome.retryAfterMs }
+							: {}),
+					},
+				)
+			}
+			return jsonError(
+				c,
+				404,
+				"CITATION_UNRESOLVED",
+				"the source could not be confirmed through governed recall",
+			)
+		} catch (err) {
+			if (err instanceof CitationRecallError)
+				return bridgeJsonError(c, "CITATION_RECALL_FAILED", err.original)
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "CITATION_FAILED", message)
 		}
 	})
 

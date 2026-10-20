@@ -3,6 +3,8 @@ import type { MdbrainStatusResponse } from "../src/index.js"
 // @ts-expect-error Probe responses are not part of the public client contract.
 import type { MdbrainProbeEmbeddingResponse } from "../src/index.js"
 import type {
+	MdbrainCitationResponse,
+	MdbrainWikiClaim,
 	MdbrainWikiClaimInput,
 	MdbrainWikiPageCreateInput,
 	MdbrainWikiPageUpdateInput,
@@ -63,3 +65,27 @@ const relationship: MdbrainWikiRelationshipInput = {
 	kind: "relates_to",
 }
 void relationship
+
+declare const cited: MdbrainCitationResponse
+// @ts-expect-error An event citation has no claim; narrow on kind first.
+void cited.claim
+if (cited.kind === "claim") {
+	const claimText: string = cited.claim.text
+	const claimMarker: string | undefined = cited.claim.marker
+	void [claimText, claimMarker]
+} else {
+	const eventText: string | undefined = cited.event.text
+	void eventText
+}
+
+declare const viewed: MdbrainWikiClaim
+const evidenceMarker: string | undefined = viewed.evidence[0]?.marker
+void evidenceMarker
+
+const inputEvidence: MdbrainWikiClaimInput = {
+	id: "clm_marker",
+	text: "A marker is a response field.",
+	// @ts-expect-error Evidence markers are response-only; input evidence has no marker.
+	evidence: [{ kind: "event", sourceId: "evt_1", marker: "[[event:evt_1]]" }],
+}
+void inputEvidence

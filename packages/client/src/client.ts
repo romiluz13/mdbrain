@@ -1,6 +1,8 @@
 import type {
 	MdbrainAddInput,
 	MdbrainActiveSlateInput,
+	MdbrainCiteInput,
+	MdbrainCitationResponse,
 	MdbrainConversationRecallInput,
 	MdbrainConversationRecallResponse,
 	MdbrainContextBundleInput,
@@ -1078,6 +1080,27 @@ export class MdbrainClient {
 		return apiGet<MdbrainWikiRevisionRecord>(
 			this._opts,
 			`/v1/wiki/revisions/${input.revision}?${qs}`,
+			requestOptions,
+		)
+	}
+
+	/** Resolves a citation marker (`[[wiki:SLUG#CLAIM_ID@rN]]` or
+	 *  `[[event:EVENT_ID]]`) to what it names. Unresolved, hidden and missing
+	 *  markers reject with a MdbrainClientError that carries no content. */
+	async cite(
+		input: MdbrainCiteInput,
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainCitationResponse> {
+		const qs = new URLSearchParams({
+			marker: input.marker,
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.citedBy) qs.set("citedBy", input.citedBy)
+		if (input.agentId) qs.set("agentId", input.agentId)
+		return apiGet<MdbrainCitationResponse>(
+			this._opts,
+			`/v1/cite?${qs}`,
 			requestOptions,
 		)
 	}

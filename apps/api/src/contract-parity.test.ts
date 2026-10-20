@@ -346,4 +346,28 @@ describe("wiki contract matrix (runtime ↔ spec ↔ MCP)", () => {
 			"okfBundleId",
 		])
 	})
+
+	it("cite: spec documents the marker query, the request-owned scope and every outcome", () => {
+		const op = specOperation("/v1/cite", "get")
+		const params = op.parameters ?? []
+		const byName = (name: string) => params.find((p) => p.name === name)
+		for (const required of ["marker", "scope", "scopeRef"]) {
+			expect(byName(required), required).toMatchObject({
+				in: "query",
+				required: true,
+			})
+		}
+		for (const optional of ["citedBy", "agentId"]) {
+			expect(byName(optional), optional).toMatchObject({ in: "query" })
+			expect(byName(optional)).not.toHaveProperty("required", true)
+		}
+		for (const status of ["200", "400", "403", "404", "503"]) {
+			expect(op.responses?.[status], status).toBeDefined()
+		}
+		const tool = mcpTool("mdbrain_cite")
+		expect(tool.inputSchema.required).toEqual(["marker", "scope", "scopeRef"])
+		for (const name of ["marker", "citedBy", "scope", "scopeRef", "agentId"]) {
+			expect(tool.inputSchema.properties[name], name).toBeDefined()
+		}
+	})
 })

@@ -984,6 +984,30 @@ export const toolList = [
 			required: ["scope", "scopeRef"],
 		},
 	},
+	{
+		name: "mdbrain_cite",
+		description:
+			"Resolve a citation marker to what it names. Wiki claims show markers like [[wiki:SLUG#CLAIM_ID@rREVISION]]: this returns the claim text and evidence as stored at exactly that revision, even after later edits. An event marker [[event:EVENT_ID]] is confirmed only in the context of a citing claim: pass that claim's wiki marker as citedBy. Scope comes from scope/scopeRef, never from the marker. A missing, hidden or unconfirmed citation returns a coded error (CITATION_NOT_FOUND, CITATION_UNRESOLVED) with no content; CITATION_RECALL_DEGRADED means retry.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				marker: {
+					type: "string",
+					description:
+						"[[wiki:SLUG#CLAIM_ID@rREVISION]] or [[event:EVENT_ID]], reserved characters percent-encoded.",
+				},
+				citedBy: {
+					type: "string",
+					description:
+						"Required for an event marker: the wiki marker of the claim that cites the event.",
+				},
+				scope: { type: "string" },
+				scopeRef: { type: "string" },
+				agentId: { type: "string" },
+			},
+			required: ["marker", "scope", "scopeRef"],
+		},
+	},
 ] as const
 
 const server = new Server(
@@ -1688,6 +1712,16 @@ export async function handleToolCall(
 				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
 				kind: typeof args.kind === "string" ? args.kind : undefined,
 				limit: typeof args.limit === "number" ? args.limit : undefined,
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrain_cite") {
+			const out = await mdbrain.cite({
+				marker: typeof args.marker === "string" ? args.marker : "",
+				citedBy: typeof args.citedBy === "string" ? args.citedBy : undefined,
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }

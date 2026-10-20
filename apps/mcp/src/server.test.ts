@@ -917,6 +917,109 @@ describe("wiki MCP tools", () => {
 		})
 	})
 
+	it("cite is advertised with the request-owned scope as required inputs", () => {
+		const tool = toolList.find((entry) => entry.name === "mdbrain_cite")
+		const schema = tool?.inputSchema as SchemaNode | undefined
+
+		expect(schema?.required).toEqual(["marker", "scope", "scopeRef"])
+		expect(Object.keys(schema?.properties ?? {}).sort()).toEqual([
+			"agentId",
+			"citedBy",
+			"marker",
+			"scope",
+			"scopeRef",
+		])
+		expect(tool?.description).toContain("[[wiki:SLUG#CLAIM_ID@rREVISION]]")
+		expect(tool?.description).toContain("[[event:EVENT_ID]]")
+	})
+
+	it("cite forwards the marker with the caller's scope and returns the resolution as JSON text", async () => {
+		const resolved = {
+			status: "resolved",
+			kind: "claim",
+			marker: "[[wiki:accounts/halvorsen#renewal@r1]]",
+			page: { slug: "accounts/halvorsen", revision: 1 },
+			claim: { id: "renewal", text: "The renewal is at risk." },
+		}
+		const cite = vi.fn().mockResolvedValue(resolved)
+
+		const out = await handleToolCall(
+			"mdbrain_cite",
+			{
+				marker: "[[wiki:accounts/halvorsen#renewal@r1]]",
+				citedBy: "[[wiki:accounts/halvorsen#renewal@r1]]",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				agentId: "main",
+			},
+			{ cite } as any,
+		)
+
+		expect(cite).toHaveBeenCalledWith({
+			marker: "[[wiki:accounts/halvorsen#renewal@r1]]",
+			citedBy: "[[wiki:accounts/halvorsen#renewal@r1]]",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: "main",
+		})
+		expect(parseTextPayload(out)).toEqual(resolved)
+		expect("isError" in out ? out.isError : undefined).toBeUndefined()
+	})
+
+	it("cite passes an unresolved citation through as a coded error with no content", async () => {
+		const cite = vi.fn().mockRejectedValue(
+			new MdbrainClientError(
+				404,
+				JSON.stringify({
+					error: {
+						code: "CITATION_NOT_FOUND",
+						message: "citation not found",
+					},
+				}),
+			),
+		)
+
+		const out = await handleToolCall(
+			"mdbrain_cite",
+			{ marker: "[[wiki:a#b@r1]]", scope: "workspace", scopeRef: "ws-1" },
+			{ cite } as any,
+		)
+
+		expect("isError" in out ? out.isError : undefined).toBe(true)
+		expect(parseTextPayload(out)).toEqual({
+			error: {
+				code: "CITATION_NOT_FOUND",
+				message: "citation not found",
+				status: 404,
+			},
+		})
+	})
+
+	it("wiki_get returns the page JSON with the markers the API put on its claims", async () => {
+		const page = {
+			slug: "accounts/halvorsen",
+			claims: [
+				{
+					id: "renewal",
+					text: "The renewal is at risk.",
+					marker: "[[wiki:accounts/halvorsen#renewal@r2]]",
+					evidence: [
+						{ kind: "event", sourceId: "evt-1", marker: "[[event:evt-1]]" },
+					],
+				},
+			],
+		}
+		const wikiGet = vi.fn().mockResolvedValue(page)
+
+		const out = await handleToolCall(
+			"mdbrain_wiki_get",
+			{ slug: "accounts/halvorsen", scope: "workspace", scopeRef: "ws-1" },
+			{ wikiGet } as any,
+		)
+
+		expect(parseTextPayload(out)).toEqual(page)
+	})
+
 	it("returns an error on unknown wiki tool", async () => {
 		const out = await handleToolCall("mdbrain_wiki_unknown", {}, {} as any)
 		expect("isError" in out ? out.isError : undefined).toBe(true)
