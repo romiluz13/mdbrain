@@ -8,9 +8,17 @@
 // run manifest. The run loader is shaped manifest -> ordered event ids ->
 // cite each; until a manifest route exists it reports
 // RUN_MANIFEST_NOT_EXPOSED instead of inventing data.
+//
+// Production path: the /demo page runs these loaders in the browser against
+// the same-origin /api/demo route, whose handler (handleDemoRead in
+// ./proxy.ts) injects the principal and the read key. A proxy-shaped
+// upstream therefore carries the /api/demo prefix, a placeholder key and no
+// scope or scopeRef; the live check exercises the same handler in-process.
+// The read seam itself lives in ./reads.ts: MdbrainClient always sends the
+// principal its API demands, which the proxy refuses, so proxy-shaped
+// upstreams read through a principal-free reader instead.
 
 import {
-	MdbrainClient,
 	MdbrainClientError,
 	formatCitationMarker,
 	type MdbrainCitationEventResponse,
@@ -24,16 +32,22 @@ import {
 	type MdbrainWikiPageView,
 	type MdbrainWikiRevisionSummary,
 } from "@mdbrain/client"
+import { readsFor, type DemoReads } from "./reads.js"
 import { mapWithStatus, type DataState } from "./states.js"
 
 /** Where the loaders read from. `getRunManifest` and `pinnedPage` are the
  * seams for the reads that have no API route yet (D19); the live check and
  * the future manifest wiring inject them. */
 export interface DemoDataUpstream {
+	/** The API base the client reads: the direct API in tests, or the
+	 * same-origin /api/demo route in production and the live check. */
 	apiBaseUrl: string
 	readKey: string
-	scope: string
-	scopeRef: string
+	/** The principal, when the caller owns it (direct API reads). Reading
+	 * through the demo proxy these stay unset: the proxy injects the scope
+	 * and scopeRef itself and refuses caller-set ones. */
+	scope?: string
+	scopeRef?: string
 	getRunManifest?: () => Promise<RunManifestView | null>
 	pinnedPage?: PinnedPageRef
 }
@@ -54,15 +68,6 @@ export interface PinnedPageRef {
 	slug: string
 	revision: number
 	claims: ReadonlyArray<{ id: string }>
-}
-
-function clientFor(upstream: DemoDataUpstream): MdbrainClient {
-	return new MdbrainClient({
-		baseUrl: upstream.apiBaseUrl,
-		apiKey: upstream.readKey,
-		maxRetries: 1,
-		defaultDeadlineMs: 15_000,
-	})
 }
 
 function errorState(error: unknown, secret: string): DataState<never> {
@@ -138,14 +143,12 @@ export type WikiMapView = {
 export async function loadWikiMap(
 	upstream: DemoDataUpstream,
 ): Promise<DataState<WikiMapView>> {
-	const client = clientFor(upstream)
+	const reads = readsFor(upstream)
 	try {
 		const pages: MdbrainWikiPageView[] = []
 		let total = 0
 		for (let call = 0; call < MAX_LIST_CALLS; call++) {
-			const list = await client.wikiList({
-				scope: upstream.scope,
-				scopeRef: upstream.scopeRef,
+			const list = await reads.wikiList({
 				limit: LIST_PAGE_SIZE,
 				skip: pages.length,
 			})
@@ -160,9 +163,7 @@ export async function loadWikiMap(
 		}
 		let unresolvedContradictionCount = 0
 		try {
-			const lint = (await client.wikiLint({
-				scope: upstream.scope,
-				scopeRef: upstream.scopeRef,
+			const lint = (await reads.wikiLint({
 				limit: LIST_PAGE_SIZE,
 			})) as LintEnvelope | null
 			if (
@@ -236,13 +237,9 @@ export async function loadEntityOverview(
 	slug: string,
 	upstream: DemoDataUpstream,
 ): Promise<DataState<EntityOverviewView>> {
-	const client = clientFor(upstream)
+	const reads = readsFor(upstream)
 	try {
-		const response = await client.overview({
-			slug,
-			scope: upstream.scope,
-			scopeRef: upstream.scopeRef,
-		})
+		const response = await reads.overview(slug)
 		const page = response.page
 		return mapWithStatus(
 			{
@@ -296,11 +293,9 @@ export type ContradictionsView = {
 export async function loadContradictions(
 	upstream: DemoDataUpstream,
 ): Promise<DataState<ContradictionsView>> {
-	const client = clientFor(upstream)
+	const reads = readsFor(upstream)
 	try {
-		const lint = (await client.wikiLint({
-			scope: upstream.scope,
-			scopeRef: upstream.scopeRef,
+		const lint = (await reads.wikiLint({
 			limit: LIST_PAGE_SIZE,
 		})) as LintEnvelope
 		const envelope = lint !== null && typeof lint === "object" ? lint : {}
@@ -338,16 +333,14 @@ export async function loadWikiChanges(
 	upstream: DemoDataUpstream,
 	since: string | Date,
 ): Promise<DataState<ChangesView>> {
-	const client = clientFor(upstream)
+	const reads = readsFor(upstream)
 	try {
 		let changes: MdbrainWikiChange[] = []
 		let window: { since: string; until: string; settled: boolean } | undefined
 		let hasMore = false
 		let cursor: string | undefined
 		for (let call = 0; call < MAX_CHANGE_CALLS; call++) {
-			const response = await client.changes({
-				scope: upstream.scope,
-				scopeRef: upstream.scopeRef,
+			const response = await reads.changes({
 				since,
 				...(cursor !== undefined ? { cursor } : {}),
 			})
@@ -401,7 +394,7 @@ export type RunSourcesView = {
 }
 
 async function resolveCitedBy(
-	client: MdbrainClient,
+	reads: DemoReads,
 	upstream: DemoDataUpstream,
 ): Promise<string> {
 	if (upstream.pinnedPage) {
@@ -415,20 +408,12 @@ async function resolveCitedBy(
 			})
 		}
 	}
-	const list = await client.wikiList({
-		scope: upstream.scope,
-		scopeRef: upstream.scopeRef,
-		limit: 1,
-	})
+	const list = await reads.wikiList({ limit: 1 })
 	const listed = list.pages[0]
 	if (!listed) {
 		throw noCitingPageError()
 	}
-	const page = await client.wikiGet({
-		slug: listed.slug,
-		scope: upstream.scope,
-		scopeRef: upstream.scopeRef,
-	})
+	const page = await reads.wikiGet(listed.slug)
 	const claim = page.claims[0]
 	if (!claim) {
 		throw noCitingPageError()
@@ -464,7 +449,7 @@ function noCitingPageError(): MdbrainClientError {
 export async function loadRunSources(
 	upstream: DemoDataUpstream,
 ): Promise<DataState<RunSourcesView>> {
-	const client = clientFor(upstream)
+	const reads = readsFor(upstream)
 	const manifest = upstream.getRunManifest
 		? await upstream.getRunManifest()
 		: null
@@ -487,17 +472,17 @@ export async function loadRunSources(
 		return { kind: "empty" }
 	}
 	try {
-		const citedBy = await resolveCitedBy(client, upstream)
+		const citedBy = await resolveCitedBy(reads, upstream)
 		const events: RunEventView[] = []
 		const unresolvedEventIds: string[] = []
 		for (const eventId of eventIds) {
 			try {
-				const response: MdbrainCitationResponse = await client.cite({
+				const response: MdbrainCitationResponse = await reads.cite({
 					marker: formatCitationMarker({ kind: "event", eventId }),
 					citedBy,
-					scope: upstream.scope,
-					scopeRef: upstream.scopeRef,
-					agentId: upstream.scopeRef,
+					...(upstream.scopeRef !== undefined
+						? { agentId: upstream.scopeRef }
+						: {}),
 				})
 				if (response.kind !== "event") {
 					unresolvedEventIds.push(eventId)

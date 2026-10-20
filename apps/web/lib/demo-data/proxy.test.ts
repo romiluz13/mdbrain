@@ -147,6 +147,128 @@ describe("allowlist forwarding", () => {
 	})
 })
 
+describe("hierarchical and reserved slugs", () => {
+	it("forwards a multi-segment page slug in the raw-slash form", async () => {
+		const upstream = stubUpstream(() => json({ slug: "teams/support" }))
+		const response = await handleDemoRead(
+			request("/api/demo/v1/wiki/teams/support"),
+			env,
+			upstream.fetch,
+		)
+		expect(response.status).toBe(200)
+		expect(upstream.calls[0].url.pathname).toBe("/v1/wiki/teams%2Fsupport")
+		expect(upstream.calls[0].url.searchParams.get("scopeRef")).toBe(
+			"demo-run-2",
+		)
+	})
+
+	it("forwards a multi-segment page slug in the SDK's encoded form", async () => {
+		const upstream = stubUpstream(() => json({ slug: "teams/support" }))
+		const response = await handleDemoRead(
+			request("/api/demo/v1/wiki/teams%2Fsupport"),
+			env,
+			upstream.fetch,
+		)
+		expect(response.status).toBe(200)
+		expect(upstream.calls[0].url.pathname).toBe("/v1/wiki/teams%2Fsupport")
+	})
+
+	it("forwards a multi-segment overview slug in both forms", async () => {
+		for (const path of [
+			"/api/demo/v1/wiki/overview/teams/support",
+			"/api/demo/v1/wiki/overview/teams%2Fsupport",
+		]) {
+			const upstream = stubUpstream(() => json({ page: {} }))
+			const response = await handleDemoRead(request(path), env, upstream.fetch)
+			expect(response.status, path).toBe(200)
+			expect(upstream.calls[0].url.pathname, path).toBe(
+				"/v1/wiki/overview/teams%2Fsupport",
+			)
+		}
+	})
+
+	it("reads a page whose slug starts with overview/ through the SDK form", async () => {
+		const upstream = stubUpstream(() => json({ slug: "overview/old-page" }))
+		const response = await handleDemoRead(
+			request("/api/demo/v1/wiki/overview%2Fold-page"),
+			env,
+			upstream.fetch,
+		)
+		expect(response.status).toBe(200)
+		expect(upstream.calls[0].url.pathname).toBe("/v1/wiki/overview%2Fold-page")
+	})
+
+	it("reads a page whose slug starts with changes/ in both forms", async () => {
+		for (const path of [
+			"/api/demo/v1/wiki/changes/old-page",
+			"/api/demo/v1/wiki/changes%2Fold-page",
+		]) {
+			const upstream = stubUpstream(() => json({ slug: "changes/old-page" }))
+			const response = await handleDemoRead(request(path), env, upstream.fetch)
+			expect(response.status, path).toBe(200)
+			expect(upstream.calls[0].url.pathname, path).toBe(
+				"/v1/wiki/changes%2Fold-page",
+			)
+		}
+	})
+
+	it("reads a page whose slug starts with a reserved segment through the SDK form", async () => {
+		for (const encoded of [
+			"lint%2Fnotes",
+			"revisions%2Fnotes",
+			"okf-export%2Fsheet",
+		]) {
+			const upstream = stubUpstream(() => json({}))
+			const response = await handleDemoRead(
+				request(`/api/demo/v1/wiki/${encoded}`),
+				env,
+				upstream.fetch,
+			)
+			expect(response.status, encoded).toBe(200)
+			expect(upstream.calls[0].url.pathname, encoded).toBe(
+				`/v1/wiki/${encoded}`,
+			)
+		}
+	})
+
+	it("still refuses the revisions and okf sub-routes at any depth", async () => {
+		const upstream = stubUpstream()
+		const refused = [
+			"/api/demo/v1/wiki/revisions",
+			"/api/demo/v1/wiki/revisions/5",
+			"/api/demo/v1/wiki/okf-export",
+			"/api/demo/v1/wiki/okf-import/x",
+			"/api/demo/v1/wiki/overview",
+		]
+		for (const path of refused) {
+			const response = await handleDemoRead(request(path), env, upstream.fetch)
+			expect(response.status, path).toBe(404)
+			expect(await bodyOf(response)).toMatchObject({
+				error: { code: "UNKNOWN_OPERATION" },
+			})
+		}
+		expect(upstream.calls).toHaveLength(0)
+	})
+
+	it("refuses unsafe segments inside a multi-segment slug", async () => {
+		const upstream = stubUpstream()
+		const refused = [
+			"/api/demo/v1/wiki/teams//support",
+			"/api/demo/v1/wiki/teams%2F.",
+			"/api/demo/v1/wiki/teams%2F..%2Fadmin",
+			"/api/demo/v1/wiki/teams%5cadmin",
+			"/api/demo/v1/wiki/teams%2Fslug%00",
+		]
+		for (const path of refused) {
+			const response = await handleDemoRead(request(path), env, upstream.fetch)
+			expect(response.status, path).toBe(400)
+			expect(await bodyOf(response)).toMatchObject({
+				error: { code: "UNSAFE_PATH" },
+			})
+		}
+		expect(upstream.calls).toHaveLength(0)
+	})
+})
 describe("refusals", () => {
 	it("refuses non-GET methods", async () => {
 		const upstream = stubUpstream()
@@ -275,14 +397,16 @@ describe("refusals", () => {
 		expect(upstream.calls).toHaveLength(0)
 	})
 
-	it("refuses path traversal and encoded slashes", async () => {
+	it("refuses path traversal and encoded traversal in slugs", async () => {
 		const upstream = stubUpstream()
 		// The URL parser normalizes ".", "..", "%2e" and "%2e%2e" dot segments
 		// away before any handler sees them, so the forms that can actually
-		// arrive are the ones that decode to traversal or slashes.
+		// arrive are the ones that decode to traversal or unsafe segments. An
+		// encoded separator alone is the SDK's own form for a hierarchical
+		// slug; what stays refused is what the slug decodes to.
 		const refused = [
 			"/api/demo/v1/wiki/..%2f..%2fadmin",
-			"/api/demo/v1/wiki/overview/team%2Fpage",
+			"/api/demo/v1/wiki/overview/team%2F..%2Fadmin",
 			"/api/demo/v1/wiki/overview/%2e%2e%2fadmin",
 			"/api/demo/v1/wiki/slug%00",
 		]

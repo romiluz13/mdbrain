@@ -6,6 +6,14 @@
 // outside the allowlist - other methods, writes, admin routes, principal
 // parameters from the caller, unknown or repeated parameters, unsafe path
 // segments - is refused before any upstream call is made.
+//
+// Slugs follow the API's own rules. A wiki-page or wiki-overview slug may be
+// hierarchical, given either in the raw-slash form (teams/support) or as the
+// single percent-encoded component the SDK sends (teams%2Fsupport). Routing
+// happens on the raw path the way the API's router works - literal slashes
+// separate route segments, an encoded separator stays inside the slug - and
+// every decoded segment is checked; the slug is then forwarded with the
+// API's own encoding rules.
 
 import { parseCitationMarker } from "@mdbrain/client"
 
@@ -52,14 +60,14 @@ export const DEMO_PROXY_FORBIDDEN_PARAMS: readonly string[] = [
 	"containerTag",
 ]
 
-// Slug segments that answer as GET sub-routes upstream (mirrors
-// WIKI_RESERVED_SLUG_SEGMENTS in the API) plus the OKF interchange route
-// names, which are POST routes and never demo pages.
-const RESERVED_PAGE_SLUGS: readonly string[] = [
-	"lint",
+// Raw first-segment names after /wiki whose sub-routes are not part of the
+// read allowlist: the revisions reads and the okf interchange names. They
+// are refused at any raw depth. `lint` and `changes` are readable operations
+// on their own and page-slug prefixes beyond that (mirroring the API's
+// wildcard route); `overview` beyond the overview route is a page slug too,
+// while bare `overview` names no readable page.
+const REFUSED_SUBROUTE_SEGMENTS: readonly string[] = [
 	"revisions",
-	"overview",
-	"changes",
 	"okf-import",
 	"okf-export",
 ]
@@ -115,11 +123,18 @@ type QuerySpec = {
 	optional?: Record<string, ParamSpec>
 }
 
-type MatchedOperation = {
-	operation: string
-	upstreamPath: string
-	query: QuerySpec
-}
+/** One allowlisted read, or null when nothing matches. The `slugRoute` form
+ * carries a raw slug: the caller decodes it, checks every segment and
+ * forwards it with the API's own encoding rules (one percent-encoded
+ * component, the form the SDK sends). */
+type MatchedOperation =
+	| { operation: string; upstreamPath: string; query: QuerySpec }
+	| {
+			operation: string
+			slugRoute: "/v1/wiki" | "/v1/wiki/overview"
+			rawSlug: string
+			query: QuerySpec
+	  }
 
 const INT_LIMIT_1_100 = { kind: "int", min: 1, max: 100 } as const
 const INT_SKIP = { kind: "int", min: 0, max: 1_000_000 } as const
@@ -131,11 +146,13 @@ function enumSpec(values: readonly string[]): ParamSpec {
 	return { kind: "enum", values }
 }
 
-/** Maps decoded path segments after /api/demo/v1 to one allowlisted upstream
- * read, or null when nothing matches. */
-function matchOperation(segments: string[]): MatchedOperation | null {
-	const [first, second, third] = segments
-	if (segments.length === 1 && first === "wiki") {
+/** Routes the raw (still percent-encoded) segments after /api/demo/v1 the
+ * way the API's own router does: literal slashes separate route segments,
+ * while an encoded separator (%2F) stays inside one segment and so names a
+ * hierarchical page slug. Returns null when nothing allowlisted matches. */
+function matchOperation(rawParts: string[]): MatchedOperation | null {
+	const [head, second, ...tail] = rawParts
+	if (head === "wiki" && second === undefined) {
 		return {
 			operation: "wiki-list",
 			upstreamPath: "/v1/wiki",
@@ -150,7 +167,25 @@ function matchOperation(segments: string[]): MatchedOperation | null {
 			},
 		}
 	}
-	if (segments.length === 2 && first === "wiki") {
+	if (head === "cite" && second === undefined) {
+		return {
+			operation: "cite",
+			upstreamPath: "/v1/cite",
+			query: {
+				required: {
+					marker: { kind: "citation", markerKind: "event" },
+					citedBy: { kind: "citation", markerKind: "wiki" },
+				},
+			},
+		}
+	}
+	if (head !== "wiki" || second === undefined) {
+		return null
+	}
+	if (REFUSED_SUBROUTE_SEGMENTS.includes(second)) {
+		return null
+	}
+	if (tail.length === 0) {
 		if (second === "changes") {
 			return {
 				operation: "wiki-changes",
@@ -173,12 +208,13 @@ function matchOperation(segments: string[]): MatchedOperation | null {
 				query: { optional: { limit: INT_LIMIT_1_100, kind: TOKEN } },
 			}
 		}
-		if (RESERVED_PAGE_SLUGS.includes(second)) {
+		if (second === "overview") {
 			return null
 		}
 		return {
 			operation: "wiki-page",
-			upstreamPath: `/v1/wiki/${encodeURIComponent(second)}`,
+			slugRoute: "/v1/wiki",
+			rawSlug: second,
 			query: {
 				optional: {
 					kind: TOKEN,
@@ -188,10 +224,11 @@ function matchOperation(segments: string[]): MatchedOperation | null {
 			},
 		}
 	}
-	if (segments.length === 3 && first === "wiki" && second === "overview") {
+	if (second === "overview") {
 		return {
 			operation: "wiki-overview",
-			upstreamPath: `/v1/wiki/overview/${encodeURIComponent(third)}`,
+			slugRoute: "/v1/wiki/overview",
+			rawSlug: tail.join("/"),
 			query: {
 				optional: {
 					maxBacklinks: INT_LIMIT_1_100,
@@ -203,19 +240,18 @@ function matchOperation(segments: string[]): MatchedOperation | null {
 			},
 		}
 	}
-	if (segments.length === 1 && first === "cite") {
-		return {
-			operation: "cite",
-			upstreamPath: "/v1/cite",
-			query: {
-				required: {
-					marker: { kind: "citation", markerKind: "event" },
-					citedBy: { kind: "citation", markerKind: "wiki" },
-				},
+	return {
+		operation: "wiki-page",
+		slugRoute: "/v1/wiki",
+		rawSlug: [second, ...tail].join("/"),
+		query: {
+			optional: {
+				kind: TOKEN,
+				format: enumSpec(["json"]),
+				transclude: enumSpec(["true", "false"]),
 			},
-		}
+		},
 	}
-	return null
 }
 
 function isSafeSegment(segment: string): boolean {
@@ -229,6 +265,28 @@ function isSafeSegment(segment: string): boolean {
 		return false
 	}
 	return !CONTROL_CHARACTERS.test(segment)
+}
+
+/** Decodes a raw slug - the SDK's single percent-encoded component or the
+ * raw-slash form - and checks every decoded segment. Returns null when the
+ * slug decodes to anything unsafe: broken percent-encoding, empty, "." or
+ * ".." segments, control characters or backslashes. */
+function decodeSlug(raw: string): string | null {
+	let decoded: string
+	try {
+		decoded = decodeURIComponent(raw)
+	} catch {
+		return null
+	}
+	if (decoded.includes("\\")) {
+		return null
+	}
+	for (const segment of decoded.split("/")) {
+		if (!isSafeSegment(segment)) {
+			return null
+		}
+	}
+	return decoded
 }
 
 function validateParam(
@@ -320,41 +378,33 @@ export async function handleDemoRead(
 		)
 	}
 	const url = new URL(request.url)
-	const rawSegments = url.pathname
-		.split("/")
-		.filter((segment) => segment !== "")
-	if (
-		rawSegments.length < 3 ||
-		rawSegments[0] !== "api" ||
-		rawSegments[1] !== "demo" ||
-		rawSegments[2] !== "v1"
-	) {
+	const pathname = url.pathname
+	// Route on the raw path, the way the API's router does: literal slashes
+	// separate route segments, an encoded separator stays inside a slug.
+	if (!pathname.startsWith("/api/demo/v1/")) {
 		return proxyError(404, "UNKNOWN_OPERATION", "no demo read operation here")
 	}
-	const segments: string[] = []
-	for (const raw of rawSegments.slice(3)) {
-		let decoded: string
-		try {
-			decoded = decodeURIComponent(raw)
-		} catch {
-			return proxyError(
-				400,
-				"UNSAFE_PATH",
-				"path segment has invalid percent-encoding",
-			)
-		}
-		if (!isSafeSegment(decoded)) {
-			return proxyError(400, "UNSAFE_PATH", "path segment is not safe")
-		}
-		segments.push(decoded)
+	let route = pathname.slice("/api/demo/v1/".length)
+	if (route.endsWith("/")) {
+		route = route.slice(0, -1)
 	}
-	const matched = matchOperation(segments)
+	const matched = matchOperation(route.split("/"))
 	if (!matched) {
 		return proxyError(
 			404,
 			"UNKNOWN_OPERATION",
-			`no demo read operation at ${url.pathname}`,
+			`no demo read operation at ${pathname}`,
 		)
+	}
+	let upstreamPath: string
+	if ("rawSlug" in matched) {
+		const slug = decodeSlug(matched.rawSlug)
+		if (slug === null) {
+			return proxyError(400, "UNSAFE_PATH", "the slug is not a safe page path")
+		}
+		upstreamPath = `${matched.slugRoute}/${encodeURIComponent(slug)}`
+	} else {
+		upstreamPath = matched.upstreamPath
 	}
 	for (const name of DEMO_PROXY_FORBIDDEN_PARAMS) {
 		if (url.searchParams.has(name)) {
@@ -398,7 +448,7 @@ export async function handleDemoRead(
 		}
 		forwarded.set(key, values[0])
 	}
-	const upstreamUrl = new URL(`${env.apiBaseUrl}${matched.upstreamPath}`)
+	const upstreamUrl = new URL(`${env.apiBaseUrl}${upstreamPath}`)
 	upstreamUrl.searchParams.set("scope", env.scope)
 	upstreamUrl.searchParams.set("scopeRef", env.scopeRef)
 	for (const [key, value] of forwarded) {
