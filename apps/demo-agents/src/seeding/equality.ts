@@ -24,9 +24,76 @@ export type RunEqualityReport = {
 	differences: EqualityDifference[]
 }
 
-/** Fields the server stamps per-slot (302 §0.4/§6): ids, wall-clock
- * timestamps. Everything else must match byte-for-byte after the evidence
- * event ids are mapped back to logical corpus source ids. */
+/** Collapses a difference path to its field shape: the page slug
+ * prefix and array indexes drop out, so per-page noise aggregates
+ * by field (manifest paths keep their full shape). */
+export function differenceField(path: string): string {
+	if (path.startsWith("manifest.")) return path
+	const fieldPath = path.slice(path.indexOf(".") + 1)
+	return fieldPath.replace(/\[\d+\]/g, "[]")
+}
+
+export type DifferenceSummary = {
+	total: number
+	byField: Array<{ field: string; count: number }>
+}
+
+/** Counts every difference by field shape, sorted by count. */
+export function summarizeDifferences(
+	differences: EqualityDifference[],
+): DifferenceSummary {
+	const counts = new Map<string, number>()
+	for (const difference of differences) {
+		const field = differenceField(difference.path)
+		counts.set(field, (counts.get(field) ?? 0) + 1)
+	}
+	const byField = [...counts.entries()]
+		.map(([field, count]) => ({ field, count }))
+		.sort((a, b) => b.count - a.count || a.field.localeCompare(b.field))
+	return { total: differences.length, byField }
+}
+
+/** Human-readable report lines: the counts by field come first so
+ * they always cover every difference, then up to `maxListed`
+ * individual entries, and an explicit notice whenever the list is
+ * truncated — a reader can never mistake a truncated list for the
+ * full set. */
+export function formatDifferenceReport(
+	differences: EqualityDifference[],
+	maxListed = 20,
+): string[] {
+	if (differences.length === 0) return []
+	const { total, byField } = summarizeDifferences(differences)
+	const lines = [
+		`differences by field (${total} total): ` +
+			byField.map((f) => `${f.field} x${f.count}`).join(", "),
+	]
+	for (const difference of differences.slice(0, maxListed)) {
+		lines.push(
+			`  ${difference.path}: A=${JSON.stringify(difference.slotA)}` +
+				` B=${JSON.stringify(difference.slotB)}`,
+		)
+	}
+	if (total > maxListed) {
+		lines.push(
+			`  (${maxListed} of ${total} differences listed above; ` +
+				`the field counts cover all ${total})`,
+		)
+	}
+	return lines
+}
+
+/** Page fields that cannot carry matching content across slots.
+ *
+ * Wall-clock stamps, set by the store on every write in
+ * wiki-bridge.ts normalizeInput (`createdAt`, `updatedAt`,
+ * `validFrom`), at retire/restore (`validTo`) and by maintenance
+ * (`lastMaintainedAt`); `_id` is the store's generated id.
+ * `scope`/`scopeRef` are the slot's own identity: the seeder does
+ * write them, but per slot by design (grant `{scope:"workspace",
+ * scopeRef:"demo-run-<i>"}`), so they differ across slots on
+ * purpose. Everything else must match after evidence event ids are
+ * mapped back to logical corpus source ids. */
 const UNSTABLE_PAGE_KEYS = [
 	"_id",
 	"createdAt",
@@ -34,9 +101,31 @@ const UNSTABLE_PAGE_KEYS = [
 	"validFrom",
 	"validTo",
 	"lastMaintainedAt",
+	"scope",
+	"scopeRef",
 ] as const
 
 const ABSENT = "<absent>"
+
+/** Claim times the server stamps on every create in wiki-bridge.ts
+ * normalizeInput (`validFrom: c.validFrom ?? now`, `updatedAt: now`).
+ * The public API cannot supply them instead: MdbrainWikiClaimInput
+ * deliberately omits `validFrom`/`validTo` because the store holds
+ * them as dates and a JSON body can only carry strings. They can
+ * never carry seeder content, so they are not compared; every
+ * seeder-set claim field (id, text, status, confidence, evidence,
+ * derivedFrom) still is. */
+const CLAIM_STAMPED_KEYS = new Set(["validFrom", "validTo", "updatedAt"])
+
+/** Question timestamps the server stamps when a question is raised
+ * (wiki-bridge.ts normalizeInput). The seeder writes no questions,
+ * so these cannot carry seeder content. */
+const QUESTION_STAMPED_KEYS = new Set(["createdAt"])
+
+/** Contradiction timestamps the server stamps when governance
+ * detects or resolves a contradiction. The seeder writes no
+ * contradictions, so these cannot carry seeder content. */
+const CONTRADICTION_STAMPED_KEYS = new Set(["detectedAt", "resolvedAt"])
 
 /** Compares two run slots end-to-end: manifest boundaries and write
  * sequences first, then every common page read back through the API and
@@ -126,16 +215,38 @@ function normalizePage(
 	for (const [key, value] of Object.entries(view)) {
 		if (!unstable.has(key)) stable[key] = value
 	}
-	stable.claims = view.claims.map((claim) => ({
-		...claim,
-		evidence: claim.evidence.map((ev) => {
+	stable.claims = view.claims.map((claim) => {
+		const stableClaim: Record<string, unknown> = {}
+		for (const [key, value] of Object.entries(claim)) {
+			if (!CLAIM_STAMPED_KEYS.has(key)) stableClaim[key] = value
+		}
+		stableClaim.evidence = claim.evidence.map((ev) => {
 			const { marker, sourceId, ...rest } = ev
 			return {
 				...rest,
 				sourceId: eventIdToSourceId.get(sourceId) ?? `<unmapped:${sourceId}>`,
 			}
-		}),
-	}))
+		})
+		return stableClaim
+	})
+	stable.questions = (view.questions ?? []).map((question) =>
+		omitStamped(question, QUESTION_STAMPED_KEYS),
+	)
+	stable.contradictions = (view.contradictions ?? []).map((contradiction) =>
+		omitStamped(contradiction, CONTRADICTION_STAMPED_KEYS),
+	)
+	return stable
+}
+
+/** Drops the stamped keys from a question or contradiction; a
+ * non-object entry (the view types are `unknown[]`) passes through
+ * unchanged so it still compares. */
+function omitStamped(value: unknown, omitted: Set<string>): unknown {
+	if (!isPlainObject(value)) return value
+	const stable: Record<string, unknown> = {}
+	for (const [key, entry] of Object.entries(value)) {
+		if (!omitted.has(key)) stable[key] = entry
+	}
 	return stable
 }
 

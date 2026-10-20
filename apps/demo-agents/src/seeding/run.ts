@@ -18,7 +18,11 @@ import { MongoClient, type Db } from "mongodb"
 import { readRecords, readWorld } from "../corpus/corpus-files.js"
 import { CONTROL_DATABASE } from "../corpus/render-config.js"
 import { corpusDigest } from "./digest.js"
-import { compareRunSlots, type RunEqualityReport } from "./equality.js"
+import {
+	compareRunSlots,
+	formatDifferenceReport,
+	type RunEqualityReport,
+} from "./equality.js"
 import { createRunManifests, type RunManifestDoc } from "./manifest.js"
 import { createPacer } from "./pacing.js"
 import { buildLoadPlan } from "./plan.js"
@@ -291,11 +295,8 @@ async function main(): Promise<void> {
 					` (${report.pagesCompared} pages compared` +
 					`, ${report.differences.length} differences)`,
 			)
-			for (const difference of report.differences.slice(0, 20)) {
-				console.log(
-					`  ${difference.path}: A=${JSON.stringify(difference.slotA)}` +
-						` B=${JSON.stringify(difference.slotB)}`,
-				)
+			for (const line of formatDifferenceReport(report.differences)) {
+				console.log(line)
 			}
 			if (!report.equal) process.exit(1)
 			return
