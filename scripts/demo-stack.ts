@@ -11,12 +11,14 @@
 
 import { execFileSync, spawn } from "node:child_process"
 import {
+	existsSync,
 	mkdirSync,
 	openSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs"
+import { createConnection } from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { MongoClient } from "mongodb"
@@ -27,13 +29,19 @@ import {
 	buildDemoStackEnv,
 	parseSecretsFile,
 } from "./demo-stack-config.js"
+import {
+	type Observed,
+	type ProcessIdentity,
+	type StackRecord,
+	isSameProcess,
+	planStart,
+	planStop,
+} from "./demo-stack-process.js"
 
 const repoRoot = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
 	"..",
 )
-
-type Pids = { memongo: number; api: number }
 
 function arg(name: string): string | undefined {
 	const index = process.argv.indexOf(name)
@@ -48,27 +56,67 @@ function fail(message: string): never {
 const stackDir = path.resolve(
 	arg("--stack-dir") ?? path.join(repoRoot, "..", "mdbrain-demo-stack"),
 )
-const pidsFile = path.join(stackDir, "pids.json")
+const recordFile = path.join(stackDir, "processes.json")
 
-function isRunning(pid: number): boolean {
+function identify(pid: number): ProcessIdentity | undefined {
 	try {
-		process.kill(pid, 0)
-		return true
+		const read = (field: string) =>
+			execFileSync("ps", ["-p", String(pid), "-o", `${field}=`], {
+				encoding: "utf8",
+			}).trim()
+		return { pid, startedAt: read("lstart"), command: read("command") }
 	} catch {
-		return false
+		return undefined
 	}
+}
+
+function readRecord(): StackRecord | undefined {
+	return existsSync(recordFile)
+		? (JSON.parse(readFileSync(recordFile, "utf8")) as StackRecord)
+		: undefined
+}
+
+function observe(record: StackRecord | undefined): Observed {
+	return record
+		? { memongo: identify(record.memongo.pid), api: identify(record.api.pid) }
+		: {}
+}
+
+function portInUse(port: number): Promise<boolean> {
+	return new Promise((resolve) => {
+		const socket = createConnection({ host: "127.0.0.1", port })
+		socket.once("connect", () => {
+			socket.destroy()
+			resolve(true)
+		})
+		socket.once("error", () => resolve(false))
+	})
+}
+
+// Stops only children this run started, identified exactly, then fails.
+function abortStart(started: ProcessIdentity[], message: string): never {
+	for (const child of started) {
+		if (isSameProcess(child, identify(child.pid)))
+			process.kill(child.pid, "SIGTERM")
+	}
+	rmSync(recordFile, { force: true })
+	fail(message)
 }
 
 async function waitForUrl(
 	url: string,
-	pid: number,
+	child: ProcessIdentity,
+	started: ProcessIdentity[],
 	timeoutMs: number,
 ): Promise<unknown> {
 	const deadline = Date.now() + timeoutMs
 	let last = ""
 	while (Date.now() < deadline) {
-		if (!isRunning(pid))
-			fail(`pid ${pid} exited before ${url} was ready; see ${stackDir}`)
+		if (!isSameProcess(child, identify(child.pid)))
+			abortStart(
+				started,
+				`pid ${child.pid} exited before ${url} was ready; see ${stackDir}`,
+			)
 		try {
 			const res = await fetch(url)
 			if (res.ok) return await res.json()
@@ -78,14 +126,14 @@ async function waitForUrl(
 		}
 		await new Promise((resolve) => setTimeout(resolve, 1_000))
 	}
-	fail(`${url} not ready after ${timeoutMs}ms (last: ${last})`)
+	abortStart(started, `${url} not ready after ${timeoutMs}ms (last: ${last})`)
 }
 
 function startProcess(
 	name: string,
 	cwd: string,
 	env: Record<string, string>,
-): number {
+): ProcessIdentity {
 	const log = openSync(path.join(stackDir, `${name}.log`), "a", 0o600)
 	const child = spawn("node", ["--import", "tsx", "src/server.ts"], {
 		cwd,
@@ -94,8 +142,9 @@ function startProcess(
 		stdio: ["ignore", log, log],
 	})
 	child.unref()
-	if (!child.pid) fail(`${name} did not start`)
-	return child.pid
+	const identity = child.pid ? identify(child.pid) : undefined
+	if (!identity) fail(`${name} did not start`)
+	return identity
 }
 
 async function start(): Promise<void> {
@@ -110,6 +159,17 @@ async function start(): Promise<void> {
 		fail(
 			`Memongo clone is at ${head}, expected pin ${MEMONGO_CONTRACT_SOURCE_REF}`,
 		)
+	}
+
+	const record = readRecord()
+	const plan = planStart(record, observe(record), {
+		memongo: await portInUse(DEMO_MEMONGO_PORT),
+		api: await portInUse(DEMO_API_PORT),
+	})
+	if (plan.action === "refuse") fail(plan.reason)
+	if (plan.discardStaleRecord) {
+		console.log("demo-stack: discarding a stale process record")
+		rmSync(recordFile)
 	}
 
 	const secrets = parseSecretsFile(readFileSync(secretsPath, "utf8"))
@@ -134,46 +194,35 @@ async function start(): Promise<void> {
 		path.join(memongoDir, "apps/api"),
 		env.memongo,
 	)
-	writeFileSync(pidsFile, JSON.stringify({ memongo, api: 0 }), { mode: 0o600 })
 	await waitForUrl(
 		`http://127.0.0.1:${DEMO_MEMONGO_PORT}/health`,
 		memongo,
+		[memongo],
 		600_000,
 	)
 	const api = startProcess("api", path.join(repoRoot, "apps/api"), env.api)
-	writeFileSync(pidsFile, JSON.stringify({ memongo, api }), { mode: 0o600 })
+	writeFileSync(recordFile, JSON.stringify({ memongo, api }), { mode: 0o600 })
 	const ready = await waitForUrl(
 		`http://127.0.0.1:${DEMO_API_PORT}/ready`,
 		api,
+		[memongo, api],
 		180_000,
 	)
-	console.log(`demo-stack: up (memongo pid ${memongo}, api pid ${api})`)
+	console.log(`demo-stack: up (memongo pid ${memongo.pid}, api pid ${api.pid})`)
 	console.log(`demo-stack: /ready ${JSON.stringify(ready)}`)
 }
 
-function stopPid(name: string, pid: number): void {
-	if (!pid) return
-	let command = ""
-	try {
-		command = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
-			encoding: "utf8",
-		}).trim()
-	} catch {
-		console.log(`demo-stack: ${name} pid ${pid} not running`)
-		return
-	}
-	if (!command.includes("src/server.ts")) {
-		fail(`pid ${pid} is not the ${name} server (${command}); not stopping it`)
-	}
-	process.kill(pid, "SIGTERM")
-	console.log(`demo-stack: stopped ${name} pid ${pid}`)
-}
-
 function stop(): void {
-	const pids = JSON.parse(readFileSync(pidsFile, "utf8")) as Pids
-	stopPid("api", pids.api)
-	stopPid("memongo", pids.memongo)
-	rmSync(pidsFile)
+	const record = readRecord() ?? fail(`no process record at ${recordFile}`)
+	const plan = planStop(record, observe(record))
+	for (const pid of plan.signal) {
+		process.kill(pid, "SIGTERM")
+		console.log(`demo-stack: stopped pid ${pid}`)
+	}
+	for (const { name, reason } of plan.skipped) {
+		console.log(`demo-stack: left ${name} alone: ${reason}`)
+	}
+	rmSync(recordFile)
 }
 
 async function status(): Promise<void> {
