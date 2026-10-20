@@ -98,6 +98,7 @@ export function GraphCanvas({
 		if (!canvas || !ctx || size.width === 0) {
 			return
 		}
+		const startedAt = performance.now()
 		canvas.width = Math.round(size.width * dpr)
 		canvas.height = Math.round(size.height * dpr)
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -167,6 +168,7 @@ export function GraphCanvas({
 			}
 		})
 		countDraw(canvas)
+		canvas.dataset.drawMs = (performance.now() - startedAt).toFixed(1)
 		if (performance.getEntriesByName("demo-graph-drawn").length === 0) {
 			performance.mark("demo-graph-drawn")
 		}

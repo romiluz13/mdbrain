@@ -22,6 +22,8 @@ export type ProxyOptions = {
 	override?: (url: URL) => Response | undefined | Promise<Response | undefined>
 	/** Rewrite the JSON body the proxy served (a source with no timestamp). */
 	rewrite?: (url: URL, body: unknown) => unknown
+	/** Pad the fixture with linked copies up to this many pages (stress runs). */
+	padTo?: number
 }
 
 export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
@@ -50,7 +52,7 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 		void read.finally(() => pending.delete(read))
 	})
 	if (!LIVE) {
-		const upstream = createDemoUpstream()
+		const upstream = createDemoUpstream({ padTo: options.padTo })
 		await page.route("**/api/demo/v1/**", async (route) => {
 			const request = route.request()
 			const url = new URL(request.url())

@@ -68,7 +68,7 @@ function words(text: string): string[] {
 
 type Json = Record<string, unknown>
 
-function build() {
+function build(padTo = 0) {
 	const dir = corpusDir()
 	const world = JSON.parse(
 		readFileSync(join(dir, "world.json"), "utf8"),
@@ -85,9 +85,29 @@ function build() {
 	const dates = new Map(world.sources.map((source) => [source.id, source.date]))
 	const { targetPageSlug, targetClaimId, incoming } = world.contradiction
 	const incomingClaimId = incoming.claims[0]?.id ?? ""
-	const worldPages = world.pages.some((page) => page.slug === incoming.slug)
+	const basePages = world.pages.some((page) => page.slug === incoming.slug)
 		? world.pages
 		: [...world.pages, incoming]
+	// A stress variant: corpus pages cloned, each linked back to its original,
+	// to reach a node budget the corpus alone does not.
+	const worldPages = [...basePages]
+	for (
+		let copy = 0;
+		basePages.length > 0 && worldPages.length < padTo;
+		copy++
+	) {
+		const original = basePages[copy % basePages.length] as WorldPage
+		worldPages.push({
+			...original,
+			slug: `${original.slug}-copy-${copy}`,
+			title: `${original.title} (copy ${copy})`,
+			claims: [],
+			relationships: [
+				...original.relationships,
+				{ targetPageSlug: original.slug, kind: "copy-of" },
+			],
+		})
+	}
 	const contradicted = new Set([targetClaimId, incomingClaimId])
 
 	const pages = worldPages.map((page, position) => {
@@ -191,8 +211,8 @@ const failure = (status: number, code: string, message: string) =>
 	reply({ error: { code, message } }, status)
 
 /** The API behind the proxy: `fetch` takes the proxy's upstream request. */
-export function createDemoUpstream() {
-	const data = build()
+export function createDemoUpstream(options: { padTo?: number } = {}) {
+	const data = build(options.padTo)
 	const { pages, bySlug } = data
 
 	const search = (query: string, max: number) => {
