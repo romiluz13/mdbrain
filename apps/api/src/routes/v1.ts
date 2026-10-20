@@ -2162,7 +2162,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 	}
 
 	// REV-07 N2: a slug whose first segment collides with a GET sub-route
-	// registered before the /wiki/* wildcard (lint, revisions) is unreachable
+	// registered before the /wiki/* wildcard (WIKI_RESERVED_SLUG_SEGMENTS) is unreachable
 	// as a page. Reject it at write time with a named reason.
 	function reservedSlugError(slug: string): string | undefined {
 		const firstSegment = slug.split("/")[0]
