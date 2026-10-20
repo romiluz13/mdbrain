@@ -105,17 +105,40 @@ describe("revisions", () => {
 		expect(overview?.revisions.items.map((r) => r.revision)).toEqual([2, 1])
 	})
 
-	it("says there may be more when the scan stops before the history ends", async () => {
+	it("shows the same section however long the hidden history is", async () => {
+		const withHidden = async (count: number) => {
+			const hidden = Array.from({ length: count }, (_, i) =>
+				revision("hub", i + 2, { permissions: HIDDEN }),
+			)
+			const overview = await overviewOf([page("hub")], "hub", outsider, {
+				revisions: [revision("hub", 1), ...hidden],
+			}).result
+			return overview?.revisions
+		}
+
+		const short = await withHidden(3)
+		expect(short).toEqual({
+			items: [expect.objectContaining({ revision: 1 })],
+			hasMore: false,
+		})
+		expect(await withHidden(199)).toEqual(short)
+		expect(await withHidden(230)).toEqual(short)
+	})
+
+	it("says there is more only when another readable revision exists", async () => {
 		const hidden = Array.from({ length: 230 }, (_, i) =>
-			revision("hub", i + 2, { permissions: HIDDEN }),
+			revision("hub", i + 3, { permissions: HIDDEN }),
 		)
-		const revisions = [revision("hub", 1), ...hidden]
+		const revisions = [revision("hub", 1), revision("hub", 2), ...hidden]
 
 		const overview = await overviewOf([page("hub")], "hub", outsider, {
 			revisions,
+			limits: { revisions: 1 },
 		}).result
 
-		expect(overview?.revisions.items).toEqual([])
-		expect(overview?.revisions.hasMore).toBe(true)
+		expect(overview?.revisions).toEqual({
+			items: [expect.objectContaining({ revision: 2 })],
+			hasMore: true,
+		})
 	})
 })

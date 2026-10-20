@@ -18,6 +18,7 @@ import {
 	buildGovernanceFilter,
 	type GovernanceContext,
 } from "./wiki-governance.js"
+import { revisionPermissionsFilter } from "./wiki-changes-governance.js"
 import {
 	toRevisionSummary,
 	type WikiPageRevisionRecord,
@@ -276,15 +277,16 @@ const REVISION_PROJECTION = {
 
 // Each revision is authorized against its own snapshot, so the limit has to
 // count readable revisions only: read newest-first in batches until limit + 1
-// readable ones are found or the history ends. The scan stops at
-// REVISION_SCAN_CAP revisions; past it, hasMore is true because older readable
-// revisions may exist.
+// readable ones are found or the history ends. The query carries the snapshot
+// permissions filter so hidden revisions are never scanned and cannot reach
+// REVISION_SCAN_CAP or hasMore; the in-memory check stays the authority.
 async function readRevisions(
 	handle: WikiDbHandle,
 	params: WikiEntityOverviewParams,
 	limit: number,
 ): Promise<WikiOverviewSection<WikiOverviewRevision>> {
 	const coll = wikiRevisionsCollection(handle.db, handle.prefix)
+	const permissions = revisionPermissionsFilter(params.governance)
 	const readable: WikiOverviewRevision[] = []
 	let before: number | undefined
 	let scanned = 0
@@ -296,6 +298,9 @@ async function readRevisions(
 					scope: params.scope,
 					scopeRef: params.scopeRef,
 					...(before === undefined ? {} : { revision: { $lt: before } }),
+					...(Object.keys(permissions).length > 0
+						? { $and: [permissions] }
+						: {}),
 				},
 				{ projection: REVISION_PROJECTION },
 			)
