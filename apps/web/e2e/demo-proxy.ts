@@ -1,6 +1,7 @@
 // Serves /api/demo/v1/** from the fixture upstream, through the real proxy
 // handler, and records every response the page receives so a test can compare
 // what the screen shows with what the proxy returned.
+import { gzipSync } from "node:zlib"
 import type { Page } from "@playwright/test"
 import { handleDemoRead } from "../lib/demo-data/proxy.js"
 import { createDemoUpstream, FIXTURE_ENV } from "./demo-upstream.js"
@@ -24,6 +25,11 @@ export type ProxyOptions = {
 	rewrite?: (url: URL, body: unknown) => unknown
 	/** Pad the fixture with linked copies up to this many pages (stress runs). */
 	padTo?: number
+	/** Model the phone's link for a performance run: each read waits `latencyMs`,
+	 * then its gzipped body takes its turn on one shared downlink. The fixture
+	 * is fulfilled inside the browser, so the CDP network throttle never sees
+	 * these bytes. */
+	link?: { latencyMs: number; bytesPerSecond: number }
 }
 
 export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
@@ -51,6 +57,8 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 		pending.add(read)
 		void read.finally(() => pending.delete(read))
 	})
+	const transfer = { raw: 0, wire: 0 }
+	let linkFreeAt = 0
 	if (!LIVE) {
 		const upstream = createDemoUpstream({ padTo: options.padTo })
 		await page.route("**/api/demo/v1/**", async (route) => {
@@ -68,6 +76,19 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 					upstream.fetch,
 				))
 			const text = await served.text()
+			if (options.link) {
+				const wire = gzipSync(text).length
+				transfer.raw += Buffer.byteLength(text)
+				transfer.wire += wire
+				await new Promise((resolve) =>
+					setTimeout(resolve, options.link?.latencyMs),
+				)
+				const now = Date.now()
+				linkFreeAt =
+					Math.max(now, linkFreeAt) +
+					(wire / options.link.bytesPerSecond) * 1000
+				await new Promise((resolve) => setTimeout(resolve, linkFreeAt - now))
+			}
 			await route.fulfill({
 				status: served.status,
 				headers: { "content-type": "application/json" },
@@ -80,6 +101,8 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 	}
 	return {
 		responses,
+		/** Bytes the proxy served in a link-modelled run, before and after gzip. */
+		transfer,
 		/** Waits until every response seen so far has been parsed and logged. */
 		async flush(): Promise<void> {
 			await Promise.all([...pending])

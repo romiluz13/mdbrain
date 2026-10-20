@@ -113,7 +113,10 @@ function build(padTo = 0) {
 			...original,
 			slug: `${original.slug}-copy-${copy}`,
 			title: `${original.title} (copy ${copy})`,
-			claims: [],
+			claims: original.claims.map((claim) => ({
+				...claim,
+				id: `${claim.id}-copy-${copy}`,
+			})),
 			relationships: [
 				...original.relationships,
 				{ targetPageSlug: original.slug, kind: "copy-of" },
