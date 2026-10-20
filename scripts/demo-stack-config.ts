@@ -37,6 +37,76 @@ function required(secrets: Record<string, string>, key: string): string {
 	return value
 }
 
+/** Secrets-file key holding the JSON array of run-slot API tokens, in slot
+ * order: index i-1 unlocks slot i (scopeRef `demo-run-<i>`). */
+export const DEMO_SLOT_KEYS_SECRET = "MDBRAIN_DEMO_SLOT_KEYS"
+
+/** Secrets-file key holding the per-IP request-start budget (per minute) for
+ * the demo API. The default stack limit (100) is too low for corpus seeding. */
+export const DEMO_API_RATE_LIMIT_SECRET = "MDBRAIN_DEMO_API_RATE_LIMIT"
+
+export type DemoSlotScopedKeyPolicy = {
+	grants: Array<{ scope: "workspace"; scopeRef: string }>
+}
+
+/** Scoped-key policy (MDBRAIN_API_SCOPED_KEYS object form) granting each slot
+ * token exactly one workspace pair. Slot numbering matches
+ * apps/demo-agents/src/seeding/ids.ts: slot i (1-based) owns `demo-run-<i>`. */
+export function buildDemoSlotScopedKeys(
+	tokens: readonly string[],
+): Record<string, DemoSlotScopedKeyPolicy> {
+	const policies: Record<string, DemoSlotScopedKeyPolicy> = {}
+	tokens.forEach((token, index) => {
+		policies[token] = {
+			grants: [{ scope: "workspace", scopeRef: `demo-run-${index + 1}` }],
+		}
+	})
+	return policies
+}
+
+function parseSlotTokens(
+	secrets: Record<string, string>,
+): string[] | undefined {
+	const raw = secrets[DEMO_SLOT_KEYS_SECRET]?.trim()
+	if (!raw) return undefined
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(raw) as unknown
+	} catch {
+		throw new Error(
+			`${DEMO_SLOT_KEYS_SECRET} must be a JSON array of slot tokens`,
+		)
+	}
+	if (
+		!Array.isArray(parsed) ||
+		parsed.length === 0 ||
+		!parsed.every((token) => typeof token === "string" && token.trim())
+	) {
+		throw new Error(
+			`${DEMO_SLOT_KEYS_SECRET} must be a non-empty array of non-empty, unique tokens`,
+		)
+	}
+	const tokens = (parsed as string[]).map((token) => token.trim())
+	if (new Set(tokens).size !== tokens.length) {
+		throw new Error(`${DEMO_SLOT_KEYS_SECRET} tokens must be unique`)
+	}
+	return tokens
+}
+
+function parseRateLimitMax(
+	secrets: Record<string, string>,
+): number | undefined {
+	const raw = secrets[DEMO_API_RATE_LIMIT_SECRET]?.trim()
+	if (!raw) return undefined
+	const value = Number(raw)
+	if (!Number.isInteger(value) || value < 0) {
+		throw new Error(
+			`${DEMO_API_RATE_LIMIT_SECRET} must be a non-negative integer`,
+		)
+	}
+	return value
+}
+
 // Only these parent variables pass through, so a developer's own Mongo URIs or
 // database overrides can never redirect the demo stack.
 const PASSTHROUGH = ["PATH", "TMPDIR", "LANG", "TERM", "NODE_OPTIONS"]
@@ -56,6 +126,8 @@ export function buildDemoStackEnv(
 	const memongoKey = required(secrets, "MEMONGO_DEMO_API_KEY")
 	const parentEnv = options.parentEnv ?? process.env
 	const home = path.join(options.stackDir, "home")
+	const slotTokens = parseSlotTokens(secrets)
+	const rateLimitMax = parseRateLimitMax(secrets)
 
 	const base: Record<string, string> = { HOME: home }
 	for (const key of PASSTHROUGH) {
@@ -87,6 +159,16 @@ export function buildDemoStackEnv(
 			MDBRAIN_API_KEY: apiKey,
 			MDBRAIN_API_HOST: "127.0.0.1",
 			MDBRAIN_API_PORT: String(DEMO_API_PORT),
+			...(slotTokens
+				? {
+						MDBRAIN_API_SCOPED_KEYS: JSON.stringify(
+							buildDemoSlotScopedKeys(slotTokens),
+						),
+					}
+				: {}),
+			...(rateLimitMax !== undefined
+				? { MDBRAIN_API_RATE_LIMIT_MAX: String(rateLimitMax) }
+				: {}),
 		},
 	}
 }

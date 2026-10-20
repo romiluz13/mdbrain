@@ -9,11 +9,13 @@
 		"check-types": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
 		"test": "vitest run src",
 		"corpus:render": "node --import tsx src/corpus/render.ts",
-		"corpus:check": "node --import tsx src/corpus/check.ts"
+		"corpus:check": "node --import tsx src/corpus/check.ts",
+		"seed:run": "node --import tsx src/seeding/run.ts"
 	},
 	"dependencies": {
 		"@ai-sdk/anthropic": "2.0.109",
 		"@ai-sdk/provider": "2.0.3",
+		"@mdbrain/client": "workspace:*",
 		"@mdbrain/wiki-engine": "workspace:*",
 		"ai": "5.0.210",
 		"mongodb": "^7.0.0",

@@ -41,6 +41,7 @@
       "dependencies": {
         "@ai-sdk/anthropic": "2.0.109",
         "@ai-sdk/provider": "2.0.3",
+        "@mdbrain/client": "workspace:*",
         "@mdbrain/wiki-engine": "workspace:*",
         "ai": "5.0.210",
         "mongodb": "^7.0.0",

@@ -94,3 +94,58 @@ describe("buildDemoStackEnv", () => {
 		)
 	})
 })
+describe("demo run slots", () => {
+	const stackDir = "/tmp/demo-stack"
+	const slotSecrets = {
+		...secrets,
+		MDBRAIN_DEMO_SLOT_KEYS: '["slot-token-one", "slot-token-two"]',
+		MDBRAIN_DEMO_API_RATE_LIMIT: "600",
+	}
+
+	it("grants each slot key exactly one workspace scopeRef pair", () => {
+		const env = buildDemoStackEnv(slotSecrets, { stackDir })
+		const policies = JSON.parse(env.api.MDBRAIN_API_SCOPED_KEYS ?? "")
+		expect(policies).toEqual({
+			"slot-token-one": {
+				grants: [{ scope: "workspace", scopeRef: "demo-run-1" }],
+			},
+			"slot-token-two": {
+				grants: [{ scope: "workspace", scopeRef: "demo-run-2" }],
+			},
+		})
+	})
+
+	it("raises the per-IP rate limit when configured", () => {
+		const env = buildDemoStackEnv(slotSecrets, { stackDir })
+		expect(env.api.MDBRAIN_API_RATE_LIMIT_MAX).toBe("600")
+	})
+
+	it("omits scoped keys and the rate limit when not configured", () => {
+		const env = buildDemoStackEnv(secrets, { stackDir })
+		expect(env.api.MDBRAIN_API_SCOPED_KEYS).toBeUndefined()
+		expect(env.api.MDBRAIN_API_RATE_LIMIT_MAX).toBeUndefined()
+	})
+
+	it("rejects malformed, empty, or duplicate slot keys", () => {
+		const bad = (value: string) =>
+			buildDemoStackEnv(
+				{ ...secrets, MDBRAIN_DEMO_SLOT_KEYS: value },
+				{ stackDir },
+			)
+		expect(() => bad("not-json")).toThrow(/MDBRAIN_DEMO_SLOT_KEYS/)
+		expect(() => bad("[]")).toThrow(/MDBRAIN_DEMO_SLOT_KEYS/)
+		expect(() => bad('["ok", "ok"]')).toThrow(/MDBRAIN_DEMO_SLOT_KEYS/)
+		expect(() => bad('["ok", 42]')).toThrow(/MDBRAIN_DEMO_SLOT_KEYS/)
+	})
+
+	it("rejects a non-integer or negative rate limit", () => {
+		const bad = (value: string) =>
+			buildDemoStackEnv(
+				{ ...secrets, MDBRAIN_DEMO_API_RATE_LIMIT: value },
+				{ stackDir },
+			)
+		expect(() => bad("many")).toThrow(/MDBRAIN_DEMO_API_RATE_LIMIT/)
+		expect(() => bad("1.5")).toThrow(/MDBRAIN_DEMO_API_RATE_LIMIT/)
+		expect(() => bad("-1")).toThrow(/MDBRAIN_DEMO_API_RATE_LIMIT/)
+	})
+})
