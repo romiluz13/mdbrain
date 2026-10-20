@@ -17,6 +17,7 @@ import {
 	appendRecord,
 	readRecords,
 	sortRecords,
+	trimTornTail,
 	writeWorld,
 } from "./corpus-files.js"
 import { realCompaniesIn } from "./names.js"
@@ -55,6 +56,7 @@ if (ceiling === 0) {
 
 const world = buildWorld(CORPUS_SEED)
 writeWorld(world)
+trimTornTail()
 const done = readRecords()
 const only = args.only ? new Set(args.only.split(",")) : undefined
 const pending = world.sources

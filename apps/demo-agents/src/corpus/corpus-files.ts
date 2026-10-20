@@ -4,6 +4,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	renameSync,
+	truncateSync,
 	writeFileSync,
 } from "node:fs"
 import path from "node:path"
@@ -50,6 +51,26 @@ export function readRecords(dir = CORPUS_DIR): Map<string, RenderedRecord> {
 		}
 	}
 	return records
+}
+
+// Run before the first append of a resumed render: a torn final line left in
+// place would have the next record glued onto it, corrupting a line that is
+// no longer last. Only an unparsable tail after the last newline is removed.
+export function trimTornTail(dir = CORPUS_DIR): void {
+	const file = recordsFile(dir)
+	if (!existsSync(file)) return
+	const text = readFileSync(file, "utf8")
+	if (!text || text.endsWith("\n")) return
+	const cut = text.lastIndexOf("\n") + 1
+	try {
+		JSON.parse(text.slice(cut))
+		appendFileSync(file, "\n")
+	} catch {
+		console.warn(
+			`records.jsonl: removed a torn final line (line ${text.slice(0, cut).split("\n").length})`,
+		)
+		truncateSync(file, Buffer.byteLength(text.slice(0, cut)))
+	}
 }
 
 export function appendRecord(record: RenderedRecord, dir = CORPUS_DIR): void {

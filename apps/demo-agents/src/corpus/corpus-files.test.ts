@@ -8,7 +8,12 @@ import {
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { readRecords, sortRecords } from "./corpus-files.js"
+import {
+	appendRecord,
+	readRecords,
+	sortRecords,
+	trimTornTail,
+} from "./corpus-files.js"
 import type { RenderedRecord, World } from "./types.js"
 
 const record = (id: string): RenderedRecord => ({
@@ -37,6 +42,36 @@ describe("checkpoint file", () => {
 		expect([...readRecords(dir).keys()]).toEqual(["a"])
 		expect(warn).toHaveBeenCalledWith(expect.stringMatching(/torn final line/))
 		warn.mockRestore()
+	})
+
+	it("resumes after a torn final line: trims it, appends, and sorts", () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+		writeFileSync(
+			path.join(dir, "records.jsonl"),
+			`${line("a")}\n{"id":"b","bo`,
+		)
+		trimTornTail(dir)
+		appendRecord(record("c"), dir)
+		sortRecords(world, dir)
+		expect([...readRecords(dir).keys()]).toEqual(["a", "c"])
+		expect(readFileSync(path.join(dir, "records.jsonl"), "utf8")).toBe(
+			`${line("a")}\n${line("c")}\n`,
+		)
+		expect(warn).toHaveBeenCalledWith(expect.stringMatching(/torn final line/))
+		warn.mockRestore()
+	})
+
+	it("keeps a complete final record that only lacks its newline", () => {
+		writeFileSync(path.join(dir, "records.jsonl"), `${line("a")}\n${line("b")}`)
+		trimTornTail(dir)
+		appendRecord(record("c"), dir)
+		expect([...readRecords(dir).keys()]).toEqual(["a", "b", "c"])
+	})
+
+	it("leaves interior corruption for the reader to refuse", () => {
+		writeFileSync(path.join(dir, "records.jsonl"), `{"id":"a"\n${line("b")}\n`)
+		trimTornTail(dir)
+		expect(() => readRecords(dir)).toThrow(/line 1/)
 	})
 
 	it("refuses corruption anywhere but the final line", () => {
