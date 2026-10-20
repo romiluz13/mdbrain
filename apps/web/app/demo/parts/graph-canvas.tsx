@@ -25,6 +25,12 @@ const MAX_LABELS = 6
 
 type Size = { width: number; height: number }
 
+/** How often each layer has been drawn, readable by tests: the static layer
+ * must stay at one draw per data, layout or size change. */
+function countDraw(canvas: HTMLCanvasElement): void {
+	canvas.dataset.draws = String(Number(canvas.dataset.draws ?? 0) + 1)
+}
+
 function nodeRadius(degree: number, width: number): number {
 	return (width < 520 ? 3.2 : 3.6) + Math.min(degree, 14) * 0.28
 }
@@ -160,6 +166,10 @@ export function GraphCanvas({
 				ctx.stroke()
 			}
 		})
+		countDraw(canvas)
+		if (performance.getEntriesByName("demo-graph-drawn").length === 0) {
+			performance.mark("demo-graph-drawn")
+		}
 	}, [graph, points, size, dpr])
 
 	// Live layer: rings and labels only.
@@ -246,6 +256,7 @@ export function GraphCanvas({
 			ctx.fillStyle = SCOPE_INK
 			ctx.fillText(text, x + 6, y)
 		}
+		countDraw(canvas)
 	}, [graph, points, size, dpr, highlight, pinned, hovered])
 
 	const nodeAt = (
@@ -283,8 +294,8 @@ export function GraphCanvas({
 				}
 			}}
 		>
-			<canvas ref={staticRef} className={styles.canvas} />
-			<canvas ref={liveRef} className={styles.canvas} />
+			<canvas ref={staticRef} className={styles.canvas} data-layer="static" />
+			<canvas ref={liveRef} className={styles.canvas} data-layer="live" />
 		</div>
 	)
 }

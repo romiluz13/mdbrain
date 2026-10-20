@@ -209,7 +209,7 @@ export function DemoApp() {
 						</h1>
 						<p className={styles.lede}>{chapter.lede}</p>
 					</header>
-					<div className={styles.screen}>
+					<div className={styles.screen} data-testid="screen">
 						<Body />
 					</div>
 					<footer className={styles.pager}>

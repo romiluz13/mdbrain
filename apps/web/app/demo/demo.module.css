@@ -259,6 +259,7 @@
 .main {
 	grid-area: main;
 	min-width: 0;
+	overflow-x: clip;
 	padding: 16px var(--gutter) 96px;
 	max-width: 1320px;
 	width: 100%;

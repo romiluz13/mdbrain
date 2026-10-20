@@ -16,35 +16,45 @@ export type ProxyResponse = {
  * server's own /api/demo route, which uses MDBRAIN_DEMO_* from its environment. */
 export const LIVE = process.env.DEMO_E2E_LIVE === "1"
 
-export async function installDemoProxy(
-	page: Page,
-	override?: (url: URL) => Response | undefined,
-) {
+export type ProxyOptions = {
+	/** Answer a request instead of the proxy (an outage, an empty run), or hold
+	 * it by awaiting before returning undefined. */
+	override?: (url: URL) => Response | undefined | Promise<Response | undefined>
+	/** Rewrite the JSON body the proxy served (a source with no timestamp). */
+	rewrite?: (url: URL, body: unknown) => unknown
+}
+
+export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 	const responses: ProxyResponse[] = []
-	page.on("response", async (response) => {
+	const pending = new Set<Promise<void>>()
+	page.on("response", (response) => {
 		const url = new URL(response.url())
 		if (!url.pathname.startsWith("/api/demo/v1/")) {
 			return
 		}
-		let body: unknown = null
-		try {
-			body = await response.json()
-		} catch {
-			body = null
-		}
-		responses.push({
-			url,
-			status: response.status(),
-			body,
-			requestHeaders: response.request().headers(),
-		})
+		const read = (async () => {
+			let body: unknown = null
+			try {
+				body = await response.json()
+			} catch {
+				body = null
+			}
+			responses.push({
+				url,
+				status: response.status(),
+				body,
+				requestHeaders: response.request().headers(),
+			})
+		})()
+		pending.add(read)
+		void read.finally(() => pending.delete(read))
 	})
 	if (!LIVE) {
 		const upstream = createDemoUpstream()
 		await page.route("**/api/demo/v1/**", async (route) => {
 			const request = route.request()
 			const url = new URL(request.url())
-			const forced = override?.(url)
+			const forced = await options.override?.(url)
 			const served =
 				forced ??
 				(await handleDemoRead(
@@ -55,15 +65,23 @@ export async function installDemoProxy(
 					FIXTURE_ENV,
 					upstream.fetch,
 				))
+			const text = await served.text()
 			await route.fulfill({
 				status: served.status,
 				headers: { "content-type": "application/json" },
-				body: await served.text(),
+				body:
+					options.rewrite && served.ok
+						? JSON.stringify(options.rewrite(url, JSON.parse(text)))
+						: text,
 			})
 		})
 	}
 	return {
 		responses,
+		/** Waits until every response seen so far has been parsed and logged. */
+		async flush(): Promise<void> {
+			await Promise.all([...pending])
+		},
 		/** The latest response to a path, optionally narrowed by a query value. */
 		latest(
 			path: string,
