@@ -20,7 +20,9 @@ for (const [index, chapter] of CHAPTERS.entries()) {
 		await mapReady(page)
 		if (chapter.id === "ask") {
 			await page
-				.getByRole("button", { name: "Is the Halvorsen renewal healthy?" })
+				.getByRole("list", { name: "Example questions" })
+				.getByRole("button")
+				.first()
 				.click()
 			await expect(page.getByTestId("ask-hit").first()).toBeVisible()
 		} else if (chapter.id === "hood") {

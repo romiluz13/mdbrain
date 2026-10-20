@@ -21,6 +21,7 @@ export function SourceSlip({
 				<span className={styles.eventId}>{source.eventId}</span>
 				<TimeLine kind="business" iso={source.businessTime} />
 			</header>
+			<p className={styles.slipMarker}>{source.marker}</p>
 			{source.status === "unavailable" ? (
 				<p className={styles.note}>This source could not be read right now.</p>
 			) : source.text === undefined || source.text === "" ? (

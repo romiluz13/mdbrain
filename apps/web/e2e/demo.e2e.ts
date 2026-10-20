@@ -7,6 +7,7 @@ import { CHAPTERS } from "../app/demo/chapters"
 import {
 	chapterTitle,
 	eventSourceIds,
+	expectCitationMatchesCites,
 	listPages,
 	mapReady,
 	openDemo,
@@ -32,6 +33,7 @@ const withTouch: Act = async (target) => {
  * is back on the opener. `how` is the closing gesture the input mode has. */
 async function citeAndReturn(
 	page: Page,
+	proxy: DemoProxy,
 	act: Act,
 	opener: Locator,
 	how: "escape" | "close",
@@ -40,9 +42,7 @@ async function citeAndReturn(
 	const dialog = page.getByRole("dialog")
 	await expect(dialog).toBeVisible()
 	await expect(dialog.getByTestId("citation-claim")).toBeVisible()
-	await expect(
-		dialog.locator("[data-status]").or(dialog.locator('[data-state="empty"]')),
-	).not.toHaveCount(0)
+	await expectCitationMatchesCites(proxy, dialog)
 	await expect(dialog.locator(":focus")).toHaveCount(1)
 	if (how === "escape") {
 		await page.keyboard.press("Escape")
@@ -67,6 +67,7 @@ async function nextChapter(page: Page, act: Act, from: number): Promise<void> {
 
 async function journey(
 	page: Page,
+	proxy: DemoProxy,
 	act: Act,
 	how: "escape" | "close",
 ): Promise<void> {
@@ -82,6 +83,7 @@ async function journey(
 	await expect(inspector.getByRole("heading", { level: 3 })).toBeVisible()
 	await citeAndReturn(
 		page,
+		proxy,
 		act,
 		inspector.getByRole("button", { name: /^Open citation for:/ }).first(),
 		how,
@@ -90,11 +92,15 @@ async function journey(
 	// 2 Ask: a read-only question, then a hit's citation.
 	await nextChapter(page, act, 0)
 	await act(
-		page.getByRole("button", { name: "Is the Halvorsen renewal healthy?" }),
+		page
+			.getByRole("list", { name: "Example questions" })
+			.getByRole("button")
+			.first(),
 	)
 	await expect(page.getByTestId("ask-hit").first()).toBeVisible()
 	await citeAndReturn(
 		page,
+		proxy,
 		act,
 		page
 			.getByTestId("ask-hit")
@@ -113,6 +119,7 @@ async function journey(
 	).toBeVisible()
 	await citeAndReturn(
 		page,
+		proxy,
 		act,
 		page.getByRole("button", { name: /^Open source / }).first(),
 		how,
@@ -133,6 +140,7 @@ async function journey(
 	await expect(page.getByTestId("contradiction-claim")).toHaveCount(2)
 	await citeAndReturn(
 		page,
+		proxy,
 		act,
 		page.getByRole("button", { name: "Open citation for claim one" }),
 		how,
@@ -147,6 +155,7 @@ async function journey(
 	await expect(page.getByTestId("change-row").first()).toBeVisible()
 	await citeAndReturn(
 		page,
+		proxy,
 		act,
 		page
 			.getByTestId("change-row")
@@ -180,7 +189,7 @@ test.describe("journey", () => {
 	}) => {
 		test.skip(isMobile, "the keyboard journey runs on the desktop project")
 		const proxy = await installDemoProxy(page)
-		await journey(page, withKeyboard(page), "escape")
+		await journey(page, proxy, withKeyboard(page), "escape")
 		expect(listPages(proxy).length).toBeGreaterThan(0)
 	})
 
@@ -189,8 +198,8 @@ test.describe("journey", () => {
 		isMobile,
 	}) => {
 		test.skip(!isMobile, "the touch journey runs on the mobile project")
-		await installDemoProxy(page)
-		await journey(page, withTouch, "close")
+		const proxy = await installDemoProxy(page)
+		await journey(page, proxy, withTouch, "close")
 	})
 })
 

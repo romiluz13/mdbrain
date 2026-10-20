@@ -89,7 +89,11 @@ describe("demo upstream fixture", () => {
 		expect(result.data.claims).toHaveLength(2)
 		for (const entry of result.data.claims) {
 			expect(entry.claim.status).toBe("contradicted")
-			const source = entry.sources[0]
+			expect(entry.sources.kind).toBe("ready")
+			const source =
+				entry.sources.kind === "ready"
+					? entry.sources.data.sources[0]
+					: undefined
 			expect(source?.status).toBe("resolved")
 			const dated = world.sources.find((s) => `evt-${s.id}` === source?.eventId)
 			expect(source?.businessTime).toBe(dated?.date)

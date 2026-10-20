@@ -183,6 +183,19 @@
 	overflow-wrap: anywhere;
 }
 
+.slipMarker {
+	margin: 0;
+	font-family: var(--font-mono);
+	font-size: var(--t12);
+	color: var(--ink-2);
+	overflow-wrap: anywhere;
+}
+
+.clocks {
+	display: grid;
+	gap: 4px;
+}
+
 .slipText {
 	margin: 0;
 	font-family: var(--font-serif);

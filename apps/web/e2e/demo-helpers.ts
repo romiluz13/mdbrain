@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright"
 import { expect, type Locator, type Page } from "@playwright/test"
 import type { MdbrainWikiClaim, MdbrainWikiPageView } from "@mdbrain/client"
 import { CHAPTERS } from "../app/demo/chapters"
+import { formatUtc } from "../lib/demo-data/views.js"
 import type { installDemoProxy } from "./demo-proxy"
 
 export type DemoProxy = Awaited<ReturnType<typeof installDemoProxy>>
@@ -98,6 +99,54 @@ export function eventSourceIds(pages: MdbrainWikiPageView[]): Set<string> {
 }
 
 export const squash = (text: string): string => text.replace(/\s+/g, " ").trim()
+
+type CitedEvent = { eventId: string; text?: string; timestamp?: string }
+
+/** An open citation shows what the proxy's `cite` answers said: one resolved
+ * slip per resolved source, each with its full stored text and its own business
+ * time (or the statement that it has none), and no source marked unavailable. */
+export async function expectCitationMatchesCites(
+	proxy: DemoProxy,
+	dialog: Locator,
+): Promise<void> {
+	await expect(dialog.locator("article[data-status]").first()).toBeVisible()
+	await proxy.flush()
+	const marker = squash(
+		(await dialog.getByTestId("citation-marker").textContent()) ?? "",
+	)
+	const byEvent = new Map<string, CitedEvent>()
+	for (const entry of proxy.responses) {
+		const { event } = (entry.body ?? {}) as { event?: CitedEvent }
+		if (
+			entry.url.pathname === "/api/demo/v1/cite" &&
+			entry.url.searchParams.get("citedBy") === marker &&
+			entry.status === 200 &&
+			event
+		) {
+			byEvent.set(event.eventId, event)
+		}
+	}
+	expect(byEvent.size, `no cite answer for ${marker}`).toBeGreaterThan(0)
+	await expect(
+		dialog.locator('article[data-status="unavailable"]'),
+	).toHaveCount(0)
+	await expect(dialog.locator('article[data-status="resolved"]')).toHaveCount(
+		byEvent.size,
+	)
+	for (const event of byEvent.values()) {
+		const slip = dialog.locator("article").filter({
+			has: dialog.page().getByText(event.eventId, { exact: true }),
+		})
+		if (event.text) {
+			expect(
+				squash((await slip.getByTestId("source-text").textContent()) ?? ""),
+			).toBe(squash(event.text))
+		}
+		await expect(slip.locator('[data-time-kind="business"]')).toContainText(
+			event.timestamp ? formatUtc(event.timestamp) : "missing in this source",
+		)
+	}
+}
 
 /** Lets the finite CSS animations and transitions finish, so a contrast check
  * does not read a half-faded frame. */

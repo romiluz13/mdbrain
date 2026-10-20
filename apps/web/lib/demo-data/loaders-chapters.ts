@@ -88,12 +88,19 @@ export async function loadClaimSources(
 	return mapWithStatus({ data: { sources, otherEvidence } }, upstream.readKey)
 }
 
+const NOT_READABLE: DataState<never> = {
+	kind: "incomplete",
+	reason: "CONTRADICTION_NOT_READABLE",
+	state: null,
+}
+
 export type ContradictionCaseClaim = {
 	pageSlug: string
 	pageTitle: string
 	revision: number
 	claim: MdbrainWikiClaim
-	sources: SourceView[]
+	/** Kept as a state so a failed read is never shown as "no sources". */
+	sources: DataState<ClaimSourcesView>
 }
 export type ContradictionCase = {
 	id: string
@@ -108,7 +115,8 @@ export type ContradictionCase = {
 /** The recorded contradiction chapter: the first unresolved record from the
  *  lint read, read back through the overview of the page that holds it, so both
  *  claims arrive with the page and revision they were read from, then each
- *  claim's sources. A record the caller cannot fully read is not shown. */
+ *  claim's sources. A record the lint read lists but this caller cannot read
+ *  back is reported as not readable, never as "none recorded". */
 export async function loadContradictionCase(
 	upstream: DemoDataUpstream,
 ): Promise<DataState<ContradictionCase>> {
@@ -129,17 +137,16 @@ export async function loadContradictionCase(
 			(item) => item.id === entry.id,
 		)
 		if (record === undefined) {
-			return { kind: "empty" }
+			return NOT_READABLE
 		}
 		const claims = await Promise.all(
 			record.claims.map(async (named): Promise<ContradictionCaseClaim> => {
-				const sources = await loadClaimSources(upstream, named.claim)
 				return {
 					pageSlug: named.pageSlug,
 					pageTitle: named.pageTitle,
 					revision: named.revision,
 					claim: named.claim,
-					sources: sources.kind === "ready" ? sources.data.sources : [],
+					sources: await loadClaimSources(upstream, named.claim),
 				}
 			}),
 		)
@@ -158,7 +165,7 @@ export async function loadContradictionCase(
 		)
 	} catch (error) {
 		if (error instanceof MdbrainClientError && error.status === 404) {
-			return { kind: "empty" }
+			return NOT_READABLE
 		}
 		return errorState(error, upstream.readKey)
 	}

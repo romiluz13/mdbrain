@@ -230,10 +230,13 @@ describe("loadContradictionCase", () => {
 			"Halvorsen",
 			"Halvorsen risk",
 		])
-		expect(result.data.claims.map((c) => c.sources[0]?.businessTime)).toEqual([
-			"2026-09-14T15:20:00.000Z",
-			"2026-09-20T08:00:00.000Z",
-		])
+		expect(
+			result.data.claims.map((c) =>
+				c.sources.kind === "ready"
+					? c.sources.data.sources[0]?.businessTime
+					: undefined,
+			),
+		).toEqual(["2026-09-14T15:20:00.000Z", "2026-09-20T08:00:00.000Z"])
 		expect(calls.map((u) => u.pathname)).toEqual([
 			"/v1/wiki/lint",
 			"/v1/wiki/overview/accounts%2Fhalvorsen",
@@ -250,13 +253,68 @@ describe("loadContradictionCase", () => {
 		expect((await loadContradictionCase(direct)).kind).toBe("empty")
 	})
 
-	it("reports empty when the caller cannot read the record's other claim", async () => {
+	it("says a recorded contradiction is not readable instead of saying none is recorded", async () => {
 		stubUpstream({
 			"/v1/wiki/lint": () =>
 				json({ pages: 3, total: 3, unresolvedContradictions: [entry] }),
 			"/v1/wiki/overview/accounts%2Fhalvorsen": () => json(overview([])),
 		})
-		expect((await loadContradictionCase(direct)).kind).toBe("empty")
+		const result = await loadContradictionCase(direct)
+		expect(result).toEqual({
+			kind: "incomplete",
+			reason: "CONTRADICTION_NOT_READABLE",
+			state: null,
+		})
+	})
+
+	it("says the same when the holding page is gone from the overview read", async () => {
+		stubUpstream({
+			"/v1/wiki/lint": () =>
+				json({ pages: 3, total: 3, unresolvedContradictions: [entry] }),
+			"/v1/wiki/overview/accounts%2Fhalvorsen": () =>
+				json({ error: { code: "NOT_FOUND", message: "gone" } }, 404),
+		})
+		const result = await loadContradictionCase(direct)
+		expect(result.kind).toBe("incomplete")
+		if (result.kind === "incomplete") {
+			expect(result.reason).toBe("CONTRADICTION_NOT_READABLE")
+		}
+	})
+
+	it("keeps a claim whose sources cannot be read visible as an error, not as no sources", async () => {
+		const { marker: _marker, ...unmarked } = claim(
+			"accounts/halvorsen",
+			"healthy",
+			"The renewal is healthy.",
+			["evt-1"],
+		)
+		stubUpstream({
+			"/v1/wiki/lint": () =>
+				json({ pages: 3, total: 3, unresolvedContradictions: [entry] }),
+			"/v1/wiki/overview/accounts%2Fhalvorsen": () =>
+				json(
+					overview([
+						{
+							...record,
+							claims: [
+								{ ...record.claims[0], claim: unmarked },
+								record.claims[1],
+							],
+						},
+					]),
+				),
+			"/v1/cite": () =>
+				json(cited("evt-2", "Ticket", "2026-09-20T08:00:00.000Z")),
+		})
+		const result = await loadContradictionCase(direct)
+		expect(result.kind).toBe("ready")
+		if (result.kind !== "ready") return
+		const [first, second] = result.data.claims
+		expect(first?.sources.kind).toBe("error")
+		if (first?.sources.kind === "error") {
+			expect(first.sources.code).toBe("NO_CLAIM_MARKER")
+		}
+		expect(second?.sources.kind).toBe("ready")
 	})
 })
 

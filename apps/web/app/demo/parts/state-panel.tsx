@@ -16,6 +16,10 @@ const INCOMPLETE: Record<IncompleteReason, { title: string; body: string }> = {
 		title: "This run is not finished",
 		body: "The run is still being filled. What is stored so far is shown.",
 	},
+	CONTRADICTION_NOT_READABLE: {
+		title: "Recorded, but not readable here",
+		body: "The detector recorded a contradiction, but this read-only key cannot read both of its claims, so the case is not shown. It is counted, not hidden.",
+	},
 	AGENT_ACTIVITY_NOT_EXPOSED: {
 		title: "Not yet in this run",
 		body: "No agent activity is stored in this run, and the read API has no route for it yet. Nothing is invented here.",

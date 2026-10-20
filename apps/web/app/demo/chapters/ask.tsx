@@ -2,19 +2,16 @@
 
 import { useId, useMemo, useRef, type FormEvent } from "react"
 import { loadWikiSearch } from "../../../lib/demo-data/loaders-chapters.js"
+import { suggestQuestions } from "../../../lib/demo-data/views.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../chapters.module.css"
 import { GraphStage } from "../parts/graph-stage.js"
 import { StatePanel } from "../parts/state-panel.js"
 
-const EXAMPLES = [
-	"Is the Halvorsen renewal healthy?",
-	"What is the data retention policy?",
-	"Which accounts had an outage?",
-]
+const EXAMPLES_SHOWN = 3
 
 export function AskChapter() {
-	const { upstream, ask, setAsk, cite, pin, data } = useDemo()
+	const { upstream, ask, setAsk, cite, pin, data, graph } = useDemo()
 	const inputId = useId()
 	const latest = useRef(0)
 
@@ -47,6 +44,7 @@ export function AskChapter() {
 		[ask.result],
 	)
 	const map = data.map.kind === "ready" ? data.map.data : null
+	const examples = graph ? suggestQuestions(graph, EXAMPLES_SHOWN) : []
 
 	return (
 		<div className={styles.split}>
@@ -69,15 +67,24 @@ export function AskChapter() {
 						</button>
 					</div>
 				</form>
-				<ul className={styles.chips} aria-label="Example questions">
-					{EXAMPLES.map((example) => (
-						<li key={example}>
-							<button type="button" onClick={() => void run(example)}>
-								{example}
-							</button>
-						</li>
-					))}
-				</ul>
+				{examples.length > 0 ? (
+					<ul className={styles.chips} aria-label="Example questions">
+						{examples.map((example) => (
+							<li key={example.slug}>
+								<button
+									type="button"
+									onClick={() => void run(example.question)}
+								>
+									{example.question}
+								</button>
+							</li>
+						))}
+					</ul>
+				) : (
+					<p className={styles.note}>
+						Example questions appear once the pages are read.
+					</p>
+				)}
 				<p className={styles.note} data-testid="ask-note">
 					Read-only: this is the stored text search lane. It returns stored
 					claims, not a written answer. Written answers from a model arrive in a

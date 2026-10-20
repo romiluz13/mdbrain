@@ -60,22 +60,30 @@ export function ContradictionChapter() {
 									{entry.claim.status} · confidence{" "}
 									{Math.round(entry.claim.confidence * 100)}%
 								</p>
-								{entry.sources.length === 0 ? (
-									<p className={styles.note}>
-										This claim cites no source event.
-									</p>
-								) : (
-									<ul className={styles.slipList}>
-										{entry.sources.map((source) => (
-											<li key={source.eventId}>
-												<SourceSlip
-													source={source}
-													claimText={entry.claim.text}
-												/>
-											</li>
-										))}
-									</ul>
-								)}
+								<TimeLine
+									kind="business"
+									iso={undefined}
+									missingNote="missing on the claim; its sources below carry their own"
+								/>
+								<StatePanel
+									state={entry.sources}
+									what="this claim's sources"
+									emptyNote="This claim cites no source event."
+									onRetry={reload}
+								>
+									{(view) => (
+										<ul className={styles.slipList}>
+											{view.sources.map((source) => (
+												<li key={source.eventId}>
+													<SourceSlip
+														source={source}
+														claimText={entry.claim.text}
+													/>
+												</li>
+											))}
+										</ul>
+									)}
+								</StatePanel>
 								<button
 									type="button"
 									className={styles.linkButton}

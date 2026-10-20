@@ -85,6 +85,73 @@ test.describe("values on screen equal the proxy's responses", () => {
 		)
 	})
 
+	test("business time is stated missing wherever only ingestion time exists, and shown apart from it", async ({
+		page,
+	}) => {
+		const proxy = await installDemoProxy(page)
+		await openDemo(page)
+		await mapReady(page)
+		await proxy.flush()
+		const stored = listPages(proxy).find((candidate) =>
+			candidate.claims.some((claim) =>
+				claim.evidence.some((evidence) => evidence.kind === "event"),
+			),
+		)
+		if (!stored) throw new Error("no stored page has a claim with a source")
+		await page.getByLabel("Pick a page").selectOption({ label: stored.title })
+		const inspector = page.getByRole("complementary", {
+			name: "Page inspector",
+		})
+		await expect(
+			inspector.locator('[data-time-kind="business"][data-missing]'),
+		).toContainText("missing on a page")
+		await expect(
+			inspector.locator('[data-time-kind="ingestion"]').first(),
+		).toContainText(formatUtc(stored.createdAt))
+
+		const revisions = proxy.responses
+			.filter((entry) => entry.url.pathname === "/api/demo/v1/wiki/changes")
+			.flatMap(
+				(entry) =>
+					(
+						entry.body as {
+							changes?: Array<{
+								pageSlug: string
+								revision: number
+								createdAt: string
+							}>
+						}
+					).changes ?? [],
+			)
+		const own = revisions.find(
+			(change) =>
+				change.pageSlug === stored.slug && change.revision === stored.revision,
+		)
+		await inspector
+			.getByRole("button", { name: /^Open citation for:/ })
+			.first()
+			.click()
+		const dialog = page.getByRole("dialog")
+		await expect(dialog.getByTestId("citation-claim")).toBeVisible()
+		await expect(dialog.locator('[data-time-kind="ingestion"]')).toContainText(
+			formatUtc(own?.createdAt ?? stored.updatedAt),
+		)
+		await expect(
+			dialog.locator('[data-time-kind="business"][data-missing]').first(),
+		).toContainText("missing on the claim")
+		await expect(
+			dialog.locator('article [data-time-kind="business"]').first(),
+		).toBeVisible()
+		await page.keyboard.press("Escape")
+
+		await goto(page, 6)
+		const row = page.getByTestId("change-row").first()
+		await expect(row.locator('[data-time-kind="ingestion"]')).toBeVisible()
+		await expect(
+			row.locator('[data-time-kind="business"][data-missing]'),
+		).toContainText("missing on a revision")
+	})
+
 	test("ask lists the search response's pages in its order, with their scores", async ({
 		page,
 	}) => {
@@ -92,14 +159,23 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await openDemo(page)
 		await mapReady(page)
 		await goto(page, 1)
-		await page.getByLabel("Your question").fill("Halvorsen renewal")
-		await page
-			.getByTestId("screen")
-			.getByRole("button", { name: "Ask", exact: true })
-			.click()
+		const examples = page
+			.getByRole("list", { name: "Example questions" })
+			.getByRole("button")
+		await expect(examples.first()).toBeVisible()
+		await proxy.flush()
+		const titles = new Set(listPages(proxy).map((stored) => stored.title))
+		const questions = await examples.allTextContents()
+		for (const question of questions) {
+			const title = question
+				.replace(/^What do we know about /, "")
+				.replace(/\?$/, "")
+			expect(titles.has(title), `${question} names no stored page`).toBe(true)
+		}
+		await examples.first().click()
 		await expect(page.getByTestId("ask-hit").first()).toBeVisible()
 		await proxy.flush()
-		const search = proxy.latest("wiki/search", { query: "Halvorsen renewal" })
+		const search = proxy.latest("wiki/search", { query: questions[0] ?? "" })
 		const results = bodyOf<{
 			results: Array<{ page: { title: string }; score: number }>
 		}>(search, "search").results
@@ -296,6 +372,56 @@ test.describe("states", () => {
 		}
 	})
 
+	test("every chapter states what it could not read, and what is not stored", async ({
+		page,
+	}) => {
+		const down = new Response(
+			JSON.stringify({
+				error: { code: "UPSTREAM_ERROR", message: "the API is down" },
+			}),
+			{ status: 502 },
+		)
+		const emptyBody: Record<string, unknown> = {
+			"/api/demo/v1/wiki": { pages: [], total: 0 },
+			"/api/demo/v1/wiki/lint": {
+				pages: 0,
+				total: 0,
+				unresolvedContradictions: [],
+			},
+		}
+		let mode: "down" | "empty" = "down"
+		await installDemoProxy(page, {
+			override: (url) =>
+				mode === "down"
+					? down.clone()
+					: new Response(JSON.stringify(emptyBody[url.pathname] ?? {}), {
+							status: 200,
+						}),
+		})
+		const agents = CHAPTERS.findIndex((chapter) => chapter.id === "agents")
+		await openDemo(page)
+		for (const [stateMode, expected] of [
+			["down", "error"],
+			["empty", "empty"],
+		] as const) {
+			mode = stateMode
+			await page.reload()
+			for (const [index, chapter] of CHAPTERS.entries()) {
+				await goto(page, index)
+				const screen = page.getByTestId("screen")
+				const want = index === agents ? "incomplete" : expected
+				await expect(
+					screen.locator(`[data-state="${want}"]`).first(),
+					`${chapter.id} under ${stateMode}`,
+				).toBeVisible()
+				await expect(
+					screen.locator('[data-state="loading"]'),
+					`${chapter.id} is still loading under ${stateMode}`,
+				).toHaveCount(0)
+			}
+		}
+	})
+
 	test("a source with no business time says it is missing, and keeps ingestion time", async ({
 		page,
 	}) => {
@@ -312,7 +438,7 @@ test.describe("states", () => {
 		await goto(page, 4)
 		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
 		const missing = page.locator(
-			'[data-time-kind="business"][data-missing="true"]',
+			'article[data-status="resolved"] [data-time-kind="business"][data-missing="true"]',
 		)
 		await expect(missing.first()).toContainText("missing in this source")
 		await expect(

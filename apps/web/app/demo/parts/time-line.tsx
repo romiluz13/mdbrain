@@ -6,6 +6,9 @@ type Props = {
 	iso: string | undefined
 	/** What the instant is, after the clock's name: "first stored". */
 	note?: string
+	/** What to say when the clock is absent, where "missing in this source"
+	 * would name the wrong level (a page, a claim, a revision). */
+	missingNote?: string
 }
 
 const LABEL = {
@@ -16,7 +19,7 @@ const LABEL = {
 /** One of the two clocks, always named. Ingestion time is when mdbrain stored
  * something; business time is when the source says it happened. A missing
  * business time is stated, not hidden or invented. */
-export function TimeLine({ kind, iso, note }: Props) {
+export function TimeLine({ kind, iso, note, missingNote }: Props) {
 	const missing = iso === undefined || formatUtc(iso) === "unknown"
 	return (
 		<span
@@ -29,7 +32,8 @@ export function TimeLine({ kind, iso, note }: Props) {
 			</span>
 			{missing ? (
 				<span>
-					{kind === "business" ? "missing in this source" : "unknown"}
+					{missingNote ??
+						(kind === "business" ? "missing in this source" : "unknown")}
 				</span>
 			) : (
 				<time dateTime={iso}>{formatUtc(iso)}</time>

@@ -6,10 +6,12 @@ import {
 	type ClaimSourcesView,
 } from "../../../lib/demo-data/loaders-chapters.js"
 import type { DataState } from "../../../lib/demo-data/states.js"
+import { revisionStoredAt } from "../../../lib/demo-data/views.js"
 import { useDemo, type CitationTarget } from "../demo-context.js"
 import styles from "../citation.module.css"
 import { StatePanel } from "./state-panel.js"
 import { SourceSlip } from "./source-slip.js"
+import { TimeLine } from "./time-line.js"
 
 type Props = {
 	target: CitationTarget | null
@@ -54,7 +56,7 @@ export function CitationDialog({ target, onClose }: Props) {
 }
 
 function CitationBody({ target }: { target: CitationTarget }) {
-	const { upstream } = useDemo()
+	const { upstream, data } = useDemo()
 	const [sources, setSources] = useState<DataState<ClaimSourcesView>>({
 		kind: "loading",
 	})
@@ -73,6 +75,15 @@ function CitationBody({ target }: { target: CitationTarget }) {
 		}
 	}, [upstream, claim])
 
+	const storedAt =
+		target.revision === undefined
+			? undefined
+			: revisionStoredAt(
+					data.map.kind === "ready" ? data.map.data : null,
+					data.changes.kind === "ready" ? data.changes.data : null,
+					target.pageSlug,
+					target.revision,
+				)
 	const eventCount = claim.evidence.filter(
 		(evidence) => evidence.kind === "event",
 	).length
@@ -113,7 +124,19 @@ function CitationBody({ target }: { target: CitationTarget }) {
 					</div>
 				) : null}
 			</dl>
-			{claim.marker ? <p className={styles.marker}>{claim.marker}</p> : null}
+			<div className={styles.clocks}>
+				<TimeLine kind="ingestion" iso={storedAt} note="revision stored" />
+				<TimeLine
+					kind="business"
+					iso={undefined}
+					missingNote="missing on the claim; each source below carries its own"
+				/>
+			</div>
+			{claim.marker ? (
+				<p className={styles.marker} data-testid="citation-marker">
+					{claim.marker}
+				</p>
+			) : null}
 			<h3>Evidence</h3>
 			<StatePanel
 				state={sources}

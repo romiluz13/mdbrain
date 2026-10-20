@@ -98,6 +98,11 @@ export function ChangesChapter() {
 												iso={change.createdAt}
 												note="stored"
 											/>
+											<TimeLine
+												kind="business"
+												iso={undefined}
+												missingNote="missing on a revision; its sources carry their own"
+											/>
 											{added ? (
 												<>
 													<p className={styles.record}>{added.text}</p>

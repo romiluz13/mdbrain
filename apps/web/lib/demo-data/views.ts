@@ -179,6 +179,57 @@ export function flagPages(graph: Graph, slugs: ReadonlySet<string>): Graph {
 	}
 }
 
+/** When a page revision was stored (ingestion time): the revision's own change
+ *  record when it was read, else the page's update time if the revision is the
+ *  page's current one. An older revision with no record has no honest time. */
+export function revisionStoredAt(
+	map: WikiMapView | null,
+	changes: ChangesView | null,
+	slug: string,
+	revision: number,
+): string | undefined {
+	const change = changes?.changes.find(
+		(candidate) =>
+			candidate.pageSlug === slug && candidate.revision === revision,
+	)
+	if (change !== undefined) {
+		return change.createdAt
+	}
+	const page = map?.pages.find((candidate) => candidate.slug === slug)
+	return page !== undefined && page.revision === revision
+		? page.updatedAt
+		: undefined
+}
+
+export type QuestionSuggestion = { slug: string; question: string }
+
+/** Example questions drawn from what is stored: the best-connected page of
+ *  each kind, most connected first, each asked about by its own title. No
+ *  question is written into the page, so a different run suggests its own. */
+export function suggestQuestions(
+	graph: Graph,
+	limit: number,
+): QuestionSuggestion[] {
+	const best = new Map<GroupId, GraphNode>()
+	for (const node of graph.nodes) {
+		const held = best.get(node.group)
+		if (
+			held === undefined ||
+			node.degree > held.degree ||
+			(node.degree === held.degree && node.slug < held.slug)
+		) {
+			best.set(node.group, node)
+		}
+	}
+	return [...best.values()]
+		.sort((a, b) => b.degree - a.degree || a.slug.localeCompare(b.slug))
+		.slice(0, limit)
+		.map((node) => ({
+			slug: node.slug,
+			question: `What do we know about ${node.title}?`,
+		}))
+}
+
 export type SourceIndexEntry = {
 	eventId: string
 	pageSlug: string

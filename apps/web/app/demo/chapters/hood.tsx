@@ -1,15 +1,36 @@
 "use client"
 
 import { useState } from "react"
+import type { DataState } from "../../../lib/demo-data/states.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../chapters.module.css"
+import { StatePanel } from "../parts/state-panel.js"
 
 type Read = {
 	id: string
 	label: string
 	path: string | null
+	/** Why there is no path yet; shown in place of it. */
+	blocked?: string
 	sdk: string
 	mcp: string
+}
+
+/** Why a read that points at stored data cannot be run, or null when that
+ * data was read. */
+function waitingFor(state: DataState<unknown>, what: string): string | null {
+	switch (state.kind) {
+		case "loading":
+			return `waiting for ${what} to be read`
+		case "empty":
+			return `no ${what} are stored in this run`
+		case "error":
+			return `${what} could not be read (${state.code})`
+		case "incomplete":
+			return `${what} are incomplete in this run`
+		case "ready":
+			return null
+	}
 }
 
 type Result =
@@ -21,8 +42,10 @@ type Result =
 const EXCERPT = 1200
 
 export function HoodChapter() {
-	const { data } = useDemo()
+	const { data, reload } = useDemo()
 	const map = data.map.kind === "ready" ? data.map.data : null
+	const noPages = waitingFor(data.map, "the pages")
+	const noWindow = noPages ?? waitingFor(data.changes, "the first stored time")
 	const firstPage = map?.pages[0]
 	const withSource = map?.pages.find((page) =>
 		page.claims.some(
@@ -49,6 +72,7 @@ export function HoodChapter() {
 			path: firstPage
 				? `/api/demo/v1/wiki/${encodeURIComponent(firstPage.slug)}`
 				: null,
+			blocked: noPages ?? undefined,
 			sdk: "wikiGet",
 			mcp: "mdbrain_wiki_get",
 		},
@@ -58,6 +82,7 @@ export function HoodChapter() {
 			path: firstPage
 				? `/api/demo/v1/wiki/overview/${encodeURIComponent(firstPage.slug)}`
 				: null,
+			blocked: noPages ?? undefined,
 			sdk: "overview",
 			mcp: "mdbrain_wiki_overview",
 		},
@@ -67,6 +92,7 @@ export function HoodChapter() {
 			path: since
 				? `/api/demo/v1/wiki/changes?since=${encodeURIComponent(since)}`
 				: null,
+			blocked: noWindow ?? undefined,
 			sdk: "changes",
 			mcp: "mdbrain_wiki_changes",
 		},
@@ -84,13 +110,17 @@ export function HoodChapter() {
 				claim?.marker && evidence?.marker
 					? `/api/demo/v1/cite?marker=${encodeURIComponent(evidence.marker)}&citedBy=${encodeURIComponent(claim.marker)}`
 					: null,
+			blocked: noPages ?? "no stored claim cites a source event",
 			sdk: "cite",
 			mcp: "mdbrain_cite",
 		},
 		{
 			id: "wiki-search",
 			label: "Ask a question",
-			path: "/api/demo/v1/wiki/search?query=renewal&maxResults=3",
+			path: firstPage
+				? `/api/demo/v1/wiki/search?query=${encodeURIComponent(firstPage.title)}&maxResults=3`
+				: null,
+			blocked: noPages ?? undefined,
 			sdk: "wikiSearch",
 			mcp: "mdbrain_wiki_search",
 		},
@@ -102,6 +132,14 @@ export function HoodChapter() {
 				pins the run on the server, so neither ever reaches the browser, and it
 				forwards nothing outside this list.
 			</p>
+			<StatePanel
+				state={data.map}
+				what="the page list"
+				emptyNote="No pages are stored in this run yet, so the reads that point at a page cannot run."
+				onRetry={reload}
+			>
+				{() => null}
+			</StatePanel>
 			<ul className={styles.reads}>
 				{reads.map((read) => (
 					<ReadRow key={read.id} read={read} />
@@ -153,7 +191,7 @@ function ReadRow({ read }: { read: Read }) {
 					<p className={styles.mono}>
 						{read.path
 							? `GET ${read.path}`
-							: "waiting for the pages to be read"}
+							: (read.blocked ?? "waiting for the pages to be read")}
 					</p>
 					<p className={styles.claimMeta}>
 						SDK <span className={styles.mono}>{read.sdk}</span> · MCP{" "}

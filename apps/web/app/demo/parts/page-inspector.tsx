@@ -98,6 +98,11 @@ export function PageInspector() {
 							iso={page.updatedAt}
 							note="last updated"
 						/>
+						<TimeLine
+							kind="business"
+							iso={undefined}
+							missingNote="missing on a page; each source carries its own"
+						/>
 						{page.links.length > 0 ? (
 							<>
 								<h4>Linked pages</h4>

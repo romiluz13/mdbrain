@@ -10,6 +10,8 @@ import {
 	flagPages,
 	groupOf,
 	rankClaims,
+	revisionStoredAt,
+	suggestQuestions,
 	summarizeChanges,
 } from "./views.js"
 
@@ -313,5 +315,79 @@ describe("buildSourceIndex", () => {
 		expect(buildSourceIndex(view([page("a", { claims: [other] })]), 5)).toEqual(
 			[],
 		)
+	})
+})
+
+describe("revisionStoredAt", () => {
+	const map = view([
+		page("a", { revision: 3, updatedAt: "2026-10-20T09:40:00.000Z" }),
+	])
+	const changes: ChangesView = {
+		changes: [
+			{
+				pageSlug: "a",
+				revision: 2,
+				editKind: "update",
+				createdAt: "2026-10-20T09:20:00.000Z",
+				baseline: "previous",
+				baselineRevision: 1,
+				claims: null,
+			},
+		],
+		window: { since: "s", until: "u", settled: true },
+		hasMore: false,
+		complete: true,
+	}
+
+	it("prefers the revision's own change record", () => {
+		expect(revisionStoredAt(map, changes, "a", 2)).toBe(
+			"2026-10-20T09:20:00.000Z",
+		)
+	})
+
+	it("falls back to the update time only for the page's current revision", () => {
+		expect(revisionStoredAt(map, null, "a", 3)).toBe("2026-10-20T09:40:00.000Z")
+	})
+
+	it("does not guess for an older revision it has no record of", () => {
+		expect(revisionStoredAt(map, null, "a", 1)).toBeUndefined()
+		expect(revisionStoredAt(null, null, "a", 3)).toBeUndefined()
+		expect(revisionStoredAt(map, changes, "zzz", 1)).toBeUndefined()
+	})
+})
+
+describe("suggestQuestions", () => {
+	const linked = (slug: string, type: string, links: string[]) =>
+		page(slug, {
+			type,
+			title: `Title of ${slug}`,
+			links: links.map((target) => ({ slug: target, kind: "mentions" })),
+		})
+	const graph = buildGraph(
+		view([
+			linked("acme", "customer-account", ["pol", "bob", "inc"]),
+			linked("zeta", "customer-account", ["acme"]),
+			linked("pol", "policy", ["acme"]),
+			linked("bob", "person", []),
+			linked("inc", "incidents", ["pol"]),
+		]),
+	)
+
+	it("asks about the best-connected page of each kind, most connected first (ties by slug), from stored titles", () => {
+		expect(suggestQuestions(graph, 3)).toEqual([
+			{ slug: "acme", question: "What do we know about Title of acme?" },
+			{ slug: "inc", question: "What do we know about Title of inc?" },
+			{ slug: "pol", question: "What do we know about Title of pol?" },
+		])
+	})
+
+	it("never offers two questions about the same kind while another kind is unused", () => {
+		const slugs = suggestQuestions(graph, 4).map((entry) => entry.slug)
+		expect(slugs).not.toContain("zeta")
+		expect(new Set(slugs).size).toBe(slugs.length)
+	})
+
+	it("offers nothing for an empty brain", () => {
+		expect(suggestQuestions(buildGraph(view([])), 3)).toEqual([])
 	})
 })
