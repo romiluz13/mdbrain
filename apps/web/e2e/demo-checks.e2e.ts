@@ -567,12 +567,40 @@ test("the arrow keys step the chapters from the pager, and walk the rail without
 	).toBeFocused()
 })
 
+type MotionLog = { started: string[]; peak: number }
+
+/** From before any page script, records every animation or transition that
+ * starts and the most that ever ran at once, so a test can see the first
+ * frames and not only where the page settles. */
+async function watchMotion(page: Page): Promise<() => Promise<MotionLog>> {
+	await page.addInitScript(() => {
+		const log: MotionLog = { started: [], peak: 0 }
+		;(window as unknown as { __motion: MotionLog }).__motion = log
+		for (const type of ["animationstart", "transitionrun"]) {
+			window.addEventListener(
+				type,
+				(event) =>
+					log.started.push(`${type}:${(event.target as Element).nodeName}`),
+				true,
+			)
+		}
+		const sample = () => {
+			log.peak = Math.max(log.peak, document.getAnimations().length)
+			requestAnimationFrame(sample)
+		}
+		requestAnimationFrame(sample)
+	})
+	return () =>
+		page.evaluate(() => (window as unknown as { __motion: MotionLog }).__motion)
+}
+
 test.describe("reduced motion", () => {
 	test.use({ contextOptions: { reducedMotion: "reduce" } })
 
 	test("is honored from the first frame: no animation or transition runs", async ({
 		page,
 	}) => {
+		const motion = await watchMotion(page)
 		await installDemoProxy(page)
 		await page.goto("/demo#contradiction")
 		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
@@ -595,10 +623,15 @@ test.describe("reduced motion", () => {
 		await expect
 			.poll(() => page.evaluate(() => document.getAnimations().length))
 			.toBe(0)
+		await goto(page, 5)
+		await goto(page, 0)
+		await mapReady(page)
+		expect(await motion()).toEqual({ started: [], peak: 0 })
 	})
 })
 
 test("without the preference the chapter eases in", async ({ page }) => {
+	const motion = await watchMotion(page)
 	await installDemoProxy(page)
 	await page.goto("/demo")
 	await expect(page.locator("[data-motion]").first()).toHaveAttribute(
@@ -610,6 +643,9 @@ test("without the preference the chapter eases in", async ({ page }) => {
 			.getByTestId("screen")
 			.evaluate((element) => getComputedStyle(element).animationName),
 	).not.toBe("none")
+	await expect
+		.poll(async () => (await motion()).started.length)
+		.toBeGreaterThan(0)
 })
 
 test("every interactive control on every chapter is at least 44 px", async ({
