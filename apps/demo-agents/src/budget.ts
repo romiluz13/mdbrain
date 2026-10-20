@@ -243,6 +243,17 @@ const BOUNDABLE_ANTHROPIC_OPTIONS = new Set([
 	"metadata",
 ])
 
+// Turning thinking off adds no input and can only lower output, which
+// maxOutputTokens already bounds; every other thinking mode stays refused.
+function isThinkingDisabled(value: unknown): boolean {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		Object.keys(value).length === 1 &&
+		(value as { type?: unknown }).type === "disabled"
+	)
+}
+
 function unboundable(reason: string): never {
 	throw new BudgetInputRefusedError(
 		`model call input cannot be bounded: ${reason}`,
@@ -280,7 +291,8 @@ function assertBoundable(params: LanguageModelV2CallOptions): void {
 		if (namespace !== "anthropic") {
 			unboundable(`providerOptions.${namespace} is not known to add no input`)
 		}
-		for (const key of Object.keys(options)) {
+		for (const [key, value] of Object.entries(options)) {
+			if (key === "thinking" && isThinkingDisabled(value)) continue
 			if (!BOUNDABLE_ANTHROPIC_OPTIONS.has(key)) {
 				unboundable(
 					`providerOptions.anthropic.${key} can change what is billed`,

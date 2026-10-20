@@ -99,9 +99,3 @@ export function recordPrompt(world: World, spec: SourceSpec): string {
 	]
 	return lines.filter(Boolean).join("\n")
 }
-
-// Conservative token bound: English text averages about four characters per
-// token, so half the character count leaves wide headroom.
-export function inputTokenBound(...parts: string[]): number {
-	return Math.ceil(parts.reduce((n, p) => n + p.length, 0) / 2)
-}

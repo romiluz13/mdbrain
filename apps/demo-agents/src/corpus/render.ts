@@ -20,12 +20,7 @@ import {
 	writeWorld,
 } from "./corpus-files.js"
 import { realCompaniesIn } from "./names.js"
-import {
-	OUTPUT_TOKENS,
-	inputTokenBound,
-	recordPrompt,
-	systemPrompt,
-} from "./prompt.js"
+import { OUTPUT_TOKENS, recordPrompt, systemPrompt } from "./prompt.js"
 import {
 	CONTROL_DATABASE,
 	CORPUS_BUDGET_KEY,
@@ -99,14 +94,6 @@ async function call(
 	spec: SourceSpec,
 	messages: ModelMessage[],
 ): Promise<string> {
-	const bound = inputTokenBound(
-		system,
-		...messages.map((m) => (typeof m.content === "string" ? m.content : "")),
-	)
-	if (bound > MAX_INPUT_TOKENS)
-		throw new Error(
-			`${spec.id}: prompt bound ${bound} exceeds ${MAX_INPUT_TOKENS}`,
-		)
 	const result = await generateText({
 		model,
 		maxOutputTokens: OUTPUT_TOKENS[spec.length],

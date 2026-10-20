@@ -418,6 +418,14 @@ describe("input cap", () => {
 			},
 		],
 		[
+			"adaptive thinking",
+			/providerOptions\.anthropic\.thinking/,
+			{
+				prompt: userPrompt("hi"),
+				providerOptions: { anthropic: { thinking: { type: "adaptive" } } },
+			},
+		],
+		[
 			"options for another provider",
 			/openai/,
 			{ prompt: userPrompt("hi"), providerOptions: { openai: { user: "u" } } },
@@ -458,6 +466,17 @@ describe("input cap", () => {
 			],
 			maxOutputTokens: 10,
 			providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+		})
+		expect(model.doGenerateCalls).toBe(1)
+	})
+
+	it("allows turning thinking off, which adds no input and only lowers output", async () => {
+		const model = mockModel()
+		const { budget } = fakeBudget()
+		await capped(model, budget, 10_000).doGenerate({
+			prompt: userPrompt("hi"),
+			maxOutputTokens: 10,
+			providerOptions: { anthropic: { thinking: { type: "disabled" } } },
 		})
 		expect(model.doGenerateCalls).toBe(1)
 	})
