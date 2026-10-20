@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { parseScopedApiKeyPolicies } from "../apps/api/src/principal.js"
 import {
 	DEMO_DATABASES,
 	assertDemoDatabase,
@@ -147,5 +148,106 @@ describe("demo run slots", () => {
 		expect(() => bad("many")).toThrow(/MDBRAIN_DEMO_API_RATE_LIMIT/)
 		expect(() => bad("1.5")).toThrow(/MDBRAIN_DEMO_API_RATE_LIMIT/)
 		expect(() => bad("-1")).toThrow(/MDBRAIN_DEMO_API_RATE_LIMIT/)
+	})
+})
+
+describe("demo proposers", () => {
+	const stackDir = "/tmp/demo-stack"
+	const withProposers = {
+		...secrets,
+		MDBRAIN_DEMO_PROPOSER_KEYS: '["proposer-token-one", "proposer-token-two"]',
+	}
+	const policiesOf = (all: Record<string, string>) =>
+		JSON.parse(
+			buildDemoStackEnv(all, { stackDir }).api.MDBRAIN_API_SCOPED_KEYS ?? "",
+		)
+
+	it("gives proposer i propose-only access to slot i's scopeRef and nothing else", () => {
+		expect(policiesOf(withProposers)).toEqual({
+			"proposer-token-one": {
+				subjectId: "demo-proposer-1",
+				displayName: "Demo proposer 1",
+				grants: [{ scope: "workspace", scopeRef: "demo-run-1" }],
+				capabilities: ["read", "propose"],
+			},
+			"proposer-token-two": {
+				subjectId: "demo-proposer-2",
+				displayName: "Demo proposer 2",
+				grants: [{ scope: "workspace", scopeRef: "demo-run-2" }],
+				capabilities: ["read", "propose"],
+			},
+		})
+	})
+
+	it("produces keys the API accepts as proposal-only principals", () => {
+		const credentials = parseScopedApiKeyPolicies(
+			buildDemoStackEnv(withProposers, { stackDir }).api
+				.MDBRAIN_API_SCOPED_KEYS,
+		)
+
+		expect(credentials.map((c) => c.principal.subjectId)).toEqual([
+			"demo-proposer-1",
+			"demo-proposer-2",
+		])
+		for (const credential of credentials) {
+			expect(credential.principal.capabilities).toEqual(["read", "propose"])
+			expect(credential.principal.trustTier).toBe("standard")
+		}
+		expect(credentials[1]?.principal.allowedScopes).toEqual([
+			{ scope: "workspace", scopeRef: "demo-run-2" },
+		])
+	})
+
+	it("sits beside the slot keys without changing them", () => {
+		const both = policiesOf({
+			...withProposers,
+			MDBRAIN_DEMO_SLOT_KEYS: '["slot-token-one", "slot-token-two"]',
+		})
+
+		expect(Object.keys(both)).toEqual([
+			"slot-token-one",
+			"slot-token-two",
+			"proposer-token-one",
+			"proposer-token-two",
+		])
+		expect(both["slot-token-one"]).toEqual({
+			grants: [{ scope: "workspace", scopeRef: "demo-run-1" }],
+		})
+	})
+
+	it("adds no scoped keys when none are configured", () => {
+		expect(
+			buildDemoStackEnv(secrets, { stackDir }).api.MDBRAIN_API_SCOPED_KEYS,
+		).toBeUndefined()
+	})
+
+	it("rejects malformed, empty or duplicate proposer keys", () => {
+		const bad = (value: string) =>
+			buildDemoStackEnv(
+				{ ...secrets, MDBRAIN_DEMO_PROPOSER_KEYS: value },
+				{ stackDir },
+			)
+		expect(() => bad("not-json")).toThrow(/MDBRAIN_DEMO_PROPOSER_KEYS/)
+		expect(() => bad("[]")).toThrow(/MDBRAIN_DEMO_PROPOSER_KEYS/)
+		expect(() => bad('["ok", "ok"]')).toThrow(/MDBRAIN_DEMO_PROPOSER_KEYS/)
+		expect(() => bad('["ok", 42]')).toThrow(/MDBRAIN_DEMO_PROPOSER_KEYS/)
+	})
+
+	it("refuses a token that is also a slot key or the admin key", () => {
+		const clash = (token: string) =>
+			buildDemoStackEnv(
+				{
+					...secrets,
+					MDBRAIN_DEMO_SLOT_KEYS: '["slot-token-one"]',
+					MDBRAIN_DEMO_PROPOSER_KEYS: JSON.stringify([token]),
+				},
+				{ stackDir },
+			)
+		expect(() => clash("slot-token-one")).toThrow(
+			/MDBRAIN_DEMO_PROPOSER_KEYS.*slot/,
+		)
+		expect(() => clash("demo-local-api")).toThrow(
+			/MDBRAIN_DEMO_PROPOSER_KEYS.*admin/,
+		)
 	})
 })

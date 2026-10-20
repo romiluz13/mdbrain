@@ -4,6 +4,7 @@ import {
 	authorizePrincipalRequest,
 	createAdminPrincipal,
 	createDevelopmentPrincipal,
+	isProposalOnlyPrincipal,
 	parseScopedApiKeyPolicies,
 	resolveBearerPrincipal,
 } from "./principal.js"
@@ -225,5 +226,52 @@ describe("server-owned API principals", () => {
 		).toThrow(
 			"MDBRAIN_API_SCOPED_KEYS object-form policy must not contain a token field",
 		)
+	})
+})
+
+describe("proposal-only principals", () => {
+	const policy = (capabilities: string[]) =>
+		parseScopedApiKeyPolicies(
+			JSON.stringify([
+				{ token: "secret", scopes: ["workspace"], capabilities },
+			]),
+		)[0]?.principal as NonNullable<
+			ReturnType<typeof parseScopedApiKeyPolicies>[number]
+		>["principal"]
+
+	it("accepts propose as a capability and keeps it out of the default grant", () => {
+		expect(policy(["read", "propose"]).capabilities).toEqual([
+			"read",
+			"propose",
+		])
+		const [defaults] = parseScopedApiKeyPolicies(
+			JSON.stringify([{ token: "secret", scopes: ["workspace"] }]),
+		)
+		expect(defaults?.principal.capabilities).toEqual(["read", "write"])
+	})
+
+	it("is proposal-only only with propose and without write", () => {
+		expect(isProposalOnlyPrincipal(policy(["read", "propose"]))).toBe(true)
+		expect(isProposalOnlyPrincipal(policy(["read", "write", "propose"]))).toBe(
+			false,
+		)
+		expect(isProposalOnlyPrincipal(policy(["read", "write"]))).toBe(false)
+		expect(isProposalOnlyPrincipal(policy(["read"]))).toBe(false)
+		expect(isProposalOnlyPrincipal(createAdminPrincipal())).toBe(false)
+		expect(isProposalOnlyPrincipal(createDevelopmentPrincipal())).toBe(false)
+	})
+
+	it("authorizes a proposer for propose but not for write", () => {
+		const principal = policy(["read", "propose"])
+		const request = { scope: "workspace" }
+		expect(
+			authorizePrincipalRequest(principal, {
+				...request,
+				capability: "propose",
+			}),
+		).toBeNull()
+		expect(
+			authorizePrincipalRequest(principal, { ...request, capability: "write" }),
+		).toBe("capability is not allowed for this API key")
 	})
 })

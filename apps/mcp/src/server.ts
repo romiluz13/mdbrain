@@ -4,7 +4,11 @@ import {
 	CallToolRequestSchema,
 	ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js"
-import { MdbrainClient, MdbrainClientError } from "@mdbrain/client"
+import {
+	MdbrainClient,
+	MdbrainClientError,
+	type MdbrainWikiPromotion,
+} from "@mdbrain/client"
 import { pathToFileURL } from "node:url"
 
 const mdbrain = new MdbrainClient({
@@ -35,6 +39,15 @@ const LIFECYCLE_HISTORY_TOOL_NAMES = new Set([
 	"mdbrain_lifecycle_history",
 	"mdbrain_memory_history",
 ])
+const WIKI_PROMOTION_KINDS = [
+	"entity",
+	"concept",
+	"synthesis",
+	"source",
+	"report",
+	"procedure",
+] as const
+const WIKI_PROMOTION_TIERS = ["restricted", "standard", "admin"] as const
 const MEMORY_SCOPES = [
 	"session",
 	"user",
@@ -101,7 +114,8 @@ export const toolList = [
 	},
 	{
 		name: "mdbrain_add",
-		description: "Add user message to memory",
+		description:
+			"Add user message to memory. With promotionPolicy=wiki it also proposes a new wiki page from that memory; a key that may only propose has the page held for an administrator's approval, and the page is not readable until it is approved.",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -112,6 +126,63 @@ export const toolList = [
 				sessionId: { type: "string" },
 				scope: { type: "string", enum: [...MEMORY_SCOPES] },
 				scopeRef: { type: "string" },
+				promotionPolicy: {
+					type: "string",
+					enum: ["none", "wiki"],
+					description:
+						"`wiki` proposes the page in wikiPromotion once this memory is stored.",
+				},
+				wikiPromotion: {
+					type: "object",
+					description:
+						"Required with promotionPolicy=wiki. The proposed page: it must use this write's scope and scopeRef and cite at least one claim.",
+					properties: {
+						page: {
+							type: "object",
+							properties: {
+								kind: { type: "string", enum: [...WIKI_PROMOTION_KINDS] },
+								title: { type: "string" },
+								slug: { type: "string" },
+								summary: { type: "string" },
+								body: { type: "string", description: "Full markdown body." },
+								frontmatter: {
+									type: "object",
+									properties: { type: { type: "string" } },
+									required: ["type"],
+								},
+								claims: {
+									type: "array",
+									minItems: 1,
+									items: {
+										type: "object",
+										properties: {
+											id: { type: "string" },
+											text: { type: "string" },
+											confidence: { type: "number", minimum: 0, maximum: 1 },
+										},
+										required: ["id", "text"],
+									},
+								},
+								scope: { type: "string", enum: [...MEMORY_SCOPES] },
+								scopeRef: { type: "string" },
+								trustTier: { type: "string", enum: [...WIKI_PROMOTION_TIERS] },
+							},
+							required: [
+								"kind",
+								"title",
+								"slug",
+								"summary",
+								"body",
+								"frontmatter",
+								"claims",
+								"scope",
+								"scopeRef",
+								"trustTier",
+							],
+						},
+					},
+					required: ["page"],
+				},
 			},
 			required: ["content", "idempotencyKey"],
 		},
@@ -1159,6 +1230,12 @@ export async function handleToolCall(
 					typeof args.sessionId === "string" ? args.sessionId : undefined,
 				scope: parseMemoryScope(args.scope),
 				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : undefined,
+				...(args.promotionPolicy === "none" || args.promotionPolicy === "wiki"
+					? { promotionPolicy: args.promotionPolicy }
+					: {}),
+				...(args.wikiPromotion && typeof args.wikiPromotion === "object"
+					? { wikiPromotion: args.wikiPromotion as MdbrainWikiPromotion }
+					: {}),
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}

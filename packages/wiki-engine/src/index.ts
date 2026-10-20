@@ -41,6 +41,14 @@ export {
 	type MemoryPromotionPolicy,
 } from "./memory-delivery.js"
 export {
+	isRejectedMemoryDelivery,
+	listPendingPromotionIntents,
+	PROPOSAL_REJECTED_CODE,
+	rejectMemoryDeliveryPromotion,
+	verifyMemoryDeliveryIntegrity,
+	type ProposalRejection,
+} from "./memory-delivery-proposals.js"
+export {
 	WikiStore,
 	resolveWikiStoreConfig,
 	type WikiStoreConfig,

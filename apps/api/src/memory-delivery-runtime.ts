@@ -7,14 +7,17 @@ import {
 	failMemoryDelivery,
 	failMemoryPromotion,
 	getMemoryDeliveryIntent,
+	isRejectedMemoryDelivery,
 	listDueMemoryDeliveryIntents,
 	MemoryDeliveryLeaseLostError,
 	MemoryDeliveryStateError,
 	promoteMemoryDelivery,
+	PROPOSAL_REJECTED_CODE,
 	recordWikiMutationIntent,
 	recordMemoryDeliveryIntent,
 	redriveMemoryDeliveryIntent,
 	setMemoryDeliveryPromotionApproval,
+	verifyMemoryDeliveryIntegrity,
 	type MemoryDeliveryIntent,
 	type MemoryDeliveryState,
 	type MemoryPromotionApproval,
@@ -54,7 +57,7 @@ const WIKI_VALID_TRUST_TIERS = ["restricted", "standard", "admin"]
  *  Unset (or invalid) configuration must fail closed — never silently
  *  disable GC (unbounded ledger growth) and never silently shrink
  *  retention below the default. */
-function memoryLedgerTtlMs(): number {
+export function memoryLedgerTtlMs(): number {
 	const raw = process.env.MDBRAIN_MEMORY_LEDGER_TTL_DAYS?.trim()
 	if (!raw) return DEFAULT_MEMORY_LEDGER_TTL_MS
 	const days = Number(raw)
@@ -337,6 +340,10 @@ export async function deliverMemoryWrite(params: {
 	 *  dispatches, the promotion is held, and only an admin approval (or a
 	 *  replay after approval) can execute it. */
 	promotionApproval?: MemoryPromotionApproval
+	/** The write came from a proposal-only principal. Stored on the intent so
+	 *  approval can hold the proposer to its own permission without guessing
+	 *  from whoever the credential resolves to later. */
+	proposalOnly?: boolean
 	dispatch: () => Promise<MemoryWriteReceipt>
 }): Promise<MemoryWriteReceipt> {
 	const operationId = buildMemoryDeliveryOperationId(params)
@@ -397,6 +404,7 @@ export async function deliverMemoryWrite(params: {
 					...(params.promotionApproval
 						? { promotionApproval: params.promotionApproval }
 						: {}),
+					...(params.proposalOnly ? { proposalOnly: true } : {}),
 				},
 				session,
 			),
@@ -410,6 +418,15 @@ export async function deliverMemoryWrite(params: {
 	}
 	if (recorded.conflict) {
 		throw new MemoryDeliveryDispatchError(operationId, "conflict", "CONFLICT")
+	}
+	// A rejected proposal is final: a replay of its write must neither
+	// promote it nor look like a retryable wait.
+	if (isRejectedMemoryDelivery(recorded.intent)) {
+		throw new MemoryDeliveryDispatchError(
+			operationId,
+			recorded.intent.state,
+			PROPOSAL_REJECTED_CODE,
+		)
 	}
 	if (recorded.intent.receipt) {
 		const approvalHeld =
@@ -546,13 +563,22 @@ export async function deliverMemoryWrite(params: {
  *  captured in the caller-controlled wikiPromotion payload must not stand in
  *  for the principal's live tier: a revoked or downgraded key must fail its
  *  pending promotion on replay. */
-const defaultResolveReplayPrincipal = (
+export const defaultResolveReplayPrincipal = (
 	subjectId: string,
 ): ApiPrincipal | null =>
 	resolvePrincipalBySubjectId(subjectId, {
 		adminSubjectId:
 			process.env.MDBRAIN_API_ADMIN_SUBJECT_ID?.trim() || undefined,
 	})
+
+/** The principal that proposed a page can no longer propose it: its key is
+ *  gone, its identity is no longer active, or it lost the permission. */
+class ProposerRevokedError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = "ProposerRevokedError"
+	}
+}
 
 function persistedPromotion(
 	intent: MemoryDeliveryIntent,
@@ -566,9 +592,14 @@ function persistedPromotion(
 	// must re-run the same checks (identity active, agent/scope grants,
 	// trust tier, change-permissions) so credential changes between record
 	// and reconciliation cannot smuggle a promotion through.
+	const fail = (message: string): never => {
+		throw intent.proposalOnly
+			? new ProposerRevokedError(message)
+			: new Error(message)
+	}
 	const principal = resolvePrincipal(intent.principalSubjectId)
 	if (!principal) {
-		throw new Error(
+		return fail(
 			`principal "${intent.principalSubjectId}" no longer resolves; ` +
 				"refusing to replay wiki promotion",
 		)
@@ -577,9 +608,18 @@ function persistedPromotion(
 		agentId: intent.agentId ?? undefined,
 		scope: intent.scope,
 		scopeRef: intent.scopeRef,
+		// A proposal is checked again against the permission it was submitted
+		// under; the approving admin's own permissions never stand in for it.
+		...(intent.proposalOnly
+			? {
+					capability: principal.capabilities.includes("write")
+						? ("write" as const)
+						: ("propose" as const),
+				}
+			: {}),
 	})
 	if (authzError) {
-		throw new Error(
+		return fail(
 			`principal "${intent.principalSubjectId}" is no longer authorized ` +
 				`(${authzError}); refusing to replay wiki promotion`,
 		)
@@ -663,6 +703,42 @@ async function dispatchPersistedIntent(
 	})
 }
 
+type ApproveOutcome =
+	| { ok: true; operationId: string; pageSlug: string }
+	| { ok: false; status: 400 | 404 | 409; code: string; message: string }
+
+function proposedPageSlug(intent: MemoryDeliveryIntent): string {
+	const wikiPromotion = intent.payload.wikiPromotion
+	const rawPage =
+		typeof wikiPromotion === "object" && wikiPromotion !== null
+			? (wikiPromotion as Record<string, unknown>).page
+			: undefined
+	return typeof rawPage === "object" && rawPage !== null
+		? String((rawPage as Record<string, unknown>).slug ?? "")
+		: ""
+}
+
+/** What an approval answers once the proposal has been decided by someone
+ *  else: the winner's result for a second approve, the rejection for a
+ *  reject that landed first. Anything else is still a failure. */
+function decidedApproveOutcome(
+	intent: MemoryDeliveryIntent,
+	operationId: string,
+): ApproveOutcome | undefined {
+	if (isRejectedMemoryDelivery(intent)) {
+		return {
+			ok: false,
+			status: 409,
+			code: PROPOSAL_REJECTED_CODE,
+			message: `proposal ${operationId} was rejected`,
+		}
+	}
+	if (intent.state === "promoted" && intent.promotionApproval === "approved") {
+		return { ok: true, operationId, pageSlug: proposedPageSlug(intent) }
+	}
+	return undefined
+}
+
 /**
  * Approves and executes one promotion-pending intent that was recorded
  * under approval mode. The original principal is re-authorized at its
@@ -670,14 +746,16 @@ async function dispatchPersistedIntent(
  * a since-revoked or downgraded principal cannot execute. The approval
  * marker and the promotion run in a single transaction so the reconciler
  * can never observe approved-but-unpromoted state.
+ *
+ * Approving an already approved proposal returns the same result, and a
+ * proposal that was rejected answers PROPOSAL_REJECTED. When this call loses a
+ * race with another decision it re-reads the proposal and answers from what
+ * the winner left, rather than counting the loss as a failed promotion.
  */
 export async function approvePendingWikiPromotion(params: {
 	operationId: string
 	resolvePrincipal?: (subjectId: string) => ApiPrincipal | null
-}): Promise<
-	| { ok: true; operationId: string; pageSlug: string }
-	| { ok: false; status: 400 | 404 | 409; code: string; message: string }
-> {
+}): Promise<ApproveOutcome> {
 	const handle = await getWikiStoreHandle()
 	const intent = await getMemoryDeliveryIntent(handle, params.operationId)
 	if (!intent) {
@@ -688,6 +766,8 @@ export async function approvePendingWikiPromotion(params: {
 			message: "memory delivery intent not found",
 		}
 	}
+	const decided = decidedApproveOutcome(intent, params.operationId)
+	if (decided) return decided
 	if (
 		intent.state !== "promotion-pending" ||
 		intent.promotionApproval !== "required"
@@ -701,6 +781,17 @@ export async function approvePendingWikiPromotion(params: {
 				(intent.promotionApproval
 					? ` (approval ${intent.promotionApproval})`
 					: ""),
+		}
+	}
+	if (intent.proposalOnly) {
+		const altered = verifyMemoryDeliveryIntegrity(intent)
+		if (altered) {
+			return {
+				ok: false,
+				status: 409,
+				code: "PROPOSAL_ALTERED",
+				message: altered,
+			}
 		}
 	}
 	let promotion: MemoryWikiPromotion | undefined
@@ -721,19 +812,14 @@ export async function approvePendingWikiPromotion(params: {
 		return {
 			ok: false,
 			status: 409,
-			code: "PROMOTION_UNAUTHORIZED",
+			code:
+				error instanceof ProposerRevokedError
+					? "PROPOSER_REVOKED"
+					: "PROMOTION_UNAUTHORIZED",
 			message: error instanceof Error ? error.message : String(error),
 		}
 	}
-	const wikiPromotion = intent.payload.wikiPromotion
-	const rawPage =
-		typeof wikiPromotion === "object" && wikiPromotion !== null
-			? (wikiPromotion as Record<string, unknown>).page
-			: undefined
-	const pageSlug =
-		typeof rawPage === "object" && rawPage !== null
-			? String((rawPage as Record<string, unknown>).slug ?? "")
-			: ""
+	const pageSlug = proposedPageSlug(intent)
 	try {
 		await withWikiTransaction(async (transactionHandle, session) => {
 			await setMemoryDeliveryPromotionApproval(
@@ -753,6 +839,14 @@ export async function approvePendingWikiPromotion(params: {
 		})
 		return { ok: true, operationId: params.operationId, pageSlug }
 	} catch (error) {
+		const settled = await getMemoryDeliveryIntent(
+			handle,
+			params.operationId,
+		).catch(() => null)
+		const raced = settled
+			? decidedApproveOutcome(settled, params.operationId)
+			: undefined
+		if (raced) return raced
 		const classified = classifyFailure(error)
 		const errorCode =
 			classified.code === "OUTCOME_UNKNOWN"
@@ -805,6 +899,9 @@ export async function reconcileMemoryDeliveriesOnce(
 		// Approval-queued promotions wait for an explicit admin approval;
 		// auto-replay would defeat the queue (and starve other due intents).
 		if (intent.promotionApproval === "required") continue
+		// Rejected rows are dead letters, which the due scan does not return;
+		// this keeps a rejection final if the scan's states are ever widened.
+		if (isRejectedMemoryDelivery(intent)) continue
 		attempted++
 		try {
 			const promotion = persistedPromotion(
@@ -889,7 +986,9 @@ export async function redriveDeadLetteredMemoryDelivery(params: {
 			return {
 				ok: false,
 				status: 409,
-				code: "INVALID_DELIVERY_STATE",
+				code: error.message.includes("rejected")
+					? PROPOSAL_REJECTED_CODE
+					: "INVALID_DELIVERY_STATE",
 				message: error.message,
 			}
 		}

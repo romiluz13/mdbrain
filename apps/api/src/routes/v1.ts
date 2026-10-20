@@ -70,6 +70,7 @@ import {
 	withRevisionMarkers,
 } from "../lib/citations.js"
 import { parseWikiChangesQuery } from "../lib/changes-query.js"
+import { isProposalOnlyPrincipal } from "../principal.js"
 import { jsonError } from "../lib/errors.js"
 import {
 	approvePendingWikiPromotion,
@@ -81,11 +82,16 @@ import {
 	wikiPromotionApprovalRequired,
 } from "../memory-delivery-runtime.js"
 import {
+	listPendingWikiProposals,
+	rejectPendingWikiPromotion,
+} from "../proposals-runtime.js"
+import {
 	getWikiStoreHandle,
 	withWikiTransaction,
 } from "../wiki-store-runtime.js"
 
 const MAX_LIST_LIMIT = 100
+export const MAX_REJECTION_REASON = 500
 const MAX_HISTORY_LIMIT = 200
 const VALID_SCOPE_VALUES = [
 	"session",
@@ -1589,8 +1595,14 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			if (promotionResult.error) {
 				return jsonError(c, 400, "VALIDATION_ERROR", promotionResult.error)
 			}
+			// A proposal-only principal is held for approval whatever the env or
+			// the payload say: the decision comes from the credential alone.
+			const proposalOnly =
+				promotionResult.promotion !== undefined &&
+				isProposalOnlyPrincipal(principal)
 			const promotionApproval =
-				promotionResult.promotion && wikiPromotionApprovalRequired()
+				promotionResult.promotion &&
+				(proposalOnly || wikiPromotionApprovalRequired())
 					? ("required" as const)
 					: undefined
 			const bridgePayload = {
@@ -1619,6 +1631,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				scopeRef,
 				promotion: promotionResult.promotion,
 				...(promotionApproval ? { promotionApproval } : {}),
+				...(proposalOnly ? { proposalOnly } : {}),
 				dispatch: () =>
 					mdbrainBridgeAdd({
 						...bridgePayload,
@@ -1641,6 +1654,14 @@ export function createV1Router(): Hono<ApiEnvironment> {
 						409,
 						"DELIVERY_LEASE_LOST",
 						`Memory delivery ${err.operationId} is claimed by another worker`,
+					)
+				}
+				if (err.code === "PROPOSAL_REJECTED") {
+					return jsonError(
+						c,
+						409,
+						"PROPOSAL_REJECTED",
+						`Proposal ${err.operationId} was rejected`,
 					)
 				}
 				const status = err.state === "conflict" ? 409 : 503
@@ -1753,8 +1774,14 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			if (promotionResult.error) {
 				return jsonError(c, 400, "VALIDATION_ERROR", promotionResult.error)
 			}
+			// A proposal-only principal is held for approval whatever the env or
+			// the payload say: the decision comes from the credential alone.
+			const proposalOnly =
+				promotionResult.promotion !== undefined &&
+				isProposalOnlyPrincipal(principal)
 			const promotionApproval =
-				promotionResult.promotion && wikiPromotionApprovalRequired()
+				promotionResult.promotion &&
+				(proposalOnly || wikiPromotionApprovalRequired())
 					? ("required" as const)
 					: undefined
 			const bridgePayload = {
@@ -1786,6 +1813,7 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				scopeRef,
 				promotion: promotionResult.promotion,
 				...(promotionApproval ? { promotionApproval } : {}),
+				...(proposalOnly ? { proposalOnly } : {}),
 				dispatch: () =>
 					mdbrainBridgeWriteConversationEvent({
 						...bridgePayload,
@@ -1808,6 +1836,14 @@ export function createV1Router(): Hono<ApiEnvironment> {
 						409,
 						"DELIVERY_LEASE_LOST",
 						`Memory delivery ${err.operationId} is claimed by another worker`,
+					)
+				}
+				if (err.code === "PROPOSAL_REJECTED") {
+					return jsonError(
+						c,
+						409,
+						"PROPOSAL_REJECTED",
+						`Proposal ${err.operationId} was rejected`,
 					)
 				}
 				const status = err.state === "conflict" ? 409 : 503
@@ -2077,8 +2113,35 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		}
 	})
 
+	// The review queue: proposals waiting for a decision, each with the page it
+	// would create and who proposed it. Gated to the administer capability by
+	// the /v1/admin/* middleware.
+	v1.get("/admin/wiki-promotions", async (c) => {
+		const limit = parseListLimit(c.req.query("limit"))
+		if (limit === null) {
+			return jsonError(c, 400, "VALIDATION_ERROR", "limit must be 1..100")
+		}
+		try {
+			const authorizedScope = getAuthorizedRequestScope(c)
+			const proposals = await listPendingWikiProposals({
+				scope: authorizedScope.scope,
+				scopeRef: authorizedScope.scopeRef,
+				limit,
+			})
+			return c.json({ proposals })
+		} catch {
+			return jsonError(
+				c,
+				500,
+				"PROPOSAL_LIST_FAILED",
+				"Unable to list pending proposals",
+			)
+		}
+	})
+
 	// Approves a promotion-pending memory delivery that was recorded under
-	// approval mode (MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL). Gated to the
+	// approval mode (MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL, or a proposal-only
+	// principal's write). Approving twice returns the same result. Gated to the
 	// administer capability by the /v1/admin/* middleware. The original
 	// principal is re-authorized at its current credential state before the
 	// promotion executes.
@@ -2102,6 +2165,45 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			state: "promoted",
 			pageSlug: result.pageSlug,
 		})
+	})
+	// Rejects a pending proposal. Rejection is final: the proposal is never
+	// promoted by a later approve, redrive, replay or reconciler pass. Gated to
+	// the administer capability by the /v1/admin/* middleware.
+	v1.post("/admin/wiki-promotions/:operationId/reject", async (c) => {
+		const operationId = c.req.param("operationId")?.trim()
+		if (!operationId) {
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"operationId path parameter is required",
+			)
+		}
+		const body = (await c.req.json().catch(() => ({}))) as Record<
+			string,
+			unknown
+		>
+		const reason = body.reason
+		if (
+			reason !== undefined &&
+			(typeof reason !== "string" || reason.length > MAX_REJECTION_REASON)
+		) {
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				`reason must be a string of at most ${MAX_REJECTION_REASON} characters`,
+			)
+		}
+		const result = await rejectPendingWikiPromotion({
+			operationId,
+			rejectedBy: getApiPrincipal(c).subjectId,
+			reason,
+		})
+		if (!result.ok) {
+			return jsonError(c, result.status, result.code, result.message)
+		}
+		return c.json({ ok: true, operationId, state: result.state })
 	})
 	// Requeues a dead-lettered memory delivery intent for a fresh delivery
 	// lifecycle (counters reset, failure evidence cleared). Gated to the

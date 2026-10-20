@@ -2,7 +2,8 @@
 // real query filters (governance, $in lookups, sort, limit) to be evaluated
 // rather than mocked. It implements only the operators the engine's reads use;
 // a method it does not implement throws, so a query that sneaks in a count or
-// a scan fails loudly instead of passing.
+// a scan fails loudly instead of passing. Writes are limited to the single
+// document updates the delivery ledger makes.
 
 import type { Db, Document } from "mongodb"
 
@@ -136,8 +137,10 @@ function setPath(target: Document, path: string[], value: unknown): void {
 	setPath(child, rest, value)
 }
 
+// Reads hand out copies, as a server does: a later write must not change a
+// document a caller already holds.
 function project(doc: Document, projection?: Document): Document {
-	if (!projection) return doc
+	if (!projection) return structuredClone(doc)
 	const out: Document = {}
 	if (projection._id !== 0 && doc._id !== undefined) out._id = doc._id
 	for (const [path, include] of Object.entries(projection)) {
@@ -146,6 +149,35 @@ function project(doc: Document, projection?: Document): Document {
 		if (found !== undefined) setPath(out, path.split("."), found)
 	}
 	return out
+}
+
+function applyUpdate(doc: Document, update: Document): void {
+	for (const [op, spec] of Object.entries(update) as Array<
+		[string, Document]
+	>) {
+		if (op === "$set") {
+			for (const [path, value] of Object.entries(spec)) {
+				setPath(doc, path.split("."), value)
+			}
+		} else if (op === "$unset") {
+			for (const path of Object.keys(spec)) delete doc[path]
+		} else if (op === "$inc") {
+			for (const [path, by] of Object.entries(spec)) {
+				doc[path] = ((doc[path] as number | undefined) ?? 0) + (by as number)
+			}
+		} else if (op === "$addToSet") {
+			for (const [path, add] of Object.entries(spec)) {
+				const current = (doc[path] as unknown[] | undefined) ?? []
+				const items = (add as { $each?: unknown[] }).$each ?? [add]
+				doc[path] = [
+					...current,
+					...items.filter((item) => !current.some((c) => same(c, item))),
+				]
+			}
+		} else {
+			throw new Error(`unsupported update operator ${op}`)
+		}
+	}
 }
 
 export type RecordedQuery = {
@@ -176,6 +208,7 @@ export function createFakeWikiDb(
 					queries.push(record)
 					let sortSpec: Document | undefined
 					let cap: number | undefined
+					let offset = 0
 					const cursor = {
 						sort(spec: Document) {
 							sortSpec = spec
@@ -185,6 +218,10 @@ export function createFakeWikiDb(
 						limit(n: number) {
 							cap = n
 							record.limit = n
+							return cursor
+						},
+						skip(n: number) {
+							offset = n
 							return cursor
 						},
 						async toArray() {
@@ -201,6 +238,7 @@ export function createFakeWikiDb(
 									return 0
 								})
 							}
+							found = found.slice(offset)
 							if (cap !== undefined) found = found.slice(0, cap)
 							return found.map((doc) => project(doc, options.projection))
 						},
@@ -211,6 +249,28 @@ export function createFakeWikiDb(
 					queries.push({ collection: name, filter, options })
 					const found = docs.find((doc) => matches(doc, filter))
 					return found ? project(found, options.projection) : null
+				},
+				async countDocuments(filter: Document) {
+					queries.push({ collection: name, filter, options: {} })
+					return docs.filter((doc) => matches(doc, filter)).length
+				},
+				async insertOne(doc: Document) {
+					docs.push(structuredClone(doc))
+					return { acknowledged: true }
+				},
+				async updateOne(filter: Document, update: Document) {
+					const found = docs.find((doc) => matches(doc, filter))
+					if (found) applyUpdate(found, update)
+					return { matchedCount: found ? 1 : 0 }
+				},
+				// The filter is evaluated and the write applied in one synchronous
+				// step, as a server does for a single document, so two callers
+				// racing on one predicate cannot both match.
+				async findOneAndUpdate(filter: Document, update: Document) {
+					const found = docs.find((doc) => matches(doc, filter))
+					if (!found) return null
+					applyUpdate(found, update)
+					return structuredClone(found)
 				},
 			}
 		},

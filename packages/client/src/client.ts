@@ -1,6 +1,12 @@
 import type {
 	MdbrainAddInput,
 	MdbrainActiveSlateInput,
+	MdbrainApproveProposalInput,
+	MdbrainApproveProposalResponse,
+	MdbrainListProposalsInput,
+	MdbrainListProposalsResponse,
+	MdbrainRejectProposalInput,
+	MdbrainRejectProposalResponse,
 	MdbrainCiteInput,
 	MdbrainCitationResponse,
 	MdbrainConversationRecallInput,
@@ -1143,6 +1149,60 @@ export class MdbrainClient {
 		return apiGet<MdbrainWikiChangesResponse>(
 			this._opts,
 			`/v1/wiki/changes?${qs}`,
+			requestOptions,
+		)
+	}
+
+	/** The review queue: new pages proposed through memory add that wait for a
+	 *  decision, oldest first, each with the page it would create and who
+	 *  proposed it. Needs a key with the administer capability. */
+	async listProposals(
+		input: MdbrainListProposalsInput = {},
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainListProposalsResponse> {
+		const qs = new URLSearchParams()
+		if (input.scope) qs.set("scope", input.scope)
+		if (input.scopeRef) qs.set("scopeRef", input.scopeRef)
+		if (input.limit !== undefined) qs.set("limit", String(input.limit))
+		const query = qs.size > 0 ? `?${qs}` : ""
+		return apiGet<MdbrainListProposalsResponse>(
+			this._opts,
+			`/v1/admin/wiki-promotions${query}`,
+			requestOptions,
+		)
+	}
+
+	/** Approves a pending proposal and publishes its page. Approving twice
+	 *  returns the same result, which is why a retry is safe. Needs the
+	 *  administer capability; a proposal whose proposer was revoked rejects with
+	 *  PROPOSER_REVOKED. */
+	async approveProposal(
+		input: MdbrainApproveProposalInput,
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainApproveProposalResponse> {
+		return apiPost(
+			this._opts,
+			`/v1/admin/wiki-promotions/${encodeURIComponent(input.operationId)}/approve`,
+			{},
+			undefined,
+			"safe",
+			requestOptions,
+		)
+	}
+
+	/** Rejects a pending proposal for good: it is never promoted and its page
+	 *  never appears in a wiki read. Rejecting twice returns the same result.
+	 *  Needs the administer capability. */
+	async rejectProposal(
+		input: MdbrainRejectProposalInput,
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainRejectProposalResponse> {
+		return apiPost(
+			this._opts,
+			`/v1/admin/wiki-promotions/${encodeURIComponent(input.operationId)}/reject`,
+			input.reason === undefined ? {} : { reason: input.reason },
+			undefined,
+			"safe",
 			requestOptions,
 		)
 	}

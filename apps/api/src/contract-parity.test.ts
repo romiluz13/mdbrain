@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest"
 import { createApp } from "./app.js"
 import { openApiSpec } from "./openapi-spec.js"
 import {
+	MAX_REJECTION_REASON,
 	WIKI_OVERVIEW_LIMIT_PARAMS,
 	WIKI_RESERVED_SLUG_SEGMENTS,
 	WIKI_VALID_KINDS,
@@ -474,5 +475,90 @@ describe("wiki contract matrix (runtime ↔ spec ↔ MCP)", () => {
 		for (const segment of WIKI_RESERVED_SLUG_SEGMENTS) {
 			expect(String(op.description), segment).toContain(segment)
 		}
+	})
+})
+
+describe("proposals: runtime ↔ spec ↔ MCP", () => {
+	const base = "/v1/admin/wiki-promotions"
+
+	it("documents the review list, approve and reject with every outcome the runtime gives", () => {
+		const list = specOperation(base, "get")
+		expect(queryParameterNames(base, "get")).toEqual(
+			expect.arrayContaining(["scope", "scopeRef", "limit"]),
+		)
+		for (const status of ["200", "400", "403", "500"]) {
+			expect(list.responses?.[status], `list ${status}`).toBeDefined()
+		}
+		const approve = specOperation(`${base}/{operationId}/approve`, "post")
+		const reject = specOperation(`${base}/{operationId}/reject`, "post")
+		for (const status of ["200", "400", "403", "404", "409"]) {
+			expect(approve.responses?.[status], `approve ${status}`).toBeDefined()
+			expect(reject.responses?.[status], `reject ${status}`).toBeDefined()
+		}
+		for (const code of [
+			"PROPOSER_REVOKED",
+			"PROPOSAL_REJECTED",
+			"PROPOSAL_ALTERED",
+		]) {
+			expect(JSON.stringify(approve.responses?.["409"]), code).toContain(code)
+		}
+		expect(String(approve.description)).toContain("twice")
+		expect(String(reject.description)).toMatch(/final|terminal/i)
+	})
+
+	it("reject: the spec's reason bound is the runtime's", () => {
+		const schema = requestBodySchema(
+			`${base}/{operationId}/reject`,
+			"post",
+		) as {
+			properties?: { reason?: Json }
+		}
+		expect(schema.properties?.reason).toMatchObject({
+			type: "string",
+			maxLength: MAX_REJECTION_REASON,
+		})
+	})
+
+	it("add: the spec and the MCP tool expose the promotion fields, and the MCP schema is no looser than the runtime", () => {
+		const specProps = (
+			requestBodySchema("/v1/add", "post") as {
+				properties: Record<string, Json>
+			}
+		).properties
+		const tool = mcpTool("mdbrain_add")
+		for (const name of ["promotionPolicy", "wikiPromotion"]) {
+			expect(specProps[name], `spec ${name}`).toBeDefined()
+			expect(tool.inputSchema.properties[name], `mcp ${name}`).toBeDefined()
+		}
+		expect(tool.inputSchema.properties.promotionPolicy).toMatchObject({
+			enum: ["none", "wiki"],
+		})
+		const promotion = tool.inputSchema.properties.wikiPromotion as {
+			required: string[]
+			properties: {
+				page: { required: string[]; properties: Record<string, Json> }
+			}
+		}
+		expect(promotion.required).toEqual(["page"])
+		const page = promotion.properties.page
+		expect([...page.required].sort()).toEqual(
+			[
+				"body",
+				"claims",
+				"frontmatter",
+				"kind",
+				"scope",
+				"scopeRef",
+				"slug",
+				"summary",
+				"title",
+				"trustTier",
+			].sort(),
+		)
+		expect(page.properties.kind.enum).toEqual(WIKI_VALID_KINDS)
+		expect(page.properties.trustTier.enum).toEqual(WIKI_VALID_TRUST_TIERS)
+		expect(page.properties.scope.enum).toEqual(WIKI_VALID_SCOPES)
+		expect(page.properties.claims).toMatchObject({ type: "array", minItems: 1 })
+		expect(String(tool.description)).toMatch(/propos/i)
 	})
 })

@@ -43,6 +43,10 @@ vi.mock("@mdbrain/wiki-engine", () => ({
 	createWikiPage: mocks.createWikiPage,
 	recordWikiMutationIntent: mocks.recordWikiMutationIntent,
 	DEFAULT_MEMORY_LEDGER_TTL_MS: 30 * 24 * 60 * 60 * 1000,
+	PROPOSAL_REJECTED_CODE: "PROPOSAL_REJECTED",
+	isRejectedMemoryDelivery: (intent: { rejectedAt?: Date }) =>
+		intent.rejectedAt !== undefined,
+	verifyMemoryDeliveryIntegrity: () => null,
 	MemoryDeliveryConflictError: class MemoryDeliveryConflictError extends Error {},
 	MemoryDeliveryStateError: class MemoryDeliveryStateError extends Error {},
 	MemoryDeliveryLeaseLostError: class MemoryDeliveryLeaseLostError extends Error {

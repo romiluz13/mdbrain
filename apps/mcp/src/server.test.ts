@@ -14,6 +14,88 @@ type SchemaNode = {
 	items?: SchemaNode
 }
 
+describe("mdbrain_add promotion fields", () => {
+	const page = {
+		kind: "concept" as const,
+		title: "Silent ETA drift",
+		slug: "concepts/silent-eta-drift",
+		summary: "ETAs drift silently.",
+		body: "ETAs drift without a signal.",
+		frontmatter: { type: "concept" },
+		claims: [{ id: "c1", text: "ETAs drift silently." }],
+		scope: "workspace" as const,
+		scopeRef: "demo-run-1",
+		trustTier: "standard" as const,
+	}
+
+	it("forwards a proposed page to the client", async () => {
+		const add = vi
+			.fn()
+			.mockResolvedValue({ ok: true, eventId: "e1", chunkCreated: true })
+
+		await handleToolCall(
+			"mdbrain_add",
+			{
+				content: "ETA drift",
+				idempotencyKey: "k1",
+				scope: "workspace",
+				scopeRef: "demo-run-1",
+				promotionPolicy: "wiki",
+				wikiPromotion: { page },
+			},
+			{ add } as never,
+		)
+
+		expect(add).toHaveBeenCalledWith(
+			expect.objectContaining({
+				promotionPolicy: "wiki",
+				wikiPromotion: { page },
+			}),
+		)
+	})
+
+	it("sends no promotion fields when the caller gave none", async () => {
+		const add = vi
+			.fn()
+			.mockResolvedValue({ ok: true, eventId: "e1", chunkCreated: true })
+
+		await handleToolCall(
+			"mdbrain_add",
+			{ content: "c", idempotencyKey: "k1" },
+			{ add } as never,
+		)
+
+		const input = add.mock.calls[0]?.[0] as Record<string, unknown>
+		expect(input).not.toHaveProperty("promotionPolicy")
+		expect(input).not.toHaveProperty("wikiPromotion")
+	})
+
+	it("ignores a promotion policy it does not know", async () => {
+		const add = vi
+			.fn()
+			.mockResolvedValue({ ok: true, eventId: "e1", chunkCreated: true })
+
+		await handleToolCall(
+			"mdbrain_add",
+			{ content: "c", idempotencyKey: "k1", promotionPolicy: "auto" },
+			{ add } as never,
+		)
+
+		expect(add.mock.calls[0]?.[0]).not.toHaveProperty("promotionPolicy")
+	})
+
+	it("describes the hold for approval, and has no tool that decides a proposal", () => {
+		const tool = toolList.find((entry) => entry.name === "mdbrain_add")
+
+		expect(tool?.description).toMatch(/approval/i)
+		expect(
+			toolList
+				.map((entry) => entry.name)
+				.filter((n) => /approve|reject/i.test(n)),
+		).toEqual([])
+	})
+})
+
 describe("toolList", () => {
 	it("advertises and forwards explicit constraint relaxation to detailed search", async () => {
 		const searchDetailed = vi

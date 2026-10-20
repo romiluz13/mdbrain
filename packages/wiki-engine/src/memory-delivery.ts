@@ -72,6 +72,8 @@ export type MemoryDeliveryIntent = {
 	promotionPolicy: MemoryPromotionPolicy
 	/** Present only for wiki promotions recorded under approval mode. */
 	promotionApproval?: MemoryPromotionApproval
+	/** Present only when a proposal-only principal submitted the write. */
+	proposalOnly?: true
 	state: MemoryDeliveryState
 	attempts: number
 	reconciliationAttempts: number
@@ -93,6 +95,11 @@ export type MemoryDeliveryIntent = {
 	dispatchStartedAt?: Date
 	confirmedAt?: Date
 	promotedAt?: Date
+	/** Set when an admin rejected the proposal; the row is then a dead letter
+	 *  with lastErrorCode PROPOSAL_REJECTED and is never redriven. */
+	rejectedAt?: Date
+	rejectedBy?: string
+	rejectionReason?: string
 	replayConflictCount?: number
 	replayConflictFields?: MemoryDeliveryReplayConflictField[]
 	lastReplayConflictAt?: Date
@@ -111,6 +118,7 @@ export type MemoryDeliveryIntentInput = {
 	scopeRef: string
 	promotionPolicy: MemoryPromotionPolicy
 	promotionApproval?: MemoryPromotionApproval
+	proposalOnly?: true
 }
 
 export class MemoryDeliveryConflictError extends Error {
@@ -289,6 +297,7 @@ export async function recordMemoryDeliveryIntent(
 		...(params.promotionApproval
 			? { promotionApproval: params.promotionApproval }
 			: {}),
+		...(params.proposalOnly ? { proposalOnly: true as const } : {}),
 		state: "recorded",
 		attempts: 0,
 		reconciliationAttempts: 0,
@@ -753,9 +762,23 @@ export async function listDueMemoryDeliveryIntents(
 ): Promise<MemoryDeliveryIntent[]> {
 	const now = new Date(options.now ?? Date.now())
 	const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
+	// A promotion held for approval is never reconciled, and it can wait
+	// indefinitely with an old nextDueAt, so oldest-first ordering would put
+	// every held proposal ahead of real work and a full page of them would
+	// starve it. They are left out of the scan; approval brings them back.
 	const filter = {
 		state: { $in: options.states ?? MEMORY_DELIVERY_DUE_SCAN_STATES },
-		$or: [{ nextDueAt: { $lte: now } }, { nextDueAt: { $exists: false } }],
+		$and: [
+			{
+				$or: [{ nextDueAt: { $lte: now } }, { nextDueAt: { $exists: false } }],
+			},
+			{
+				$or: [
+					{ state: { $ne: "promotion-pending" } },
+					{ promotionApproval: { $ne: "required" } },
+				],
+			},
+		],
 	}
 	return (await memoryDeliveryIntentsCollection(handle.db, handle.prefix)
 		.find(filter)
@@ -790,13 +813,20 @@ export async function redriveMemoryDeliveryIntent(
 			`delivery cannot be redriven from state ${current.state}`,
 		)
 	}
+	// A rejected proposal is a dead letter that carries a receipt, which is
+	// exactly what redrive revives; reject is terminal, so it must not.
+	if (current.rejectedAt !== undefined) {
+		throw new MemoryDeliveryStateError(
+			"delivery was rejected and cannot be redriven",
+		)
+	}
 	const now = new Date()
 	const target: MemoryDeliveryState =
 		current.receipt && current.promotionPolicy === "wiki"
 			? "promotion-pending"
 			: "recorded"
 	const updated = await collection.findOneAndUpdate(
-		{ operationId, state: "dead-letter" },
+		{ operationId, state: "dead-letter", rejectedAt: { $exists: false } },
 		{
 			$set: {
 				state: target,

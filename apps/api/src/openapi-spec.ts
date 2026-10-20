@@ -1860,7 +1860,7 @@ const openApiDocument = {
 										type: "string",
 										enum: ["none", "wiki"],
 										description:
-											"Explicitly request receipt-gated wiki promotion.",
+											"Explicitly request receipt-gated wiki promotion. A key with the `propose` capability and without `write` may append memory events and propose new pages only; its promotion always waits for an administrator's approval, whatever the payload says.",
 									},
 									wikiPromotion: {
 										type: "object",
@@ -2098,12 +2098,33 @@ const openApiDocument = {
 				},
 			},
 		},
-		// REV-07 route-parity fix: this admin route existed in the router but
-		// was never documented.
+		"/v1/admin/wiki-promotions": {
+			get: {
+				summary: "List the wiki proposals waiting for a decision",
+				description:
+					"The review queue. Each entry shows the page a proposal would create (slug, title, kind, summary, body, claims) and who proposed it. Requires the administer capability. A proposal-only key (capability `propose`, without `write`) cannot call it. Pending proposals are not wiki pages: they appear in no wiki read until approved.",
+				parameters: [
+					{ in: "query", name: "scope", schema: { type: "string" } },
+					{ in: "query", name: "scopeRef", schema: { type: "string" } },
+					{
+						in: "query",
+						name: "limit",
+						schema: { type: "integer", minimum: 1, maximum: 100 },
+					},
+				],
+				responses: {
+					"200": { description: "Pending proposals, oldest first" },
+					"400": { description: "Invalid limit or scope" },
+					"403": { description: "The key lacks the administer capability" },
+					"500": { description: "Unable to list pending proposals" },
+				},
+			},
+		},
 		"/v1/admin/wiki-promotions/{operationId}/approve": {
 			post: {
-				summary:
-					"Approve a promotion-pending wiki promotion and promote its page",
+				summary: "Approve a pending wiki proposal and promote its page",
+				description:
+					"Approving twice returns the same result. The proposer is checked again at approval, against the permission it proposed under: a proposal from a key that was removed, or that lost its capability, is refused with PROPOSER_REVOKED. Approval needs the administer capability and never the proposer's direct write permission. A rejected proposal answers PROPOSAL_REJECTED.",
 				parameters: [
 					{
 						in: "path",
@@ -2116,9 +2137,58 @@ const openApiDocument = {
 				responses: {
 					"200": { description: "Promotion approved and page promoted" },
 					"400": { description: "Missing operationId path parameter" },
+					"403": { description: "The key lacks the administer capability" },
 					"404": { description: "No promotion found for operationId" },
-					"409": { description: "Promotion is not pending approval" },
+					"409": {
+						description:
+							"Not pending approval (INVALID_DELIVERY_STATE), rejected (PROPOSAL_REJECTED), the stored proposal differs from what was submitted (PROPOSAL_ALTERED), the proposer is revoked (PROPOSER_REVOKED), or the promotion failed",
+					},
 					"500": { description: "Approval failed" },
+				},
+			},
+		},
+		"/v1/admin/wiki-promotions/{operationId}/reject": {
+			post: {
+				summary: "Reject a pending wiki proposal",
+				description:
+					"Rejection is final: a later approve, redrive, replay of the write or reconciler pass never promotes the proposal, and the page never appears in a wiki read. Rejecting a rejected proposal returns the same result. Approve and reject racing on one proposal leave exactly one winner. Requires the administer capability.",
+				parameters: [
+					{
+						in: "path",
+						name: "operationId",
+						required: true,
+						schema: { type: "string" },
+						description: "Durable memory delivery operation identifier",
+					},
+				],
+				requestBody: {
+					required: true,
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								properties: {
+									reason: {
+										type: "string",
+										maxLength: 500,
+										description:
+											"Why the proposal was rejected. Optional; recorded on the rejected delivery.",
+									},
+								},
+							},
+						},
+					},
+				},
+				responses: {
+					"200": { description: "Proposal rejected (state: rejected)" },
+					"400": { description: "Missing operationId or invalid reason" },
+					"403": { description: "The key lacks the administer capability" },
+					"404": { description: "No proposal found for operationId" },
+					"409": {
+						description:
+							"The proposal was already promoted or is not pending approval",
+					},
+					"500": { description: "Rejection failed" },
 				},
 			},
 		},

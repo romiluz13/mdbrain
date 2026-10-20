@@ -10,6 +10,7 @@ export const ALL_PRINCIPAL_CAPABILITIES = [
 	"hard-delete",
 	"export",
 	"manage-connectors",
+	"propose",
 ] as const
 
 export type PrincipalCapability = (typeof ALL_PRINCIPAL_CAPABILITIES)[number]
@@ -41,6 +42,17 @@ export type ApiPrincipal = {
 export type ScopedApiKeyCredential = {
 	token: string
 	principal: ApiPrincipal
+}
+
+/** A proposer may append memory events and propose new wiki pages for review,
+ *  and nothing else: it holds `propose` without `write`. */
+export function isProposalOnlyPrincipal(
+	principal: Pick<ApiPrincipal, "capabilities">,
+): boolean {
+	return (
+		principal.capabilities.includes("propose") &&
+		!principal.capabilities.includes("write")
+	)
 }
 
 export type PrincipalRequestAuthority = {

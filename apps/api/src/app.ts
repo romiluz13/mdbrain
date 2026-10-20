@@ -8,6 +8,7 @@ import { openApiSpec } from "./openapi-spec.js"
 import {
 	authorizePrincipalRequest,
 	createDevelopmentPrincipal,
+	isProposalOnlyPrincipal,
 	parseScopedApiKeyPolicies,
 	resolveBearerPrincipal,
 	timingSafeBearerEquals,
@@ -153,7 +154,7 @@ async function authorizeScopedApiKey(
 			conflict ??
 			authorizePrincipalRequest(principal, {
 				...requestScope,
-				capability: requiredCapability(c),
+				capability: requiredCapability(c, principal),
 			}),
 	}
 }
@@ -185,7 +186,14 @@ const WRITE_POST_PATHS = new Set([
 	"/v1/wiki/okf-import",
 ])
 
-function requiredCapability(c: Context<ApiEnvironment>): PrincipalCapability {
+// The two memory writes through which a proposal-only principal may propose a
+// new page; every other write route still asks for `write`.
+const PROPOSE_POST_PATHS = new Set(["/v1/add", "/v1/write-event"])
+
+function requiredCapability(
+	c: Context<ApiEnvironment>,
+	principal: ApiPrincipal,
+): PrincipalCapability {
 	const path = c.req.path
 	if (path.startsWith("/v1/admin/")) {
 		return "administer"
@@ -200,7 +208,11 @@ function requiredCapability(c: Context<ApiEnvironment>): PrincipalCapability {
 	if (c.req.method === "GET" || c.req.method === "HEAD") return "read"
 	if (c.req.method === "PATCH" || c.req.method === "DELETE") return "write"
 	if (READ_POST_PATHS.has(path)) return "read"
-	if (WRITE_POST_PATHS.has(path)) return "write"
+	if (WRITE_POST_PATHS.has(path)) {
+		return PROPOSE_POST_PATHS.has(path) && isProposalOnlyPrincipal(principal)
+			? "propose"
+			: "write"
+	}
 	return "administer"
 }
 

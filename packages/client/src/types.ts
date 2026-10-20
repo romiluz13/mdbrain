@@ -1254,3 +1254,55 @@ export type MdbrainWikiChangesResponse = {
 	hasMore: boolean
 	nextCursor?: string
 }
+
+/** Input for GET /v1/admin/wiki-promotions, the review queue. Needs a key with
+ *  the administer capability. */
+export type MdbrainListProposalsInput = {
+	scope?: string
+	scopeRef?: string
+	limit?: number
+}
+
+/** A proposed new page waiting for a decision. It is not a wiki page yet: no
+ *  wiki read returns it until it is approved. */
+export type MdbrainWikiProposal = {
+	operationId: string
+	state: "pending"
+	proposer: { subjectId: string; displayName?: string; agentId: string }
+	scope: string
+	scopeRef: string
+	proposedAt: string
+	page: {
+		slug: string
+		title: string
+		kind: string
+		summary: string
+		body: string
+		claims: Array<{ id: string; text: string; confidence?: number }>
+	}
+}
+
+export type MdbrainListProposalsResponse = {
+	proposals: MdbrainWikiProposal[]
+}
+
+export type MdbrainApproveProposalInput = { operationId: string }
+
+/** Approving twice returns the same body. */
+export type MdbrainApproveProposalResponse = {
+	ok: true
+	operationId: string
+	state: "promoted"
+	pageSlug: string
+}
+
+export type MdbrainRejectProposalInput = {
+	operationId: string
+	reason?: string
+}
+
+export type MdbrainRejectProposalResponse = {
+	ok: true
+	operationId: string
+	state: "rejected"
+}
