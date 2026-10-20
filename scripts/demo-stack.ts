@@ -8,16 +8,23 @@
 //
 // The clone must sit at the pinned Memongo commit. Logs and pids live in the
 // stack dir, outside the repo.
+//
+// Ownership: start and stop each take start.lock (demo-stack-lock.ts) before
+// they read anything or call anything outside this process, and only the
+// holder writes or deletes processes.json. A start that loses the race refuses
+// and leaves the winner's record alone. The lock is released when the command
+// exits; if the command is killed, the next one takes over the stale lock once
+// it can show the recorded holder is gone.
+//
+// Residual race: before it signals a child, the script re-reads that child's
+// pid, start time and command with ps and signals only on an exact match. The
+// kill(2) that follows is a separate step, and macOS has no way to signal a
+// process by identity (there is no pidfd): if the child exits and the OS hands
+// its pid to a new process in that gap, the new process receives the signal.
+// The re-check narrows the gap to milliseconds; it does not close it.
 
 import { execFileSync, spawn } from "node:child_process"
-import {
-	existsSync,
-	mkdirSync,
-	openSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs"
+import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs"
 import { createConnection } from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -30,12 +37,22 @@ import {
 	parseSecretsFile,
 } from "./demo-stack-config.js"
 import {
+	StackBusyError,
+	type StackLock,
+	acquireStackLock,
+	identifyProcess,
+	releaseStackLock,
+	removeOwnedRecord,
+	writeOwnedRecord,
+} from "./demo-stack-lock.js"
+import {
 	type Observed,
 	type ProcessIdentity,
 	type StackRecord,
 	isSameProcess,
 	planStart,
 	planStop,
+	terminateIfStillSame,
 } from "./demo-stack-process.js"
 
 const repoRoot = path.resolve(
@@ -58,16 +75,22 @@ const stackDir = path.resolve(
 )
 const recordFile = path.join(stackDir, "processes.json")
 
-function identify(pid: number): ProcessIdentity | undefined {
+let held: StackLock | undefined
+process.on("exit", () => {
+	if (held) releaseStackLock(held)
+})
+
+function takeStackLock(): StackLock {
+	mkdirSync(stackDir, { recursive: true, mode: 0o700 })
+	const self =
+		identifyProcess(process.pid) ?? fail("cannot identify this process")
 	try {
-		const read = (field: string) =>
-			execFileSync("ps", ["-p", String(pid), "-o", `${field}=`], {
-				encoding: "utf8",
-			}).trim()
-		return { pid, startedAt: read("lstart"), command: read("command") }
-	} catch {
-		return undefined
+		held = acquireStackLock(stackDir, self)
+	} catch (error) {
+		if (error instanceof StackBusyError) fail(error.message)
+		throw error
 	}
+	return held
 }
 
 function readRecord(): StackRecord | undefined {
@@ -78,7 +101,10 @@ function readRecord(): StackRecord | undefined {
 
 function observe(record: StackRecord | undefined): Observed {
 	return record
-		? { memongo: identify(record.memongo.pid), api: identify(record.api.pid) }
+		? {
+				memongo: identifyProcess(record.memongo.pid),
+				api: identifyProcess(record.api.pid),
+			}
 		: {}
 }
 
@@ -93,13 +119,19 @@ function portInUse(port: number): Promise<boolean> {
 	})
 }
 
-// Stops only children this run started, identified exactly, then fails.
+function terminate(
+	child: ProcessIdentity,
+): ReturnType<typeof terminateIfStillSame> {
+	return terminateIfStillSame(child, identifyProcess, (pid) =>
+		process.kill(pid, "SIGTERM"),
+	)
+}
+
+// Stops only children this run started, identified again right before each
+// signal, then removes the record this run owns and fails.
 function abortStart(started: ProcessIdentity[], message: string): never {
-	for (const child of started) {
-		if (isSameProcess(child, identify(child.pid)))
-			process.kill(child.pid, "SIGTERM")
-	}
-	rmSync(recordFile, { force: true })
+	for (const child of started) terminate(child)
+	removeOwnedRecord(held ?? fail("internal error: no stack lock held"))
 	fail(message)
 }
 
@@ -112,7 +144,7 @@ async function waitForUrl(
 	const deadline = Date.now() + timeoutMs
 	let last = ""
 	while (Date.now() < deadline) {
-		if (!isSameProcess(child, identify(child.pid)))
+		if (!isSameProcess(child, identifyProcess(child.pid)))
 			abortStart(
 				started,
 				`pid ${child.pid} exited before ${url} was ready; see ${stackDir}`,
@@ -142,7 +174,7 @@ function startProcess(
 		stdio: ["ignore", log, log],
 	})
 	child.unref()
-	const identity = child.pid ? identify(child.pid) : undefined
+	const identity = child.pid ? identifyProcess(child.pid) : undefined
 	if (!identity) fail(`${name} did not start`)
 	return identity
 }
@@ -152,6 +184,7 @@ async function start(): Promise<void> {
 	const memongoDir = path.resolve(
 		arg("--memongo") ?? fail("--memongo <clone dir> is required"),
 	)
+	const lock = takeStackLock()
 	const head = execFileSync("git", ["-C", memongoDir, "rev-parse", "HEAD"], {
 		encoding: "utf8",
 	}).trim()
@@ -169,7 +202,7 @@ async function start(): Promise<void> {
 	if (plan.action === "refuse") fail(plan.reason)
 	if (plan.discardStaleRecord) {
 		console.log("demo-stack: discarding a stale process record")
-		rmSync(recordFile)
+		removeOwnedRecord(lock)
 	}
 
 	const secrets = parseSecretsFile(readFileSync(secretsPath, "utf8"))
@@ -201,7 +234,7 @@ async function start(): Promise<void> {
 		600_000,
 	)
 	const api = startProcess("api", path.join(repoRoot, "apps/api"), env.api)
-	writeFileSync(recordFile, JSON.stringify({ memongo, api }), { mode: 0o600 })
+	writeOwnedRecord(lock, { memongo, api })
 	const ready = await waitForUrl(
 		`http://127.0.0.1:${DEMO_API_PORT}/ready`,
 		api,
@@ -213,16 +246,27 @@ async function start(): Promise<void> {
 }
 
 function stop(): void {
+	const lock = takeStackLock()
 	const record = readRecord() ?? fail(`no process record at ${recordFile}`)
 	const plan = planStop(record, observe(record))
-	for (const pid of plan.signal) {
-		process.kill(pid, "SIGTERM")
-		console.log(`demo-stack: stopped pid ${pid}`)
+	for (const identity of Object.values(record)) {
+		const { pid } = identity
+		if (!plan.signal.includes(pid)) continue
+		const outcome = terminate(identity)
+		console.log(
+			outcome === "signalled"
+				? `demo-stack: stopped pid ${pid}`
+				: `demo-stack: left pid ${pid} alone: ${
+						outcome === "gone"
+							? "it exited before the signal"
+							: "it now belongs to another process"
+					}`,
+		)
 	}
 	for (const { name, reason } of plan.skipped) {
 		console.log(`demo-stack: left ${name} alone: ${reason}`)
 	}
-	rmSync(recordFile)
+	removeOwnedRecord(lock)
 }
 
 async function status(): Promise<void> {

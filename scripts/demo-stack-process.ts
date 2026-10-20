@@ -1,5 +1,7 @@
 // A pid alone is not an identity: the OS reuses pids, so the stack records
-// each child's start time and command and only ever signals an exact match.
+// each child's start time and command and signals only a process whose
+// identity still matches when it is checked. The check narrows the pid-reuse
+// window, it does not close it: see "Residual race" in demo-stack.ts.
 
 export type ProcessIdentity = {
 	pid: number
@@ -10,6 +12,8 @@ export type ProcessIdentity = {
 export type StackName = "memongo" | "api"
 
 export type StackRecord = Record<StackName, ProcessIdentity>
+
+export type LockRecord = { holder: ProcessIdentity; token: string }
 
 export type Observed = Partial<Record<StackName, ProcessIdentity | undefined>>
 
@@ -76,4 +80,40 @@ export function planStart(
 	return record
 		? { action: "start", discardStaleRecord: true }
 		: { action: "start" }
+}
+
+export function terminateIfStillSame(
+	recorded: ProcessIdentity,
+	identify: (pid: number) => ProcessIdentity | undefined,
+	kill: (pid: number) => void,
+): "signalled" | "gone" | "reused" {
+	const current = identify(recorded.pid)
+	if (current === undefined) return "gone"
+	if (!isSameProcess(recorded, current)) return "reused"
+	kill(recorded.pid)
+	return "signalled"
+}
+
+export function planLock(
+	existing: LockRecord | "unreadable" | undefined,
+	holderNow: ProcessIdentity | undefined,
+):
+	| { action: "create" }
+	| { action: "take-over" }
+	| { action: "refuse"; reason: string } {
+	if (existing === undefined) return { action: "create" }
+	if (existing === "unreadable") {
+		return {
+			action: "refuse",
+			reason:
+				"start.lock exists but cannot be read; if no demo-stack command is running, delete it",
+		}
+	}
+	if (isSameProcess(existing.holder, holderNow)) {
+		return {
+			action: "refuse",
+			reason: `another demo-stack command is running (pid ${existing.holder.pid}); wait for it to finish`,
+		}
+	}
+	return { action: "take-over" }
 }
