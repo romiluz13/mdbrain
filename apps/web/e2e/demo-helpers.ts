@@ -4,7 +4,18 @@ import type { MdbrainWikiClaim, MdbrainWikiPageView } from "@mdbrain/client"
 import { CHAPTERS } from "../app/demo/chapters"
 import type { installDemoProxy } from "./demo-proxy"
 
-export type Proxy = Awaited<ReturnType<typeof installDemoProxy>>
+export type DemoProxy = Awaited<ReturnType<typeof installDemoProxy>>
+
+/** The parsed body of a logged proxy response; fails loudly when none was seen. */
+export function bodyOf<T>(
+	entry: { body: unknown } | undefined,
+	what: string,
+): T {
+	if (!entry) {
+		throw new Error(`the proxy served no ${what} response`)
+	}
+	return entry.body as T
+}
 
 export async function openDemo(page: Page, hash = ""): Promise<void> {
 	await page.goto(`/demo${hash}`)
@@ -44,7 +55,7 @@ export async function tabTo(
 export const chapterTitle = (index: number): string =>
 	CHAPTERS[index]?.title ?? ""
 
-export function listPages(proxy: Proxy): MdbrainWikiPageView[] {
+export function listPages(proxy: DemoProxy): MdbrainWikiPageView[] {
 	const bySkip = new Map<string, MdbrainWikiPageView[]>()
 	for (const entry of proxy.responses) {
 		if (
@@ -63,9 +74,11 @@ export function listPages(proxy: Proxy): MdbrainWikiPageView[] {
 		.flatMap((entry) => entry[1])
 }
 
-export function listTotal(proxy: Proxy): number {
-	const entry = proxy.latest("wiki", { limit: "100", skip: "0" })
-	return (entry?.body as { total: number }).total
+export function listTotal(proxy: DemoProxy): number {
+	return bodyOf<{ total: number }>(
+		proxy.latest("wiki", { limit: "100", skip: "0" }),
+		"page list",
+	).total
 }
 
 export function claimsOf(pages: MdbrainWikiPageView[]): MdbrainWikiClaim[] {

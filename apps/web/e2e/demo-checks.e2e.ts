@@ -5,6 +5,7 @@ import { expect, test, type Page } from "@playwright/test"
 import { formatUtc } from "../lib/demo-data/views"
 import { CHAPTERS } from "../app/demo/chapters"
 import {
+	bodyOf,
 	chapterTitle,
 	claimsOf,
 	eventSourceIds,
@@ -99,11 +100,9 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await expect(page.getByTestId("ask-hit").first()).toBeVisible()
 		await proxy.flush()
 		const search = proxy.latest("wiki/search", { query: "Halvorsen renewal" })
-		const results = (
-			search?.body as {
-				results: Array<{ page: { title: string }; score: number }>
-			}
-		).results
+		const results = bodyOf<{
+			results: Array<{ page: { title: string }; score: number }>
+		}>(search, "search").results
 		await expect(page.getByTestId("ask-hit")).toHaveCount(results.length)
 		for (const [position, result] of results.entries()) {
 			const card = page.getByTestId("ask-hit").nth(position)
@@ -124,14 +123,12 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await goto(page, 4)
 		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
 		await proxy.flush()
-		const holder = (
-			proxy.latest("wiki/lint")?.body as {
-				unresolvedContradictions: Array<{
-					pageSlug: string
-					contradiction: { detectedAt: string; id: string; resolution: string }
-				}>
-			}
-		).unresolvedContradictions[0]
+		const holder = bodyOf<{
+			unresolvedContradictions: Array<{
+				pageSlug: string
+				contradiction: { detectedAt: string; id: string; resolution: string }
+			}>
+		}>(proxy.latest("wiki/lint"), "lint").unresolvedContradictions[0]
 		if (!holder) throw new Error("the lint read lists no contradiction")
 		const overview = proxy.latest(
 			`wiki/overview/${encodeURIComponent(holder.pageSlug)}`,
@@ -196,11 +193,9 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await goto(page, 6)
 		await expect(stat(page, "revisions")).not.toHaveText("—")
 		await proxy.flush()
-		const changes = (
-			proxy.latest("wiki/changes")?.body as {
-				changes: Array<{ claims: { counts: { added: number } } | null }>
-			}
-		).changes
+		const changes = bodyOf<{
+			changes: Array<{ claims: { counts: { added: number } } | null }>
+		}>(proxy.latest("wiki/changes"), "changes").changes
 		await expect(stat(page, "revisions")).toHaveText(String(changes.length))
 		await expect(stat(page, "claims-added")).toHaveText(
 			String(changes.reduce((n, c) => n + (c.claims?.counts.added ?? 0), 0)),

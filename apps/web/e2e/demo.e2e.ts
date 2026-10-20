@@ -11,7 +11,7 @@ import {
 	mapReady,
 	openDemo,
 	tabTo,
-	type Proxy,
+	type DemoProxy,
 } from "./demo-helpers"
 import { installDemoProxy } from "./demo-proxy"
 
@@ -197,7 +197,7 @@ test.describe("journey", () => {
 test("the browser never carries the read key or the principal", async ({
 	page,
 }) => {
-	const proxy: Proxy = await installDemoProxy(page)
+	const proxy: DemoProxy = await installDemoProxy(page)
 	const consoleErrors: string[] = []
 	page.on("console", (message) => {
 		if (message.type() === "error") {
