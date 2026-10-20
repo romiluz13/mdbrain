@@ -6,7 +6,15 @@ const records = new Map([
 	["src-b", { body: "body b" }],
 ])
 const world = {
-	sources: [{ id: "src-a" }, { id: "src-b" }],
+	sources: [
+		{ id: "src-a", date: "2026-07-01T09:00:00.000Z", kind: "crm_note" },
+		{
+			id: "src-b",
+			date: "2026-07-02T09:00:00.000Z",
+			kind: "slack_thread",
+			storyline: "renewal",
+		},
+	],
 	pages: [{ slug: "company/alpha" }],
 	contradiction: { incoming: { slug: "risks/view" } },
 }
@@ -33,5 +41,20 @@ describe("corpusDigest", () => {
 		})
 		expect(changedBody).not.toBe(base)
 		expect(changedWorld).not.toBe(base)
+	})
+
+	it.each([
+		["business date", { date: "2026-07-09T09:00:00.000Z" }],
+		["source kind", { kind: "support_ticket" }],
+		["storyline", { storyline: "drift" }],
+	])("flips when a source's %s changes, since it becomes event data", (_field, change) => {
+		const base = corpusDigest({ ...world, records })
+		const [a, b] = world.sources
+		const changed = corpusDigest({
+			...world,
+			records,
+			sources: [a, { ...b, ...change }],
+		})
+		expect(changed).not.toBe(base)
 	})
 })
