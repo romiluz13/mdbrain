@@ -98,9 +98,10 @@ async function call(
 		model,
 		maxOutputTokens: OUTPUT_TOKENS[spec.length],
 		maxRetries: 1,
-		// Haiku 5.5 thinks adaptively by default and its reasoning counts
-		// against maxOutputTokens; run 1 got empty text on short records.
-		providerOptions: { anthropic: { thinking: { type: "disabled" } } },
+		// @ai-sdk/anthropic 2.0.109 never sends thinking "disabled", so Haiku
+		// 5.5 keeps its default thinking; low effort leaves room for the text
+		// (tasks/08/debug-effort.log).
+		providerOptions: { anthropic: { effort: "low" } },
 		messages: [
 			{
 				role: "system",

@@ -426,6 +426,14 @@ describe("input cap", () => {
 			},
 		],
 		[
+			"disabled thinking, which @ai-sdk/anthropic 2.0.109 drops without sending",
+			/providerOptions\.anthropic\.thinking/,
+			{
+				prompt: userPrompt("hi"),
+				providerOptions: { anthropic: { thinking: { type: "disabled" } } },
+			},
+		],
+		[
 			"options for another provider",
 			/openai/,
 			{ prompt: userPrompt("hi"), providerOptions: { openai: { user: "u" } } },
@@ -470,13 +478,13 @@ describe("input cap", () => {
 		expect(model.doGenerateCalls).toBe(1)
 	})
 
-	it("allows turning thinking off, which adds no input and only lowers output", async () => {
+	it("allows effort, which adds no input; thinking it buys stays inside maxOutputTokens", async () => {
 		const model = mockModel()
 		const { budget } = fakeBudget()
 		await capped(model, budget, 10_000).doGenerate({
 			prompt: userPrompt("hi"),
 			maxOutputTokens: 10,
-			providerOptions: { anthropic: { thinking: { type: "disabled" } } },
+			providerOptions: { anthropic: { effort: "low" } },
 		})
 		expect(model.doGenerateCalls).toBe(1)
 	})

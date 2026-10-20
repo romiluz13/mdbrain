@@ -235,24 +235,16 @@ const TOOL_PROMPT_ALLOWANCE_TOKENS = 1024
 // in the call. The rest (fallbacks, contextManagement, container skills,
 // thinking, taskBudget, ...) can bill input or output the reservation cannot
 // see, so they are refused by name rather than guessed at.
+// effort only sets how much the model thinks; thinking counts toward
+// max_tokens, so maxOutputTokens still bounds it.
 const BOUNDABLE_ANTHROPIC_OPTIONS = new Set([
 	"cacheControl",
+	"effort",
 	"disableParallelToolUse",
 	"sendReasoning",
 	"structuredOutputMode",
 	"metadata",
 ])
-
-// Turning thinking off adds no input and can only lower output, which
-// maxOutputTokens already bounds; every other thinking mode stays refused.
-function isThinkingDisabled(value: unknown): boolean {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		Object.keys(value).length === 1 &&
-		(value as { type?: unknown }).type === "disabled"
-	)
-}
 
 function unboundable(reason: string): never {
 	throw new BudgetInputRefusedError(
@@ -291,8 +283,7 @@ function assertBoundable(params: LanguageModelV2CallOptions): void {
 		if (namespace !== "anthropic") {
 			unboundable(`providerOptions.${namespace} is not known to add no input`)
 		}
-		for (const [key, value] of Object.entries(options)) {
-			if (key === "thinking" && isThinkingDisabled(value)) continue
+		for (const key of Object.keys(options)) {
 			if (!BOUNDABLE_ANTHROPIC_OPTIONS.has(key)) {
 				unboundable(
 					`providerOptions.anthropic.${key} can change what is billed`,

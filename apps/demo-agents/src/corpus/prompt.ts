@@ -3,10 +3,17 @@ import { TEAMS } from "./catalog.js"
 import { longDate, trucks } from "./format.js"
 import type { SourceSpec, World } from "./types.js"
 
+// Haiku 5.5 always thinks before answering (even at low effort) and that
+// thinking counts toward the cap, so caps leave room for it above the text.
 export const OUTPUT_TOKENS: Record<SourceSpec["length"], number> = {
-	short: 450,
-	medium: 900,
-	long: 1500,
+	short: 1200,
+	medium: 1800,
+	long: 2800,
+}
+export const MAX_REPLY_WORDS: Record<SourceSpec["length"], number> = {
+	short: 150,
+	medium: 350,
+	long: 700,
 }
 const WORDS: Record<SourceSpec["length"], string> = {
 	short: "80 to 150 words",

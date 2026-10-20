@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { MAX_INPUT_TOKENS } from "./render-config.js"
-import { OUTPUT_TOKENS, recordPrompt, systemPrompt } from "./prompt.js"
+import { MAX_REPLY_WORDS, recordPrompt, systemPrompt } from "./prompt.js"
 import { buildWorld } from "./world.js"
 
 const world = buildWorld(20261020)
@@ -25,14 +25,15 @@ describe("prompts", () => {
 	it("leaves room under the input cap for a repair turn on every record", () => {
 		const bytes = (text: string) => Buffer.byteLength(text, "utf8")
 		const system = bytes(systemPrompt(world))
-		// A reply averages about four bytes per token; 500 bytes cover the
-		// repair instruction and the serialized message wrappers.
+		// A repair turn carries only the reply text (thinking is not sent
+		// back); eight bytes per word covers English with markup, and 500
+		// bytes cover the repair instruction and the message wrappers.
 		const worst = Math.max(
 			...world.sources.map(
 				(s) =>
 					system +
 					bytes(recordPrompt(world, s)) +
-					OUTPUT_TOKENS[s.length] * 4 +
+					MAX_REPLY_WORDS[s.length] * 8 +
 					500,
 			),
 		)
