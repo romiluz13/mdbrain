@@ -1,0 +1,45 @@
+// A screenshot of every /demo chapter for the project it runs on, for review.
+//   DEMO_SHOTS_DIR=/some/dir bunx playwright test e2e/demo-shots.e2e.ts
+// Set DEMO_E2E_LIVE=1 to shoot a live stack instead of the fixture.
+import { expect, test } from "@playwright/test"
+import { CHAPTERS } from "../app/demo/chapters"
+import { mapReady, settled } from "./demo-helpers"
+import { installDemoProxy } from "./demo-proxy"
+
+const DIR = process.env.DEMO_SHOTS_DIR
+
+test.skip(!DIR, "set DEMO_SHOTS_DIR to take the screenshots")
+
+for (const [index, chapter] of CHAPTERS.entries()) {
+	test(`shot ${index + 1} ${chapter.id}`, async ({ page }, testInfo) => {
+		await installDemoProxy(page)
+		await page.goto(`/demo#${chapter.id}`)
+		await expect(
+			page.getByRole("heading", { level: 1, name: chapter.title }),
+		).toBeVisible()
+		await mapReady(page)
+		if (chapter.id === "ask") {
+			await page
+				.getByRole("button", { name: "Is the Halvorsen renewal healthy?" })
+				.click()
+			await expect(page.getByTestId("ask-hit").first()).toBeVisible()
+		} else if (chapter.id === "hood") {
+			await page.getByRole("button", { name: "Run this read" }).first().click()
+			await expect(page.getByTestId("read-status")).toBeVisible()
+		} else if (chapter.id === "run") {
+			await page.getByRole("button", { name: "Read everything again" }).click()
+			await expect(page.locator('[data-reread="pages"]')).toContainText(
+				"matches",
+			)
+		} else if (chapter.id === "contradiction") {
+			await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
+		}
+		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+		await page.addStyleTag({ content: "nextjs-portal{display:none!important}" })
+		await settled(page)
+		await page.screenshot({
+			path: `${DIR}/${testInfo.project.name}-${String(index + 1).padStart(2, "0")}-${chapter.id}.png`,
+			fullPage: true,
+		})
+	})
+}
