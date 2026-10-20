@@ -16,6 +16,7 @@ function renderAll(w: World): Map<string, RenderedRecord> {
 				id: s.id,
 				body: `${s.title}\n\n${s.facts.join(". ")}.`,
 				model: "claude-haiku-5-5",
+				finishReason: "stop",
 				renderedAt: "2026-10-20T00:00:00.000Z",
 			},
 		]),
@@ -57,6 +58,26 @@ describe("buildWorld", () => {
 		expect(replay.length).toBeGreaterThanOrEqual(5)
 		expect(replay.length).toBeLessThanOrEqual(12)
 		for (const s of replay) expect(s.date > lastHistory).toBe(true)
+	})
+
+	it("never gives two people in one organization the same surname, and uses a surname at most twice", () => {
+		const surname = (name: string) => name.split(" ").at(-1) as string
+		const uses = new Map<string, string[]>()
+		for (const p of world.people)
+			uses.set(surname(p.name), [...(uses.get(surname(p.name)) ?? []), p.org])
+		for (const [name, orgs] of uses) {
+			expect(orgs.length, name).toBeLessThanOrEqual(2)
+			expect(new Set(orgs).size, name).toBe(orgs.length)
+		}
+	})
+
+	it("cites the release notes, not the planning ticket, for the v4.2 rollout", () => {
+		const claim = world.pages
+			.flatMap((p) => p.claims)
+			.find((c) => c.id === "eta-v4-2-rollout")
+		expect(claim?.evidence).toEqual([
+			{ sourceId: "src-drift-02", anchor: "July 14" },
+		])
 	})
 
 	it("passes its own validator", () => {
@@ -144,6 +165,19 @@ describe("validateRendered", () => {
 		const errors = validateRendered(world, records).join("\n")
 		expect(errors).toMatch(new RegExp(first.id))
 		expect(errors).toMatch(new RegExp(`${second.id}.*${second.facts[0]}`))
+	})
+
+	it("reports a record the model did not finish", () => {
+		const records = renderAll(world)
+		const first = world.sources[0]
+		if (!first) throw new Error("fixture")
+		records.set(first.id, {
+			...(records.get(first.id) as RenderedRecord),
+			finishReason: "length",
+		})
+		expect(validateRendered(world, records).join("\n")).toMatch(
+			new RegExp(`${first.id}: truncated`),
+		)
 	})
 
 	it("reports a real company named in a body", () => {

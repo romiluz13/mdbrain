@@ -73,7 +73,7 @@ ${formats}
 4. Never mention real companies, real products, real people or real brands, including competitors, telematics vendors and software tools; describe them generically.
 5. Stay consistent with the brief: do not add events, numbers or decisions that change the story. Small realistic texture (a typo, a side remark, a dock number) is welcome.
 6. Vary voice by author: engineers are precise, sales are upbeat, frustrated customers sound frustrated.
-7. Use American English and the date given in the request.`
+7. Use American English and the date given in the request. Mention no other calendar date unless the brief or the verbatim strings contain it; say "last week" or "next quarter" instead.`
 }
 
 export function recordPrompt(world: World, spec: SourceSpec): string {

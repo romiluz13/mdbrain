@@ -141,11 +141,12 @@ export function storylineSources(ctx: StorylineContext): SourceSpec[] {
 			productIds: ["predict"],
 			facts: [
 				"ETA model v4.2",
+				"July 14",
 				"dwell-time feature",
 				"12% lower mean absolute error",
 			],
 			brief:
-				"Customer-facing release notes: ETA model v4.2 adds a dwell-time feature and shows 12% lower mean absolute error on the benchmark. No customer action needed.",
+				"Customer-facing release notes dated July 14: ETA model v4.2 rolled out to all customers on July 14, adds a dwell-time feature and shows 12% lower mean absolute error on the benchmark. No customer action needed.",
 			length: "medium",
 		}),
 		s({

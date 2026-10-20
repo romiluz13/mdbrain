@@ -78,9 +78,18 @@ const failures: string[] = []
 let stopped: string | undefined
 const lastFinish = new Map<string, string>()
 
-function problems(spec: SourceSpec, text: string): string[] {
+function problems(
+	spec: SourceSpec,
+	text: string,
+	finishReason: string,
+): string[] {
 	const lower = text.toLowerCase()
 	return [
+		...(finishReason === "stop"
+			? []
+			: [
+					`the reply was cut off (finish: ${finishReason}); write a shorter record`,
+				]),
 		...spec.facts
 			.filter((f) => !lower.includes(f.toLowerCase()))
 			.map((f) => `missing the exact string "${f}"`),
@@ -93,7 +102,7 @@ function problems(spec: SourceSpec, text: string): string[] {
 async function call(
 	spec: SourceSpec,
 	messages: ModelMessage[],
-): Promise<string> {
+): Promise<{ text: string; finishReason: string }> {
 	const result = await generateText({
 		model,
 		maxOutputTokens: OUTPUT_TOKENS[spec.length],
@@ -121,26 +130,30 @@ async function call(
 		spec.id,
 		`${result.finishReason}, ${result.usage.reasoningTokens ?? 0} reasoning tokens`,
 	)
-	return result.text.trim()
+	return { text: result.text.trim(), finishReason: result.finishReason }
 }
 
 async function render(spec: SourceSpec): Promise<void> {
 	const user = recordPrompt(world, spec)
-	let text = await call(spec, [{ role: "user", content: user }])
+	let reply = await call(spec, [{ role: "user", content: user }])
 	// An empty reply cannot be sent back as an assistant turn; ask afresh.
-	if (!text) text = await call(spec, [{ role: "user", content: user }])
-	let issues = text ? problems(spec, text) : ["empty reply"]
-	if (issues.length && text) {
+	if (!reply.text) reply = await call(spec, [{ role: "user", content: user }])
+	let issues = reply.text
+		? problems(spec, reply.text, reply.finishReason)
+		: ["empty reply"]
+	if (issues.length && reply.text) {
 		totals.repaired++
-		text = await call(spec, [
+		reply = await call(spec, [
 			{ role: "user", content: user },
-			{ role: "assistant", content: text },
+			{ role: "assistant", content: reply.text },
 			{
 				role: "user",
 				content: `Rewrite the whole record. Fix: ${issues.join("; ")}.`,
 			},
 		])
-		issues = problems(spec, text)
+		issues = reply.text
+			? problems(spec, reply.text, reply.finishReason)
+			: ["empty reply"]
 	}
 	if (issues.length) {
 		failures.push(
@@ -150,8 +163,9 @@ async function render(spec: SourceSpec): Promise<void> {
 	}
 	appendRecord({
 		id: spec.id,
-		body: text,
+		body: reply.text,
 		model: DEMO_MODEL,
+		finishReason: reply.finishReason,
 		renderedAt: new Date().toISOString(),
 	})
 }

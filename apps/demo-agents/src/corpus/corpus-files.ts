@@ -3,46 +3,70 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	renameSync,
 	writeFileSync,
 } from "node:fs"
+import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { RenderedRecord, World } from "./types.js"
 
 export const CORPUS_DIR = fileURLToPath(
 	new URL("../../corpus/northstar/", import.meta.url),
 )
-const WORLD_FILE = `${CORPUS_DIR}world.json`
-const RECORDS_FILE = `${CORPUS_DIR}records.jsonl`
+const worldFile = (dir: string) => path.join(dir, "world.json")
+const recordsFile = (dir: string) => path.join(dir, "records.jsonl")
 
-export function writeWorld(world: World): void {
-	mkdirSync(CORPUS_DIR, { recursive: true })
-	writeFileSync(WORLD_FILE, `${JSON.stringify(world, null, "\t")}\n`)
+export function writeWorld(world: World, dir = CORPUS_DIR): void {
+	mkdirSync(dir, { recursive: true })
+	writeFileSync(worldFile(dir), `${JSON.stringify(world, null, "\t")}\n`)
 }
 
-export function readWorld(): World {
-	return JSON.parse(readFileSync(WORLD_FILE, "utf8")) as World
+export function readWorld(dir = CORPUS_DIR): World {
+	return JSON.parse(readFileSync(worldFile(dir), "utf8")) as World
 }
 
-export function readRecords(): Map<string, RenderedRecord> {
-	if (!existsSync(RECORDS_FILE)) return new Map()
-	const records = readFileSync(RECORDS_FILE, "utf8")
-		.split("\n")
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as RenderedRecord)
-	return new Map(records.map((r) => [r.id, r]))
+// An interrupted append can leave one torn final line; that record is simply
+// rendered again. Damage anywhere else is not an interrupted append, so it
+// stops the run instead of being skipped.
+export function readRecords(dir = CORPUS_DIR): Map<string, RenderedRecord> {
+	if (!existsSync(recordsFile(dir))) return new Map()
+	const lines = readFileSync(recordsFile(dir), "utf8").split("\n")
+	const records = new Map<string, RenderedRecord>()
+	for (const [index, line] of lines.entries()) {
+		if (!line) continue
+		try {
+			const record = JSON.parse(line) as RenderedRecord
+			records.set(record.id, record)
+		} catch (error) {
+			if (index === lines.length - 1) {
+				console.warn(
+					`records.jsonl: dropped a torn final line (line ${index + 1})`,
+				)
+				continue
+			}
+			throw new Error(`records.jsonl: line ${index + 1} is not valid JSON`, {
+				cause: error,
+			})
+		}
+	}
+	return records
 }
 
-export function appendRecord(record: RenderedRecord): void {
-	appendFileSync(RECORDS_FILE, `${JSON.stringify(record)}\n`)
+export function appendRecord(record: RenderedRecord, dir = CORPUS_DIR): void {
+	appendFileSync(recordsFile(dir), `${JSON.stringify(record)}\n`)
 }
 
-// Rewrites the checkpoint file in source order so the committed file diffs
-// cleanly regardless of the order parallel renders finished in.
-export function sortRecords(world: World): void {
-	const records = readRecords()
+// Rewrites the checkpoint in source order so the committed file diffs cleanly
+// whatever order parallel renders finished in. The new content goes to a temp
+// file that replaces the checkpoint by rename, so an interruption leaves
+// either the old file or the new one, never a truncated one.
+export function sortRecords(world: World, dir = CORPUS_DIR): void {
+	const records = readRecords(dir)
 	const lines = world.sources.flatMap((s) => {
 		const r = records.get(s.id)
 		return r ? [JSON.stringify(r)] : []
 	})
-	writeFileSync(RECORDS_FILE, lines.length ? `${lines.join("\n")}\n` : "")
+	const temp = `${recordsFile(dir)}.tmp`
+	writeFileSync(temp, lines.length ? `${lines.join("\n")}\n` : "")
+	renameSync(temp, recordsFile(dir))
 }

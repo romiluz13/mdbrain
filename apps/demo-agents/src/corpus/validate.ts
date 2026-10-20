@@ -165,6 +165,10 @@ export function validateRendered(
 			errors.push(`${s.id}: not rendered`)
 			continue
 		}
+		if (record.finishReason !== "stop")
+			errors.push(
+				`${s.id}: truncated or unfinished (finish: ${record.finishReason ?? "unrecorded"})`,
+			)
 		const body = record.body.toLowerCase()
 		for (const fact of s.facts)
 			if (!body.includes(fact.toLowerCase()))

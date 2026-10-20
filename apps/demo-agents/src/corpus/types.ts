@@ -106,5 +106,6 @@ export type RenderedRecord = {
 	id: string
 	body: string
 	model: string
+	finishReason: string
 	renderedAt: string
 }

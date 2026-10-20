@@ -181,7 +181,7 @@ export function buildPages(ctx: Ctx): {
 				claim(
 					"eta-v4-2-rollout",
 					"ETA model v4.2 rolled out to all customers on July 14.",
-					"src-drift-01",
+					"src-drift-02",
 					"July 14",
 				),
 				claim(

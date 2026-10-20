@@ -20,24 +20,36 @@ const ACCOUNT_COUNT = 60
 
 // Generated people never share a surname with the named cast, so a reader
 // does not mistake them for relatives or the same person.
-function nameMaker(rng: Rng, taken: string[]) {
-	const used = new Set(taken)
-	const castSurnames = new Set(taken.map((n) => n.split(" ").at(-1)))
+// No two people in one organization share a surname and no surname appears
+// more than twice, so a surname alone never makes two people look related.
+function nameMaker(rng: Rng, cast: Person[]) {
+	const used = new Set(cast.map((p) => p.name))
+	const castSurnames = new Set(cast.map((p) => surnameOf(p.name)))
 	const lastNames = LAST_NAMES.filter((n) => !castSurnames.has(n))
-	return () => {
+	const orgsBySurname = new Map<string, string[]>()
+	return (org: string) => {
+		const free = lastNames.filter((n) => {
+			const orgs = orgsBySurname.get(n) ?? []
+			return orgs.length < 2 && !orgs.includes(org)
+		})
+		if (!free.length) throw new Error("not enough surnames")
 		for (;;) {
-			const name = `${rng.pick(FIRST_NAMES)} ${rng.pick(lastNames)}`
+			const last = rng.pick(free)
+			const name = `${rng.pick(FIRST_NAMES)} ${last}`
 			if (!used.has(name)) {
 				used.add(name)
+				orgsBySurname.set(last, [...(orgsBySurname.get(last) ?? []), org])
 				return name
 			}
 		}
 	}
 }
 
+const surnameOf = (name: string) => name.split(" ").at(-1) as string
+
 const personId = (name: string) => `per-${slugify(name)}`
 
-function northstarStaff(rng: Rng, nextName: () => string) {
+function northstarStaff(rng: Rng, nextName: (org: string) => string) {
 	const fixed = [
 		CAST.ceo,
 		CAST.cro,
@@ -54,7 +66,7 @@ function northstarStaff(rng: Rng, nextName: () => string) {
 		CAST.revops,
 	]
 	const make = (title: string, team: string): Person => {
-		const name = nextName()
+		const name = nextName("northstar")
 		return { id: personId(name), name, title, org: "northstar", team }
 	}
 	const aes = [
@@ -88,7 +100,7 @@ function isoDayBetween(rng: Rng, from: string, to: string): string {
 
 function generatedAccounts(
 	rng: Rng,
-	nextName: () => string,
+	nextName: (org: string) => string,
 	aes: Person[],
 	csms: Person[],
 ): { accounts: Account[]; contacts: Person[] } {
@@ -115,7 +127,7 @@ function generatedAccounts(
 		const contactCount = 2 + (rng.chance(0.6) ? 1 : 0)
 		const titles = rng.sample(CONTACT_TITLES, contactCount)
 		const accountContacts = titles.map((title): Person => {
-			const personName = nextName()
+			const personName = nextName(id)
 			return { id: personId(personName), name: personName, title, org: id }
 		})
 		contacts.push(...accountContacts)
@@ -143,8 +155,7 @@ function generatedAccounts(
 
 export function buildWorld(seed: number): World {
 	const rng = createRng(seed)
-	const fixedNames = Object.values(CAST).map((p) => p.name)
-	const nextName = nameMaker(rng, fixedNames)
+	const nextName = nameMaker(rng, Object.values(CAST))
 	const { people: staff, aes, csms } = northstarStaff(rng, nextName)
 	const generated = generatedAccounts(rng, nextName, aes, csms)
 	const accounts = [HALVORSEN, ...generated.accounts]
