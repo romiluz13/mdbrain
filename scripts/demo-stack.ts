@@ -13,8 +13,8 @@
 // they read anything or call anything outside this process, and only the
 // holder writes or deletes processes.json. A start that loses the race refuses
 // and leaves the winner's record alone. The lock is released when the command
-// exits; if the command is killed, the next one takes over the stale lock once
-// it can show the recorded holder is gone.
+// exits; if the command is killed, the next one refuses and names the stale
+// lock for the operator to delete.
 //
 // Residual race: before it signals a child, the script re-reads that child's
 // pid, start time and command with ps and signals only on an exact match. The

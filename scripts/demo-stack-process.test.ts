@@ -156,17 +156,19 @@ describe("planLock", () => {
 		})
 	})
 
-	it("takes over a lock whose holder is gone", () => {
-		expect(planLock(holder, undefined)).toEqual({ action: "take-over" })
-	})
-
-	it("takes over a lock whose holder pid now belongs to another process", () => {
+	it("refuses a stale lock and tells the operator how to clear it", () => {
+		const stale = {
+			action: "refuse",
+			reason:
+				"start.lock was left by pid 101, which is no longer running; if no demo-stack command is running, delete it and retry",
+		}
+		expect(planLock(holder, undefined)).toEqual(stale)
 		expect(
 			planLock(holder, { ...memongo, startedAt: "Wed Oct 21 09:00:00 2026" }),
-		).toEqual({ action: "take-over" })
-		expect(planLock(holder, { ...memongo, command: "node other.js" })).toEqual({
-			action: "take-over",
-		})
+		).toEqual(stale)
+		expect(planLock(holder, { ...memongo, command: "node other.js" })).toEqual(
+			stale,
+		)
 	})
 
 	it("refuses a lock it cannot read, since it cannot prove the holder is gone", () => {

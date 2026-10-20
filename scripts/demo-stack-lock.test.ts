@@ -65,14 +65,13 @@ describe("acquireStackLock", () => {
 		expect(JSON.parse(readFileSync(lockFile(), "utf8")).token).toBe(held.token)
 	})
 
-	it("takes over a lock whose holder is provably gone", () => {
-		acquireStackLock(dir, first, identify)
+	it("refuses a stale lock and leaves it for the operator", () => {
+		const old = acquireStackLock(dir, first, identify)
 		running.delete(first.pid)
-		const taken = acquireStackLock(dir, second, identify)
-		expect(JSON.parse(readFileSync(lockFile(), "utf8"))).toEqual({
-			holder: second,
-			token: taken.token,
-		})
+		expect(() => acquireStackLock(dir, second, identify)).toThrow(
+			/no longer running; if no demo-stack command is running, delete it/,
+		)
+		expect(JSON.parse(readFileSync(lockFile(), "utf8")).token).toBe(old.token)
 	})
 
 	it("refuses a lock it cannot read and does not touch it", () => {
@@ -84,6 +83,7 @@ describe("acquireStackLock", () => {
 	it("lets a former holder release without removing the lock that replaced it", () => {
 		const old = acquireStackLock(dir, first, identify)
 		running.delete(first.pid)
+		rmSync(lockFile())
 		const current = acquireStackLock(dir, second, identify)
 		releaseStackLock(old)
 		expect(JSON.parse(readFileSync(lockFile(), "utf8")).token).toBe(
@@ -108,6 +108,7 @@ describe("owned process record", () => {
 	it("cannot be written or removed through a lock that was taken over", () => {
 		const old = acquireStackLock(dir, first, identify)
 		running.delete(first.pid)
+		rmSync(lockFile())
 		const current = acquireStackLock(dir, second, identify)
 		writeOwnedRecord(current, record("winner"))
 		expect(() => writeOwnedRecord(old, record("loser"))).toThrow(StackBusyError)

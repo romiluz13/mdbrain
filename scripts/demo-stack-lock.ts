@@ -4,13 +4,9 @@
 // winner's record.
 //
 // The lock file is created with the `wx` flag (O_CREAT | O_EXCL), which the OS
-// grants to exactly one caller. A lock whose recorded holder is provably gone
-// (not running, or its pid now belongs to a process with another start time or
-// command) is taken over; anything else is refused. Taking over is a read, a
-// re-read and an unlink, not one atomic step: two commands that find the same
-// stale lock in the same instant can both clear it, and the later unlink can
-// then land on a lock the other just created. The re-read before the unlink
-// narrows that window to microseconds; it cannot close it.
+// grants to exactly one caller. Any existing lock is refused, including a stale
+// one whose holder is gone: the message tells the operator to delete it. Taking
+// a stale lock over automatically cannot be made atomic with files alone.
 
 import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -69,33 +65,26 @@ export function acquireStackLock(
 	identify: (pid: number) => ProcessIdentity | undefined = identifyProcess,
 ): StackLock {
 	const mine: LockRecord = { holder: self, token: randomUUID() }
-	for (let attempt = 0; attempt < 3; attempt++) {
-		try {
-			writeFileSync(lockPath(dir), JSON.stringify(mine), {
-				flag: "wx",
-				mode: 0o600,
-			})
-			return { dir, token: mine.token }
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
-		}
-		const existing = readLock(dir)
-		const plan = planLock(
-			existing,
-			existing && existing !== "unreadable"
-				? identify(existing.holder.pid)
-				: undefined,
-		)
-		if (plan.action === "refuse") throw new StackBusyError(plan.reason)
-		if (plan.action === "take-over" && existing && existing !== "unreadable") {
-			const again = readLock(dir)
-			if (again && again !== "unreadable" && again.token === existing.token) {
-				rmSync(lockPath(dir), { force: true })
-			}
-		}
+	try {
+		writeFileSync(lockPath(dir), JSON.stringify(mine), {
+			flag: "wx",
+			mode: 0o600,
+		})
+		return { dir, token: mine.token }
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
 	}
+	const existing = readLock(dir)
+	const plan = planLock(
+		existing,
+		existing && existing !== "unreadable"
+			? identify(existing.holder.pid)
+			: undefined,
+	)
 	throw new StackBusyError(
-		"could not take start.lock: it kept changing; try again",
+		plan.action === "refuse"
+			? plan.reason
+			: "start.lock disappeared while it was being read; try again",
 	)
 }
 

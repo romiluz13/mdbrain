@@ -97,10 +97,7 @@ export function terminateIfStillSame(
 export function planLock(
 	existing: LockRecord | "unreadable" | undefined,
 	holderNow: ProcessIdentity | undefined,
-):
-	| { action: "create" }
-	| { action: "take-over" }
-	| { action: "refuse"; reason: string } {
+): { action: "create" } | { action: "refuse"; reason: string } {
 	if (existing === undefined) return { action: "create" }
 	if (existing === "unreadable") {
 		return {
@@ -115,5 +112,11 @@ export function planLock(
 			reason: `another demo-stack command is running (pid ${existing.holder.pid}); wait for it to finish`,
 		}
 	}
-	return { action: "take-over" }
+	// A holder that is gone leaves a stale lock. Clearing it is left to the
+	// operator: an automatic takeover (read, re-read, unlink) can delete a lock
+	// another command created in between (review 312, A2).
+	return {
+		action: "refuse",
+		reason: `start.lock was left by pid ${existing.holder.pid}, which is no longer running; if no demo-stack command is running, delete it and retry`,
+	}
 }
