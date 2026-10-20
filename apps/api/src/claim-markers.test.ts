@@ -243,3 +243,65 @@ describe("citation markers in wiki responses", () => {
 		}
 	})
 })
+
+describe("claims that could never be cited are refused on write", () => {
+	const create = (claims: unknown[]) =>
+		request("/v1/wiki", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				kind: "entity",
+				title: "X",
+				slug: "accounts/x",
+				summary: "An account.",
+				body: "",
+				frontmatter: { type: "account" },
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				claims,
+			}),
+		})
+
+	it("refuses a create whose claim id makes a marker over the limit", async () => {
+		const res = await create([
+			{ id: "ok", text: "Fine.", status: "active" },
+			{ id: "a".repeat(2300), text: "Too long to cite.", status: "active" },
+		])
+		expect(res.status).toBe(400)
+		const body = (await res.json()) as {
+			error: { code: string; message: string }
+		}
+		expect(body.error.code).toBe("VALIDATION_ERROR")
+		expect(body.error.message).toMatch(/claims\[1\]\.id/)
+		expect(body.error.message.length).toBeLessThan(300)
+		expect(wikiMocks.createWikiPage).not.toHaveBeenCalled()
+	})
+
+	it("refuses a claim id with control characters", async () => {
+		const res = await create([{ id: "bad\nid", text: "No.", status: "active" }])
+		expect(res.status).toBe(400)
+		expect(wikiMocks.createWikiPage).not.toHaveBeenCalled()
+	})
+
+	it("refuses a patch whose claims could not be cited", async () => {
+		wikiMocks.getWikiPage.mockResolvedValue(page(1, "accounts/x"))
+		const res = await request(`/v1/wiki/accounts/x?${SCOPE}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				claims: [{ id: "a".repeat(2300), text: "Too long.", status: "active" }],
+			}),
+		})
+		expect(res.status).toBe(400)
+		expect(wikiMocks.updateWikiPage).not.toHaveBeenCalled()
+	})
+
+	it("accepts a claim id that fits even at the largest revision", async () => {
+		wikiMocks.createWikiPage.mockResolvedValue(page(1, "accounts/x"))
+		const res = await create([
+			{ id: "a".repeat(1900), text: "Long but citable.", status: "active" },
+		])
+		expect(res.status).toBe(201)
+	})
+})

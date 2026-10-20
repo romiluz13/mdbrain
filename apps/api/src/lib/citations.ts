@@ -83,6 +83,28 @@ function markClaims(claims: unknown, slug: string, revision: number): unknown {
 
 // A wiki page view (anything with a slug, a revision and claims) with markers on
 // its claims. Other shapes pass through untouched.
+// Checked on write so every stored claim stays citable: the marker must fit
+// even at the largest revision the page could ever reach.
+export function uncitableClaimError(
+	slug: string,
+	claims: unknown,
+): string | undefined {
+	if (!Array.isArray(claims)) return undefined
+	for (const [index, claim] of claims.entries()) {
+		if (!isRecord(claim) || typeof claim.id !== "string") continue
+		const marker = tryFormat({
+			kind: "wiki",
+			slug,
+			claimId: claim.id,
+			revision: Number.MAX_SAFE_INTEGER,
+		})
+		if (!marker) {
+			return `claims[${index}].id cannot be cited: with the slug it must form a citation marker of at most 2048 characters once percent-encoded, without control characters`
+		}
+	}
+	return undefined
+}
+
 export function withPageMarkers<T>(page: T): T {
 	if (
 		!isRecord(page) ||

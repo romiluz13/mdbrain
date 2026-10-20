@@ -67,6 +67,43 @@ describe("formatCitationMarker", () => {
 	})
 })
 
+describe("marker length", () => {
+	it("refuses to format a marker the parser would refuse as too long", () => {
+		expect(() =>
+			formatCitationMarker({
+				kind: "wiki",
+				slug: "accounts/x",
+				claimId: "a".repeat(2300),
+				revision: 1,
+			}),
+		).toThrow(/2048/)
+		expect(() =>
+			formatCitationMarker({
+				kind: "wiki",
+				slug: "s",
+				claimId: "é".repeat(400),
+				revision: 1,
+			}),
+		).toThrow(/2048/)
+	})
+
+	it("formats and parses a marker at exactly the limit", () => {
+		const fixed = "[[wiki:s#@r1]]".length
+		const claimId = "a".repeat(2048 - fixed)
+		const marker = formatCitationMarker({
+			kind: "wiki",
+			slug: "s",
+			claimId,
+			revision: 1,
+		})
+		expect(marker).toHaveLength(2048)
+		expect(parseCitationMarker(marker)).toEqual({
+			ok: true,
+			marker: { kind: "wiki", slug: "s", claimId, revision: 1 },
+		})
+	})
+})
+
 describe("citation marker round trip", () => {
 	const awkward: CitationMarker[] = [
 		{ kind: "wiki", slug: "accounts/halvorsen", claimId: "c-1", revision: 1 },

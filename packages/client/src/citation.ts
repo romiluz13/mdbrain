@@ -37,12 +37,24 @@ function encodePart(name: string, value: string): string {
 
 export function formatCitationMarker(marker: CitationMarker): string {
 	if (marker.kind === "event") {
-		return `[[event:${encodePart("eventId", marker.eventId)}]]`
+		return withinLimit(`[[event:${encodePart("eventId", marker.eventId)}]]`)
 	}
 	if (!Number.isSafeInteger(marker.revision) || marker.revision < 1) {
 		throw new Error("revision must be a positive safe integer")
 	}
-	return `[[wiki:${encodePart("slug", marker.slug)}#${encodePart("claimId", marker.claimId)}@r${marker.revision}]]`
+	return withinLimit(
+		`[[wiki:${encodePart("slug", marker.slug)}#${encodePart("claimId", marker.claimId)}@r${marker.revision}]]`,
+	)
+}
+
+// The formatter's domain is the parser's: a marker it writes always parses.
+function withinLimit(marker: string): string {
+	if (marker.length > MAX_MARKER_LENGTH) {
+		throw new Error(
+			`marker would exceed ${MAX_MARKER_LENGTH} characters once encoded`,
+		)
+	}
+	return marker
 }
 
 function decodePart(encoded: string): string | undefined {

@@ -59,6 +59,7 @@ import {
 	CitationRecallError,
 	resolveClaimMarker,
 	resolveEventMarker,
+	uncitableClaimError,
 	withPageMarkers,
 	withRevisionMarkers,
 } from "../lib/citations.js"
@@ -2220,6 +2221,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 			return jsonError(c, 400, "VALIDATION_ERROR", "slug is required")
 		const reservedSlug = reservedSlugError(slug)
 		if (reservedSlug) return jsonError(c, 400, "VALIDATION_ERROR", reservedSlug)
+		const uncitable = uncitableClaimError(slug, body.claims)
+		if (uncitable) return jsonError(c, 400, "VALIDATION_ERROR", uncitable)
 		if (!summary.trim())
 			return jsonError(c, 400, "VALIDATION_ERROR", "summary is required")
 		if (typeof body.body !== "string")
@@ -2562,6 +2565,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"frontmatter.type is required",
 			)
 		}
+		const uncitable = uncitableClaimError(slug, body.claims)
+		if (uncitable) return jsonError(c, 400, "VALIDATION_ERROR", uncitable)
 		try {
 			const {
 				scope: _s,
