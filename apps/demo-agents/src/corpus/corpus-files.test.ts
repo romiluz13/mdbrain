@@ -16,6 +16,22 @@ import {
 } from "./corpus-files.js"
 import type { RenderedRecord, World } from "./types.js"
 
+const failNextAppend = vi.hoisted(() => ({
+	error: undefined as Error | undefined,
+}))
+vi.mock("node:fs", async (importOriginal) => {
+	const fs = await importOriginal<typeof import("node:fs")>()
+	return {
+		...fs,
+		appendFileSync: (...args: Parameters<typeof fs.appendFileSync>) => {
+			const error = failNextAppend.error
+			failNextAppend.error = undefined
+			if (error) throw error
+			return fs.appendFileSync(...args)
+		},
+	}
+})
+
 const record = (id: string): RenderedRecord => ({
 	id,
 	body: `body of ${id}`,
@@ -66,6 +82,16 @@ describe("checkpoint file", () => {
 		trimTornTail(dir)
 		appendRecord(record("c"), dir)
 		expect([...readRecords(dir).keys()]).toEqual(["a", "b", "c"])
+	})
+
+	it("keeps a complete final record when adding its newline fails", () => {
+		const file = path.join(dir, "records.jsonl")
+		writeFileSync(file, `${line("a")}\n${line("b")}`)
+		failNextAppend.error = Object.assign(new Error("no space left"), {
+			code: "ENOSPC",
+		})
+		expect(() => trimTornTail(dir)).toThrow(/no space left/)
+		expect(readFileSync(file, "utf8")).toBe(`${line("a")}\n${line("b")}`)
 	})
 
 	it("leaves interior corruption for the reader to refuse", () => {

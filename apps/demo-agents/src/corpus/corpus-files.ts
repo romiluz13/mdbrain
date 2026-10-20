@@ -62,15 +62,20 @@ export function trimTornTail(dir = CORPUS_DIR): void {
 	const text = readFileSync(file, "utf8")
 	if (!text || text.endsWith("\n")) return
 	const cut = text.lastIndexOf("\n") + 1
+	let complete = true
 	try {
 		JSON.parse(text.slice(cut))
-		appendFileSync(file, "\n")
 	} catch {
-		console.warn(
-			`records.jsonl: removed a torn final line (line ${text.slice(0, cut).split("\n").length})`,
-		)
-		truncateSync(file, Buffer.byteLength(text.slice(0, cut)))
+		complete = false
 	}
+	if (complete) {
+		appendFileSync(file, "\n")
+		return
+	}
+	console.warn(
+		`records.jsonl: removed a torn final line (line ${text.slice(0, cut).split("\n").length})`,
+	)
+	truncateSync(file, Buffer.byteLength(text.slice(0, cut)))
 }
 
 export function appendRecord(record: RenderedRecord, dir = CORPUS_DIR): void {
