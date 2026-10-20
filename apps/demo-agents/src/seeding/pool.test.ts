@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { FakeCollection } from "./testing/fakes.js"
-import { createRunSlotPool, PoolExhaustedError, type SlotDoc } from "./pool.js"
+import {
+	createRunSlotPool,
+	PoolExhaustedError,
+	RunAlreadyFinishedError,
+	type SlotDoc,
+} from "./pool.js"
 
 const NOW = "2026-10-20T12:00:00.000Z"
 const clock = () => new Date(NOW)
@@ -114,6 +119,24 @@ describe("claim", () => {
 		const b = await pool.claim("run-b")
 		await pool.markFailed("run-b", "api 500")
 		await expect(pool.claim("run-c")).rejects.toBeInstanceOf(PoolExhaustedError)
+	})
+
+	it.each([
+		"ready",
+		"used",
+		"failed",
+	] as const)("refuses a run id whose slot is already %s instead of taking a free slot", async (state) => {
+		const { pool, collection } = makePool()
+		await pool.prepare(2)
+		await pool.claim("run-a")
+		if (state === "failed") await pool.markFailed("run-a", "api 500")
+		else await pool.markReady("run-a")
+		if (state === "used") await pool.markUsed(1)
+
+		await expect(pool.claim("run-a")).rejects.toBeInstanceOf(
+			RunAlreadyFinishedError,
+		)
+		expect((await collection.findOne({ _id: "slot:2" }))?.state).toBe("free")
 	})
 })
 

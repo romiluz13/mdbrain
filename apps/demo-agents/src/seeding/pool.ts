@@ -42,6 +42,15 @@ export class PoolExhaustedError extends Error {
 	}
 }
 
+export class RunAlreadyFinishedError extends Error {
+	constructor(runId: string, state: SlotState) {
+		super(
+			`run ${runId} already holds a slot that is ${state}; a finished run id is never re-seeded`,
+		)
+		this.name = "RunAlreadyFinishedError"
+	}
+}
+
 /** The run-slot pool in the control store. Lifecycle is strictly one-way:
  * free -> seeding -> ready -> used, with failed as a terminal state. A claim
  * is a guarded findOneAndUpdate, so two concurrent claimers can never take
@@ -94,6 +103,8 @@ export function createRunSlotPool(
 			{ returnDocument: "after" },
 		)
 		if (resumed) return { slot: resumed, resumed: true }
+		const finished = await store.findOne({ runId })
+		if (finished) throw new RunAlreadyFinishedError(runId, finished.state)
 
 		const fresh = await store.findOneAndUpdate(
 			{ state: "free" },
