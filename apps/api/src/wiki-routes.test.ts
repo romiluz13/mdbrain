@@ -224,6 +224,51 @@ describe("wiki routes", () => {
 		process.env = { ...prevEnv }
 	})
 
+	describe("permissions keys", () => {
+		it("refuses a create whose permissions hold a key governance does not know", async () => {
+			const res = await createApp().request("/v1/wiki", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					...VALID_BODY,
+					permissions: { visibleTo: ["team:legal"] },
+				}),
+			})
+			expect(res.status).toBe(400)
+			expect((await asJson(res)).error?.message).toMatch(/visibleTo/)
+			expect(wikiMocks.createWikiPage).not.toHaveBeenCalled()
+		})
+
+		it("refuses a patch whose permissions hold a key governance does not know", async () => {
+			const res = await createApp().request(
+				"/v1/wiki/tables/accounts?scope=workspace&scopeRef=ws-1",
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ permissions: { visibleTo: ["team:legal"] } }),
+				},
+			)
+			expect(res.status).toBe(400)
+			expect(wikiMocks.updateWikiPage).not.toHaveBeenCalled()
+		})
+
+		it("still creates a page whose permissions use only known keys", async () => {
+			wikiMocks.createWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			const res = await createApp().request("/v1/wiki", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					...VALID_BODY,
+					permissions: {
+						privacyTier: "confidential",
+						allowedRoles: ["legal"],
+					},
+				}),
+			})
+			expect(res.status).toBe(201)
+		})
+	})
+
 	describe("POST /v1/wiki", () => {
 		it("creates a page and returns 201", async () => {
 			wikiMocks.createWikiPage.mockResolvedValue(SAMPLE_PAGE)

@@ -122,6 +122,22 @@ describe("ensureWikiCollections", () => {
 		}
 	})
 
+	it("refuses page permissions keys that governance does not read", async () => {
+		const db = mockDb([])
+		await ensureWikiCollections(db, "test_")
+		const call = (db.createCollection as unknown as ReturnType<typeof vi.fn>)
+			.mock.calls[0]
+		const permissions = call[1].validator.$jsonSchema.properties.permissions
+		expect(permissions.additionalProperties).toBe(false)
+		expect(Object.keys(permissions.properties).sort()).toEqual([
+			"allowedDepartments",
+			"allowedGroups",
+			"allowedRoles",
+			"allowedSubjects",
+			"privacyTier",
+		])
+	})
+
 	it("is idempotent — does not recreate if already present", async () => {
 		const db = mockDb([
 			"test_wiki_pages",

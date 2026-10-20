@@ -386,6 +386,7 @@ const WIKI_PAGES_SCHEMA: Document = {
 			trustTier: { enum: TRUST_TIER_VALUES },
 			permissions: {
 				bsonType: "object",
+				additionalProperties: false,
 				properties: {
 					allowedSubjects: {
 						bsonType: "array",

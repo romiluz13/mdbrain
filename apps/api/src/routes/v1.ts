@@ -2309,6 +2309,24 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		return getApiPrincipal(c).capabilities.includes("change-permissions")
 	}
 
+	// Governance reads only these keys. A permissions object holding any other
+	// key is closed to the in-memory check but open to the query filter, so it
+	// could still count toward scan caps; refuse it at the door.
+	const WIKI_PERMISSION_KEYS = new Set([
+		"allowedSubjects",
+		"allowedGroups",
+		"allowedRoles",
+		"allowedDepartments",
+		"privacyTier",
+	])
+
+	function unknownPermissionKeys(permissions: unknown): string[] {
+		if (!permissions || typeof permissions !== "object") return []
+		return Object.keys(permissions).filter(
+			(key) => !WIKI_PERMISSION_KEYS.has(key),
+		)
+	}
+
 	// The editor recorded on wiki revision snapshots: the ACTUAL calling
 	// principal, not the payload-supplied sourceAgent (which a caller could
 	// set to any string). Falls back to the subjectId when the credential
@@ -2391,6 +2409,15 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				!Array.isArray(body.permissions)
 					? (body.permissions as Record<string, unknown>)
 					: {}
+			const unknownKeys = unknownPermissionKeys(permissions)
+			if (unknownKeys.length > 0) {
+				return jsonError(
+					c,
+					400,
+					"VALIDATION_ERROR",
+					`permissions has unknown keys: ${unknownKeys.join(", ")}`,
+				)
+			}
 			if (
 				(trustTier !== principal.trustTier ||
 					Object.keys(permissions).length > 0) &&
@@ -2803,6 +2830,15 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					? body.expectedRevision
 					: undefined
 			const principal = getApiPrincipal(c)
+			const unknownKeys = unknownPermissionKeys(patch.permissions)
+			if (unknownKeys.length > 0) {
+				return jsonError(
+					c,
+					400,
+					"VALIDATION_ERROR",
+					`permissions has unknown keys: ${unknownKeys.join(", ")}`,
+				)
+			}
 			if (
 				(patch.trustTier !== undefined || patch.permissions !== undefined) &&
 				!canChangeWikiPermissions(c)
