@@ -1192,3 +1192,65 @@ export type MdbrainWikiOverviewResponse = {
 		contradictions: number
 	}
 }
+
+/** Input for GET /v1/wiki/changes. `since` is required on the first call and
+ *  `until` is optional: left out, the server fixes it 15 seconds before its own
+ *  clock at the first page and the cursor carries it. A Date is sent as an ISO
+ *  instant. A call with a `cursor` reads the window the cursor belongs to. */
+export type MdbrainWikiChangesInput = {
+	scope: string
+	scopeRef: string
+	agentId?: string
+	since?: string | Date
+	until?: string | Date
+	cursor?: string
+	limit?: number
+	maxClaims?: number
+}
+
+export type MdbrainWikiChangeEditKind = MdbrainWikiRevisionEditKind
+
+/** A claim whose text, status, confidence, evidence, derivation, supersession
+ *  or `validTo` differs between two revisions of a page. `before` is read at
+ *  the baseline revision and `after` at the entry's revision; each carries the
+ *  marker for the revision it was read from. */
+export type MdbrainWikiChangedClaim = {
+	id: string
+	fields: string[]
+	before: MdbrainWikiClaim
+	after: MdbrainWikiClaim
+}
+
+export type MdbrainWikiChangeClaims = {
+	added: MdbrainWikiClaim[]
+	changed: MdbrainWikiChangedClaim[]
+	removed: MdbrainWikiClaim[]
+	counts: { added: number; changed: number; removed: number }
+	truncated: boolean
+}
+
+/** One revision of one page. `baseline` is `none` for a created or deleted
+ *  page, `previous` when the claims were compared with revision
+ *  `baselineRevision`, and `unavailable` (with `claims: null`) when that
+ *  revision is missing or the caller may not read it. */
+export type MdbrainWikiChange = {
+	pageSlug: string
+	title?: string
+	revision: number
+	editKind: MdbrainWikiChangeEditKind
+	createdAt: string
+	editor?: MdbrainWikiPageEditor
+	baseline: "none" | "previous" | "unavailable"
+	baselineRevision: number | null
+	claims: MdbrainWikiChangeClaims | null
+}
+
+/** Response of GET /v1/wiki/changes. `hasMore` and `nextCursor` reflect only
+ *  revisions the caller may read, and no total is returned. */
+export type MdbrainWikiChangesResponse = {
+	window: { since: string; until: string; settled: boolean }
+	limits: { limit: number; maxClaims: number }
+	changes: MdbrainWikiChange[]
+	hasMore: boolean
+	nextCursor?: string
+}

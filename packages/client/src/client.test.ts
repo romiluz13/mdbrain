@@ -1199,6 +1199,84 @@ describe("MdbrainClient public contract", () => {
 		})
 	})
 
+	it("changes reads the feed with the scope, agentId, window, cursor and page bounds in the query", async () => {
+		const page = { changes: [], hasMore: false }
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(page))
+		vi.stubGlobal("fetch", fetchMock)
+
+		const out = await new MdbrainClient().changes({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: "main",
+			since: "2026-10-01T00:00:00.000Z",
+			until: new Date("2026-10-01T10:30:00.000Z"),
+			cursor: "abc",
+			limit: 7,
+			maxClaims: 3,
+		})
+
+		expect(out).toEqual(page)
+		const [href, init] = fetchMock.mock.calls[0] ?? []
+		const url = new URL(String(href))
+		expect(url.pathname).toBe("/v1/wiki/changes")
+		expect(Object.fromEntries(url.searchParams)).toEqual({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: "main",
+			since: "2026-10-01T00:00:00.000Z",
+			until: "2026-10-01T10:30:00.000Z",
+			cursor: "abc",
+			limit: "7",
+			maxClaims: "3",
+		})
+		expect(init?.method ?? "GET").toBe("GET")
+	})
+
+	it("changes sends a Date as an ISO instant and leaves out what it is not given", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json({ changes: [] }))
+		vi.stubGlobal("fetch", fetchMock)
+
+		await new MdbrainClient().changes({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			since: new Date("2026-10-01T10:00:00.000+02:00"),
+		})
+
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]))
+		expect(Object.fromEntries(url.searchParams)).toEqual({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			since: "2026-10-01T08:00:00.000Z",
+		})
+	})
+
+	it("changes surfaces a bad request as a client error with the API's code", async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			Response.json(
+				{
+					error: { code: "VALIDATION_ERROR", message: "cursor is not valid" },
+				},
+				{ status: 400 },
+			),
+		)
+		vi.stubGlobal("fetch", fetchMock)
+
+		await expect(
+			new MdbrainClient().changes({
+				scope: "workspace",
+				scopeRef: "ws-1",
+				cursor: "garbage",
+			}),
+		).rejects.toMatchObject({
+			status: 400,
+			envelope: { code: "VALIDATION_ERROR" },
+		})
+	})
+
 	it("wikiGet accepts a runtime format of any JSON value for MCP-style callers", async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()

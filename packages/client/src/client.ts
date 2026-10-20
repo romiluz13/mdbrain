@@ -24,6 +24,8 @@ import type {
 	MdbrainSearchResponse,
 	SearchConfig,
 	MdbrainWikiClaimInput,
+	MdbrainWikiChangesInput,
+	MdbrainWikiChangesResponse,
 	MdbrainWikiOverviewInput,
 	MdbrainWikiOverviewResponse,
 	MdbrainWikiPageCreateInput,
@@ -1111,6 +1113,36 @@ export class MdbrainClient {
 		return apiGet<MdbrainWikiOverviewResponse>(
 			this._opts,
 			`/v1/wiki/overview/${encodeURIComponent(input.slug)}?${qs}`,
+			requestOptions,
+		)
+	}
+
+	/** Reads what changed across pages in a time window, oldest first, with the
+	 *  claims each revision added, changed and removed. Pass `nextCursor` back as
+	 *  `cursor` while `hasMore` is true. A revision the caller may not read is
+	 *  absent and takes no part in paging. */
+	async changes(
+		input: MdbrainWikiChangesInput,
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiChangesResponse> {
+		const qs = new URLSearchParams({
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.agentId) qs.set("agentId", input.agentId)
+		for (const bound of ["since", "until"] as const) {
+			const value = input[bound]
+			if (value !== undefined) {
+				qs.set(bound, value instanceof Date ? value.toISOString() : value)
+			}
+		}
+		if (input.cursor !== undefined) qs.set("cursor", input.cursor)
+		for (const bound of ["limit", "maxClaims"] as const) {
+			if (input[bound] !== undefined) qs.set(bound, String(input[bound]))
+		}
+		return apiGet<MdbrainWikiChangesResponse>(
+			this._opts,
+			`/v1/wiki/changes?${qs}`,
 			requestOptions,
 		)
 	}

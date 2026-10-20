@@ -2162,7 +2162,7 @@ const openApiDocument = {
 									slug: {
 										type: "string",
 										description:
-											"OKF concept ID; may contain slashes (e.g. tables/users). Must not start with a reserved segment (lint, revisions, overview): those first segments belong to GET /v1/wiki/lint, GET /v1/wiki/revisions and GET /v1/wiki/overview/{slug}. Create refuses them. A page stored earlier under an overview/ slug is not touched: PATCH and DELETE still reach it, and GET reaches it by percent-encoding the slash (/v1/wiki/overview%2Fname); the raw-slash GET /v1/wiki/overview/name is the overview of the page named name.",
+											"OKF concept ID; may contain slashes (e.g. tables/users). Must not start with a reserved segment (lint, revisions, overview, changes): those first segments belong to GET /v1/wiki/lint, GET /v1/wiki/revisions, GET /v1/wiki/overview/{slug} and GET /v1/wiki/changes. Create refuses them. A page stored earlier under an overview/ slug is not touched: PATCH and DELETE still reach it, and GET reaches it by percent-encoding the slash (/v1/wiki/overview%2Fname); the raw-slash GET /v1/wiki/overview/name is the overview of the page named name.",
 									},
 									summary: { type: "string" },
 									body: { type: "string" },
@@ -2432,7 +2432,7 @@ const openApiDocument = {
 				summary:
 					"Get a wiki page with its claims, open contradictions, backlinks, neighbors and recent revisions in one response",
 				description:
-					"One governed read of an entity. The response carries `page` (with its claims and their markers; its stored `backlinks` and `contradictions` are replaced by the governed sections below, and its `relationships` and `transcludes` list only pages the caller may read), `contradictions` (unresolved only, each with the claims it names and the page that holds each), `backlinks` (pages that link here, with the link kinds and, where one exists, the citing claim or body line), `neighbors` (pages this page links to, with their top claims by confidence), `revisions` (recent revision summaries, newest first) and `limits` (the bounds that applied). Every section is `{ items, hasMore }`. Scope and governance come from the request: a neighbor, backlink, contradiction counterpart or revision the caller may not read is left out before its content, existence or any count is computed, so `hasMore` reflects only what the caller can see and no total is returned. A contradiction is omitted whole when any claim it names cannot be shown to the caller. A missing page and a page the caller may not read answer the same 404. Each bound has a default and a maximum; a value above the maximum is clamped and `limits` reports the value used, a non-integer or a value below 1 is a 400. Reserved first slug segments: lint, revisions, overview. A page cannot be created under them, because GET /v1/wiki/lint, GET /v1/wiki/revisions and this route answer first. A page stored earlier under an `overview/` slug is not touched: PATCH and DELETE still reach it, and GET reaches it by percent-encoding the slash (/v1/wiki/overview%2Fname). The bare path /v1/wiki/overview names no page to summarize and reads the page called overview.",
+					"One governed read of an entity. The response carries `page` (with its claims and their markers; its stored `backlinks` and `contradictions` are replaced by the governed sections below, and its `relationships` and `transcludes` list only pages the caller may read), `contradictions` (unresolved only, each with the claims it names and the page that holds each), `backlinks` (pages that link here, with the link kinds and, where one exists, the citing claim or body line), `neighbors` (pages this page links to, with their top claims by confidence), `revisions` (recent revision summaries, newest first) and `limits` (the bounds that applied). Every section is `{ items, hasMore }`. Scope and governance come from the request: a neighbor, backlink, contradiction counterpart or revision the caller may not read is left out before its content, existence or any count is computed, so `hasMore` reflects only what the caller can see and no total is returned. A contradiction is omitted whole when any claim it names cannot be shown to the caller. A missing page and a page the caller may not read answer the same 404. Each bound has a default and a maximum; a value above the maximum is clamped and `limits` reports the value used, a non-integer or a value below 1 is a 400. Reserved first slug segments: lint, revisions, overview, changes. A page cannot be created under them, because GET /v1/wiki/lint, GET /v1/wiki/revisions, GET /v1/wiki/changes and this route answer first. A page stored earlier under an `overview/` slug is not touched: PATCH and DELETE still reach it, and GET reaches it by percent-encoding the slash (/v1/wiki/overview%2Fname). The bare path /v1/wiki/overview names no page to summarize and reads the page called overview.",
 				parameters: [
 					{
 						name: "slug",
@@ -2528,6 +2528,87 @@ const openApiDocument = {
 							"WIKI_NOT_FOUND: the page does not exist in the scope, or the caller may not read it",
 					},
 					"500": { description: "Wiki overview failed (WIKI_OVERVIEW_FAILED)" },
+				},
+			},
+		},
+		"/v1/wiki/changes": {
+			get: {
+				summary:
+					"List what changed across pages in a time window, oldest first, with the claims each revision added, changed and removed",
+				description:
+					"The what-changed-since feed. It returns revisions across all pages in the request's scope whose `createdAt` falls in the window `[since, until)` (`since` inclusive, `until` exclusive), ordered by `createdAt`, then page slug, then revision. Each entry carries `pageSlug`, `title`, `revision`, `editKind` (`create`, `update` or `delete`), `createdAt`, `editor`, `baseline` and `claims`. A created page is an entry with every claim in `added`; a deleted page is an entry with every claim in `removed`; both have `baseline: none`. An update is compared with the previous revision (`baseline: previous`, `baselineRevision` is its number): `added` and `removed` list claims by id, `changed` lists a claim whose text, status, confidence, evidence, derivation, supersession or `validTo` changed, with the changed `fields` and the claim `before` and `after`. `counts` are the full counts and `truncated` is true when `maxClaims` cut a list. Claims carry citation markers at the revision they were read from: `added` and `after` at the entry's revision, `removed` and `before` at `baselineRevision` (a deleted page's claims at the deleting revision), so each marker passes to GET /v1/cite. `since` is required on the first request. `until` is optional: when omitted the server fixes it at the first page to 15 seconds before its own clock, and the cursor carries it, so a long read never drifts. The default window ends 15 seconds ago because a revision's `createdAt` is stamped before its transaction commits, which takes several round trips to the database; a revision stamped just before `until` could otherwise commit after a reader had moved past it and never be returned. A transaction that takes longer than that can still be missed; the database's default one-minute transaction limit is the only hard bound on how late a revision can commit. An explicit `until` is honored, and `window.settled` is false while it is within 15 seconds of now. Paging: when `hasMore` is true, pass `nextCursor` back unchanged to read the next page; it is opaque, carries the window and the position after the last entry returned, and is refused with a 400 if `since` or `until` is given and differs from it. No total is returned. `limit` has a default and a maximum (a value above the maximum is clamped and `limits` reports the value used; a non-integer or a value below 1 is a 400). Scope and governance come from the request: a revision the caller may not read is left out before its content, existence or any count is computed, and it takes no part in paging, so `hasMore` and `nextCursor` reflect only what the caller can read. A diff is shown only against a previous revision the caller may also read; otherwise the entry has `baseline: unavailable`, `baselineRevision: null` and `claims: null`, the same answer whether that revision is hidden or missing. A call that has to look through more than 1000 revisions to find any the caller may read fails with WIKI_CHANGES_FAILED. Reserved first slug segments: lint, revisions, overview, changes. A page cannot be created under them, because GET /v1/wiki/lint, GET /v1/wiki/revisions, GET /v1/wiki/overview/{slug} and this route answer first. A page stored earlier under a `changes/` slug is not touched: GET, PATCH and DELETE still reach it. A page stored as exactly `changes` is reached by PATCH and DELETE; GET /v1/wiki/changes answers the feed.",
+				parameters: [
+					{
+						name: "scope",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scopeRef",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{ name: "agentId", in: "query", schema: { type: "string" } },
+					{
+						name: "since",
+						in: "query",
+						description:
+							"Start of the window, inclusive: an ISO 8601 instant with a zone (2026-10-01T10:00:00Z). Required unless `cursor` is given. Encode a `+` offset as %2B.",
+						schema: { type: "string", format: "date-time" },
+					},
+					{
+						name: "until",
+						in: "query",
+						description:
+							"End of the window, exclusive: an ISO 8601 instant with a zone. Defaults to 15 seconds before the server's clock at the first page and is then fixed by the cursor.",
+						schema: { type: "string", format: "date-time" },
+					},
+					{
+						name: "cursor",
+						in: "query",
+						description:
+							"The `nextCursor` of the previous page, unchanged. It fixes the window.",
+						schema: { type: "string" },
+					},
+					{
+						name: "limit",
+						in: "query",
+						description: "Revisions returned per page.",
+						schema: {
+							type: "integer",
+							minimum: 1,
+							maximum: 100,
+							default: 25,
+						},
+					},
+					{
+						name: "maxClaims",
+						in: "query",
+						description:
+							"Claims listed per bucket (added, changed, removed) per entry.",
+						schema: {
+							type: "integer",
+							minimum: 1,
+							maximum: 50,
+							default: 10,
+						},
+					},
+				],
+				responses: {
+					"200": {
+						description:
+							"One page of the feed: window (since, until, settled), limits, changes, hasMore and, when hasMore, nextCursor",
+					},
+					"400": {
+						description:
+							"A missing scope or scopeRef, a missing since without a cursor, a since later than until, an instant or bound that is malformed, or a cursor that is invalid or does not match since or until (VALIDATION_ERROR)",
+					},
+					"403": {
+						description: "The key has no grant for the requested scope",
+					},
+					"500": { description: "Wiki changes failed (WIKI_CHANGES_FAILED)" },
 				},
 			},
 		},

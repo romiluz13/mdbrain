@@ -5,6 +5,8 @@ import type { MdbrainProbeEmbeddingResponse } from "../src/index.js"
 import type {
 	MdbrainCitationResponse,
 	MdbrainWikiClaim,
+	MdbrainWikiChangesInput,
+	MdbrainWikiChangesResponse,
 	MdbrainWikiClaimInput,
 	MdbrainWikiOverviewInput,
 	MdbrainWikiOverviewResponse,
@@ -141,3 +143,65 @@ const overviewBounded: MdbrainWikiOverviewInput = {
 	maxNeighborClaims: 2,
 }
 void overviewBounded
+
+declare const changes: MdbrainWikiChangesResponse
+const changesSettled: boolean = changes.window.settled
+const changesUntil: string = changes.window.until
+const changesMore: boolean = changes.hasMore
+const changesCursor: string | undefined = changes.nextCursor
+const changesPageSize: number = changes.limits.limit
+const firstChange = changes.changes[0]
+const changeKind: "create" | "update" | "delete" | undefined =
+	firstChange?.editKind
+const changeBaseline: "none" | "previous" | "unavailable" | undefined =
+	firstChange?.baseline
+const baselineRevision: number | null | undefined =
+	firstChange?.baselineRevision
+const addedMarker: string | undefined = firstChange?.claims?.added[0]?.marker
+const changedFields: string[] | undefined =
+	firstChange?.claims?.changed[0]?.fields
+const changedBeforeMarker: string | undefined =
+	firstChange?.claims?.changed[0]?.before.marker
+const removedMarker: string | undefined =
+	firstChange?.claims?.removed[0]?.marker
+const claimCounts: number | undefined = firstChange?.claims?.counts.removed
+const claimsCut: boolean | undefined = firstChange?.claims?.truncated
+void [
+	changesSettled,
+	changesUntil,
+	changesMore,
+	changesCursor,
+	changesPageSize,
+	changeKind,
+	changeBaseline,
+	baselineRevision,
+	addedMarker,
+	changedFields,
+	changedBeforeMarker,
+	removedMarker,
+	claimCounts,
+	claimsCut,
+]
+// @ts-expect-error The feed carries no total: a count of revisions the caller may not read is a leak.
+void changes.total
+// @ts-expect-error A change whose baseline is unavailable has claims: null, so the diff must be checked before it is read.
+const unguardedClaims: number = firstChange!.claims.counts.added
+void unguardedClaims
+
+// @ts-expect-error The feed is read in one scope: scope and scopeRef are required.
+const changesWithoutScope: MdbrainWikiChangesInput = {
+	since: "2026-10-01T00:00:00Z",
+}
+void changesWithoutScope
+const changesFirstPage: MdbrainWikiChangesInput = {
+	scope: "workspace",
+	scopeRef: "ws-1",
+	since: new Date(),
+	limit: 10,
+}
+const changesNextPage: MdbrainWikiChangesInput = {
+	scope: "workspace",
+	scopeRef: "ws-1",
+	cursor: "opaque",
+}
+void [changesFirstPage, changesNextPage]

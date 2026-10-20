@@ -44,10 +44,12 @@ import {
 	listWikiPageRevisions,
 	listMemoryDeliveryIntents,
 	MemoryDeliveryPayloadTooLargeError,
+	getWikiChanges,
 	getWikiEntityOverview,
 	getWikiPageRevision,
 	resolveTransclusions,
 	recordWikiMutationIntent,
+	WikiChangesRequestError,
 	WikiDuplicateSlugError,
 	WikiRevisionConflictError,
 	type WikiDbHandle,
@@ -62,10 +64,12 @@ import {
 	resolveClaimMarker,
 	resolveEventMarker,
 	uncitableClaimError,
+	withChangesMarkers,
 	withOverviewMarkers,
 	withPageMarkers,
 	withRevisionMarkers,
 } from "../lib/citations.js"
+import { parseWikiChangesQuery } from "../lib/changes-query.js"
 import { jsonError } from "../lib/errors.js"
 import {
 	approvePendingWikiPromotion,
@@ -113,10 +117,15 @@ export const WIKI_VALID_SCOPES = [
 	"global",
 ]
 // Slugs whose first path segment collides with a wiki sub-route registered
-// before the /wiki/* wildcard (lint, revisions, overview) would be unreachable
+// before the /wiki/* wildcard (lint, revisions, overview, changes) would be unreachable
 // via GET (the sub-route answers instead of the page). Create/patch reject them
 // instead of letting a page silently shadow itself (REV-07 N2).
-export const WIKI_RESERVED_SLUG_SEGMENTS = ["lint", "revisions", "overview"]
+export const WIKI_RESERVED_SLUG_SEGMENTS = [
+	"lint",
+	"revisions",
+	"overview",
+	"changes",
+]
 export const WIKI_OVERVIEW_LIMIT_PARAMS: Record<string, WikiOverviewLimitName> =
 	{
 		maxBacklinks: "backlinks",
@@ -2545,6 +2554,41 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_OVERVIEW_FAILED", message)
+		}
+	})
+
+	// What changed across pages in a time window, with claim-level diffs. The path
+	// is exactly /wiki/changes, registered before the /wiki/* wildcard so it is not
+	// read as a page named "changes"; a page stored as changes/<name> is still
+	// reached by GET. Window, paging and governance live in the engine.
+	v1.get("/wiki/changes", async (c) => {
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef query params are required",
+			)
+		const query = parseWikiChangesQuery((name) => c.req.query(name))
+		if ("error" in query)
+			return jsonError(c, 400, "VALIDATION_ERROR", query.error)
+		try {
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
+			const page = await getWikiChanges(handle, {
+				scope,
+				scopeRef,
+				governance: buildWikiGovContext(c, scope, scopeRef),
+				...query.value,
+			})
+			return c.json(withChangesMarkers(page))
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			if (err instanceof WikiChangesRequestError)
+				return jsonError(c, 400, "VALIDATION_ERROR", message)
+			return jsonError(c, 500, "WIKI_CHANGES_FAILED", message)
 		}
 	})
 

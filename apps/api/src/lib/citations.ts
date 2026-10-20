@@ -6,6 +6,9 @@ import { type CitationMarker, formatCitationMarker } from "@mdbrain/client"
 import type { MemoryScope } from "@mdbrain/lib"
 import {
 	type GovernanceContext,
+	type WikiChange,
+	type WikiChangeClaim,
+	type WikiChangesPage,
 	type WikiDbHandle,
 	type WikiEntityOverview,
 	type WikiOverviewClaim,
@@ -175,6 +178,36 @@ export function withOverviewMarkers(
 			})),
 		},
 	}
+}
+
+// The feed shows claims read from two revisions of a page. Added claims and the
+// `after` of a change were read at the entry's revision; removed claims and the
+// `before` of a change were read at the revision before it. A deletion lists
+// the claims held at deletion, read from the delete revision itself.
+function markChange(change: WikiChange): WikiChange {
+	if (!change.claims) return change
+	const at = change.revision
+	const before =
+		change.editKind === "delete" ? at : (change.baselineRevision ?? at)
+	const mark = (claim: WikiChangeClaim, revision: number) =>
+		withClaimMarker(claim, change.pageSlug, revision) as WikiChangeClaim
+	return {
+		...change,
+		claims: {
+			...change.claims,
+			added: change.claims.added.map((claim) => mark(claim, at)),
+			changed: change.claims.changed.map((moved) => ({
+				...moved,
+				before: mark(moved.before, before),
+				after: mark(moved.after, at),
+			})),
+			removed: change.claims.removed.map((claim) => mark(claim, before)),
+		},
+	}
+}
+
+export function withChangesMarkers(page: WikiChangesPage): WikiChangesPage {
+	return { ...page, changes: page.changes.map(markChange) }
 }
 
 // A stored revision: its claims are marked with the revision they were stored at.

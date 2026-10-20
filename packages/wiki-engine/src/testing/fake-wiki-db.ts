@@ -39,6 +39,30 @@ function getPath(doc: Document, path: string[]): unknown {
 	return current
 }
 
+// Inequality operators use type bracketing: a comparison matches only values of
+// the operand's own type, so null, a missing field and any other type never
+// match. Strings compare by UTF-16 code units here and by UTF-8 bytes in
+// MongoDB; the two agree for the characters slugs use.
+function rangeKind(value: unknown): "date" | "number" | "string" | undefined {
+	if (value instanceof Date) return "date"
+	if (typeof value === "number") return "number"
+	if (typeof value === "string") return "string"
+	return undefined
+}
+
+function rangeMatches(op: string, value: unknown, operand: unknown): boolean {
+	const operandKind = rangeKind(operand)
+	if (!operandKind) throw new Error(`unsupported operand for ${op}`)
+	if (rangeKind(value) !== operandKind) return false
+	const a = value instanceof Date ? value.getTime() : (value as number | string)
+	const b =
+		operand instanceof Date ? operand.getTime() : (operand as number | string)
+	if (op === "$gt") return a > b
+	if (op === "$gte") return a >= b
+	if (op === "$lt") return a < b
+	return a <= b
+}
+
 function same(a: unknown, b: unknown): boolean {
 	if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime()
 	return a === b
@@ -80,8 +104,13 @@ export function matches(doc: Document, filter: Document): boolean {
 					if (values.some((v) => same(v, arg))) return false
 				} else if (op === "$exists") {
 					if (existsAt(doc, key.split(".")) !== Boolean(arg)) return false
-				} else if (op === "$lt") {
-					if (!values.some((v) => (v as number) < (arg as number))) return false
+				} else if (
+					op === "$gt" ||
+					op === "$gte" ||
+					op === "$lt" ||
+					op === "$lte"
+				) {
+					if (!values.some((v) => rangeMatches(op, v, arg))) return false
 				} else {
 					throw new Error(`unsupported operator ${op}`)
 				}

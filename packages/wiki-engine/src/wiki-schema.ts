@@ -784,6 +784,14 @@ export async function ensureWikiStandardIndexes(
 			unique: true,
 			name: "page_revision_unique",
 		},
+		// The what-changed-since feed: equality on scope, a range on createdAt, and
+		// the rest of the key is the feed's sort and cursor order, so a page of the
+		// feed is one index range scan with no in-memory sort. The unique index above
+		// leads with pageSlug and cannot serve it.
+		{
+			key: { scope: 1, scopeRef: 1, createdAt: 1, pageSlug: 1, revision: 1 },
+			name: "scope_createdAt_page_revision",
+		},
 	]
 	await revisionsColl.createIndexes(revisionIndexes)
 	log.info(`ensured standard indexes on ${revisionsColl.collectionName}`)

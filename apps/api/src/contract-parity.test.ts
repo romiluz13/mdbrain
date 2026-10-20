@@ -8,7 +8,11 @@
 // rejects (looser-than-runtime is a bug), and the runtime validation sets
 // are the single source of truth (imported here, never duplicated).
 
-import { WIKI_OVERVIEW_LIMITS } from "@mdbrain/wiki-engine"
+import {
+	WIKI_CHANGES_LIMITS,
+	WIKI_CHANGES_SETTLE_MS,
+	WIKI_OVERVIEW_LIMITS,
+} from "@mdbrain/wiki-engine"
 import { describe, expect, it } from "vitest"
 import { createApp } from "./app.js"
 import { openApiSpec } from "./openapi-spec.js"
@@ -77,6 +81,7 @@ function mcpTool(name: string) {
 		throw new Error(`MCP toolList is missing ${name}`)
 	}
 	return tool as {
+		description?: string
 		inputSchema: {
 			required?: string[]
 			properties: Record<string, Json | undefined>
@@ -413,6 +418,61 @@ describe("wiki contract matrix (runtime ↔ spec ↔ MCP)", () => {
 		}
 		for (const name of ["slug", "scope", "scopeRef", "agentId"]) {
 			expect(tool.inputSchema.properties[name], name).toBeDefined()
+		}
+	})
+
+	it("changes: spec and MCP document the scope, the window, the cursor, the page size with the engine's default and maximum, the settle lag and the reserved slugs", () => {
+		const op = specOperation("/v1/wiki/changes", "get")
+		const params = op.parameters ?? []
+		const byName = (name: string) => params.find((p) => p.name === name)
+		for (const required of ["scope", "scopeRef"]) {
+			expect(byName(required), required).toMatchObject({
+				in: "query",
+				required: true,
+			})
+		}
+		for (const optional of ["agentId", "since", "until", "cursor"]) {
+			expect(byName(optional), optional).toMatchObject({ in: "query" })
+			expect(byName(optional)).not.toHaveProperty("required", true)
+		}
+		const tool = mcpTool("mdbrain_wiki_changes")
+		expect(tool.inputSchema.required).toEqual(["scope", "scopeRef"])
+		for (const name of [
+			"scope",
+			"scopeRef",
+			"agentId",
+			"since",
+			"until",
+			"cursor",
+			"limit",
+			"maxClaims",
+		]) {
+			expect(tool.inputSchema.properties[name], name).toBeDefined()
+		}
+		for (const [param, bound] of Object.entries(WIKI_CHANGES_LIMITS)) {
+			expect(byName(param), param).toMatchObject({
+				in: "query",
+				schema: {
+					type: "integer",
+					minimum: 1,
+					maximum: bound.max,
+					default: bound.default,
+				},
+			})
+			expect(tool.inputSchema.properties[param], param).toMatchObject({
+				type: "integer",
+				minimum: 1,
+				maximum: bound.max,
+			})
+		}
+		for (const status of ["200", "400", "403", "500"]) {
+			expect(op.responses?.[status], status).toBeDefined()
+		}
+		const lag = `${WIKI_CHANGES_SETTLE_MS / 1000} seconds`
+		expect(String(op.description)).toContain(lag)
+		expect(String(tool.description)).toContain(lag)
+		for (const segment of WIKI_RESERVED_SLUG_SEGMENTS) {
+			expect(String(op.description), segment).toContain(segment)
 		}
 	})
 })

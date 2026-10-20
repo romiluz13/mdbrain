@@ -101,6 +101,22 @@ export {
 } from "./wiki-overview.js"
 
 export {
+	getWikiChanges,
+	WIKI_CHANGES_LIMITS,
+	WIKI_CHANGES_SCAN_CAP,
+	WIKI_CHANGES_SETTLE_MS,
+	WikiChangesRequestError,
+	WikiChangesScanError,
+	type WikiChange,
+	type WikiChangeClaim,
+	type WikiChangeClaims,
+	type WikiChangedClaim,
+	type WikiChangesLimitName,
+	type WikiChangesPage,
+	type WikiChangesParams,
+} from "./wiki-changes.js"
+
+export {
 	extractTransclusionTargets,
 	resolveTransclusions,
 } from "./wiki-transclusion.js"

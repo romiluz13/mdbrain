@@ -1075,6 +1075,80 @@ describe("wiki MCP tools", () => {
 		expect(wikiOverview.mock.calls[0]?.[0].maxBacklinks).toBeUndefined()
 	})
 
+	it("wiki_changes is advertised with the request-owned scope required, the window and cursor optional, and the settle lag stated", () => {
+		const tool = toolList.find((entry) => entry.name === "mdbrain_wiki_changes")
+		const schema = tool?.inputSchema as SchemaNode | undefined
+
+		expect(schema?.required).toEqual(["scope", "scopeRef"])
+		expect(Object.keys(schema?.properties ?? {}).sort()).toEqual([
+			"agentId",
+			"cursor",
+			"limit",
+			"maxClaims",
+			"scope",
+			"scopeRef",
+			"since",
+			"until",
+		])
+		expect(tool?.description).toContain("15 seconds")
+		expect(tool?.description).toContain("nextCursor")
+		expect(tool?.description).toContain("baseline")
+	})
+
+	it("wiki_changes forwards the caller's scope, window, cursor and bounds, and returns the page as JSON text", async () => {
+		const page = { window: { settled: true }, changes: [], hasMore: false }
+		const wikiChanges = vi.fn().mockResolvedValue(page)
+
+		const out = await handleToolCall(
+			"mdbrain_wiki_changes",
+			{
+				scope: "workspace",
+				scopeRef: "ws-1",
+				agentId: "main",
+				since: "2026-10-01T00:00:00.000Z",
+				until: "2026-10-01T10:30:00.000Z",
+				cursor: "abc",
+				limit: 7,
+				maxClaims: 3,
+			},
+			{ changes: wikiChanges } as any,
+		)
+
+		expect(wikiChanges).toHaveBeenCalledWith({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: "main",
+			since: "2026-10-01T00:00:00.000Z",
+			until: "2026-10-01T10:30:00.000Z",
+			cursor: "abc",
+			limit: 7,
+			maxClaims: 3,
+		})
+		expect(parseTextPayload(out)).toEqual(page)
+		expect("isError" in out ? out.isError : undefined).toBeUndefined()
+	})
+
+	it("wiki_changes leaves out a bound that was not a number and a window that was not text", async () => {
+		const wikiChanges = vi.fn().mockResolvedValue({})
+
+		await handleToolCall(
+			"mdbrain_wiki_changes",
+			{
+				scope: "workspace",
+				scopeRef: "ws-1",
+				limit: "5",
+				maxClaims: null,
+				since: 17,
+			},
+			{ changes: wikiChanges } as any,
+		)
+
+		const sent = wikiChanges.mock.calls[0]?.[0]
+		expect(sent.limit).toBeUndefined()
+		expect(sent.maxClaims).toBeUndefined()
+		expect(sent.since).toBeUndefined()
+	})
+
 	it("wiki_overview passes a missing or hidden page through as a coded error with no content", async () => {
 		const wikiOverview = vi.fn().mockRejectedValue(
 			new MdbrainClientError(

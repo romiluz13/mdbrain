@@ -987,7 +987,7 @@ export const toolList = [
 	{
 		name: "mdbrain_wiki_overview",
 		description:
-			"Read everything known about one wiki page in a single call: the page with its claims, its unresolved contradictions (each with the claims it names and where they live), the pages that link to it (backlinks, with the link kind and the claim or line that cites it), the pages it links to (neighbors, with their top claims by confidence) and its recent revisions. Claims carry citation markers you can pass to mdbrain_cite. Everything is filtered by your access before it is shown: a page, backlink, contradiction counterpart or revision you may not read is absent, and the counts do not include it. Each section is {items, hasMore}: hasMore true means more readable items exist than the bound allowed (raise the max* bound). limits reports the bounds that applied. A page that does not exist and a page you may not read both return WIKI_NOT_FOUND. The slug is the page's own slug, including slashes; the first segments lint, revisions and overview are reserved and cannot be page slugs.",
+			"Read everything known about one wiki page in a single call: the page with its claims, its unresolved contradictions (each with the claims it names and where they live), the pages that link to it (backlinks, with the link kind and the claim or line that cites it), the pages it links to (neighbors, with their top claims by confidence) and its recent revisions. Claims carry citation markers you can pass to mdbrain_cite. Everything is filtered by your access before it is shown: a page, backlink, contradiction counterpart or revision you may not read is absent, and the counts do not include it. Each section is {items, hasMore}: hasMore true means more readable items exist than the bound allowed (raise the max* bound). limits reports the bounds that applied. A page that does not exist and a page you may not read both return WIKI_NOT_FOUND. The slug is the page's own slug, including slashes; the first segments lint, revisions, overview and changes are reserved and cannot be page slugs.",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -1035,6 +1035,48 @@ export const toolList = [
 				},
 			},
 			required: ["slug", "scope", "scopeRef"],
+		},
+	},
+	{
+		name: "mdbrain_wiki_changes",
+		description:
+			"List what changed across wiki pages in a time window, oldest first: each entry is one revision of one page, with the claims it added, changed and removed compared with the previous revision. A created page lists all its claims as added and a deleted page lists all as removed (baseline none). An update has baseline previous, and claims.changed lists each claim whose text, status, confidence, evidence, derivation, supersession or validTo changed, with the changed fields and the claim before and after; counts are the full counts and truncated is true when maxClaims cut a list. If the previous revision is one you may not read, the entry has baseline unavailable and claims null, the same as when it is missing. Claims carry citation markers at the revision they were read from, which you can pass to mdbrain_cite. since is required on the first call (an ISO 8601 instant with a zone, inclusive); until is exclusive and, when omitted, ends 15 seconds before the server's clock so that revisions still being committed are not skipped, and it is fixed by the cursor, so a long read never drifts. window.settled is false while until is within 15 seconds of now. When hasMore is true, call again with the nextCursor unchanged (do not repeat since or until with different values). No total is returned. A revision you may not read is absent and takes no part in paging. The first segments lint, revisions, overview and changes are reserved and cannot be page slugs.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				scope: { type: "string" },
+				scopeRef: { type: "string" },
+				agentId: { type: "string" },
+				since: {
+					type: "string",
+					description:
+						"Start of the window, inclusive: an ISO 8601 instant with a zone, such as 2026-10-01T10:00:00Z. Required unless cursor is given.",
+				},
+				until: {
+					type: "string",
+					description:
+						"End of the window, exclusive: an ISO 8601 instant with a zone. Defaults to 15 seconds before the server's clock on the first call.",
+				},
+				cursor: {
+					type: "string",
+					description: "The nextCursor of the previous page, unchanged.",
+				},
+				limit: {
+					type: "integer",
+					minimum: 1,
+					maximum: 100,
+					description:
+						"Revisions returned per page. Default 25, maximum 100; a larger value is clamped and reported in limits.",
+				},
+				maxClaims: {
+					type: "integer",
+					minimum: 1,
+					maximum: 50,
+					description:
+						"Claims listed per bucket (added, changed, removed) per entry. Default 10, maximum 50; a larger value is clamped and reported in limits.",
+				},
+			},
+			required: ["scope", "scopeRef"],
 		},
 	},
 	{
@@ -1782,6 +1824,23 @@ export async function handleToolCall(
 				maxNeighborClaims: bound(args.maxNeighborClaims),
 				maxRevisions: bound(args.maxRevisions),
 				maxContradictions: bound(args.maxContradictions),
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrain_wiki_changes") {
+			const text = (value: unknown) =>
+				typeof value === "string" ? value : undefined
+			const bound = (value: unknown) =>
+				typeof value === "number" ? value : undefined
+			const out = await mdbrain.changes({
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
+				agentId: text(args.agentId),
+				since: text(args.since),
+				until: text(args.until),
+				cursor: text(args.cursor),
+				limit: bound(args.limit),
+				maxClaims: bound(args.maxClaims),
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}
