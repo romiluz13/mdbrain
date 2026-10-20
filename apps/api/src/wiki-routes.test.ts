@@ -378,6 +378,21 @@ describe("wiki routes", () => {
 			)
 		})
 
+		it("decodes a slug the SDK sends as one encoded path component", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			const res = await createApp().request(
+				`/v1/wiki/${encodeURIComponent("tables/a b?c%")}?scope=workspace&scopeRef=ws-1`,
+			)
+			expect(res.status).toBe(200)
+			expect(wikiMocks.getWikiPage).toHaveBeenCalledWith(
+				{ db: {}, prefix: "test_" },
+				"tables/a b?c%",
+				"workspace",
+				"ws-1",
+				expect.anything(),
+			)
+		})
+
 		it("reads padded-but-equal identity from the canonical wiki partition", async () => {
 			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
 			const res = await createApp().request(

@@ -2111,10 +2111,18 @@ export function createV1Router(): Hono<ApiEnvironment> {
 	// Slug may contain slashes (OKF concept IDs are file paths like
 	// "tables/users"), so routes use /wiki/* and parse the slug from the path.
 	// Robust against slugs containing the literal "/wiki/" substring and
-	// against a trailing slash.
-	function readWikiSlug(c: { req: { path: string } }): string {
-		const afterWiki = c.req.path.split("/wiki/").slice(1).join("/wiki/")
-		return (afterWiki ?? "").replace(/\/$/, "")
+	// against a trailing slash. The SDK encodes the whole slug as one path
+	// component ("/" as %2F); c.req.path only applies decodeURI, which leaves
+	// reserved escapes in place, so decode the raw pathname exactly once.
+	function readWikiSlug(c: { req: { url: string } }): string {
+		const rawPath = new URL(c.req.url).pathname
+		const afterWiki = rawPath.split("/wiki/").slice(1).join("/wiki/")
+		const raw = (afterWiki ?? "").replace(/\/$/, "")
+		try {
+			return decodeURIComponent(raw)
+		} catch {
+			return raw
+		}
 	}
 
 	// REV-07 N2: a slug whose first segment collides with a GET sub-route
