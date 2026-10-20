@@ -2114,10 +2114,17 @@ export function createV1Router(): Hono<ApiEnvironment> {
 	// against a trailing slash. The SDK encodes the whole slug as one path
 	// component ("/" as %2F); c.req.path only applies decodeURI, which leaves
 	// reserved escapes in place, so decode the raw pathname exactly once.
-	function readWikiSlug(c: { req: { url: string } }): string {
+	// decodeURI never turns %2F into "/", so the router's path and the raw
+	// path have the same segments: locate the matched "wiki" prefix in the
+	// former and take the slug from the latter.
+	function readWikiSlug(c: { req: { path: string; url: string } }): string {
+		const prefix = c.req.path.split("/").indexOf("wiki")
 		const rawPath = new URL(c.req.url).pathname
-		const afterWiki = rawPath.split("/wiki/").slice(1).join("/wiki/")
-		const raw = (afterWiki ?? "").replace(/\/$/, "")
+		const raw = rawPath
+			.split("/")
+			.slice(prefix + 1)
+			.join("/")
+			.replace(/\/$/, "")
 		try {
 			return decodeURIComponent(raw)
 		} catch {

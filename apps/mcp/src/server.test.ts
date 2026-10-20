@@ -658,6 +658,26 @@ describe("wiki MCP tools", () => {
 		})
 	})
 
+	it("wiki_apply forwards a missing body so the API can reject it", async () => {
+		const wikiApply = vi.fn().mockResolvedValue({ _id: "id1", slug: "x" })
+		const page = {
+			kind: "concept",
+			title: "Test",
+			slug: "test",
+			summary: "A test page.",
+			frontmatter: { type: "concept" },
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+		}
+		await handleToolCall("mdbrain_wiki_apply", page, { wikiApply } as any)
+		await handleToolCall("mdbrain_wiki_apply", { ...page, body: "" }, {
+			wikiApply,
+		} as any)
+		expect(wikiApply.mock.calls[0]?.[0].body).toBeUndefined()
+		expect(wikiApply.mock.calls[1]?.[0].body).toBe("")
+	})
+
 	it("wiki_apply calls the client with page fields", async () => {
 		const wikiApply = vi.fn().mockResolvedValue({ _id: "id1", slug: "x" })
 		await handleToolCall(

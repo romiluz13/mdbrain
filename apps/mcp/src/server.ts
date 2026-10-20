@@ -1624,7 +1624,8 @@ export async function handleToolCall(
 				title: typeof args.title === "string" ? args.title : "",
 				slug: typeof args.slug === "string" ? args.slug : "",
 				summary: typeof args.summary === "string" ? args.summary : "",
-				body: typeof args.body === "string" ? args.body : "",
+				// Absent stays absent so the API answers 400 instead of storing "".
+				body: args.body as string,
 				frontmatter: (args.frontmatter ?? {}) as {
 					type: string
 					title?: string

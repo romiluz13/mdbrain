@@ -393,6 +393,15 @@ describe("wiki routes", () => {
 			)
 		})
 
+		it("keeps a slug-internal wiki segment when the route prefix is percent-encoded", async () => {
+			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			const res = await createApp().request(
+				"/v1/%77iki/alpha/wiki/beta?scope=workspace&scopeRef=ws-1",
+			)
+			expect(res.status).toBe(200)
+			expect(wikiMocks.getWikiPage.mock.calls[0]?.[1]).toBe("alpha/wiki/beta")
+		})
+
 		it("reads padded-but-equal identity from the canonical wiki partition", async () => {
 			wikiMocks.getWikiPage.mockResolvedValue(SAMPLE_PAGE)
 			const res = await createApp().request(
@@ -585,6 +594,23 @@ describe("wiki routes", () => {
 			expect(patch.summary).toBe("Updated summary")
 		})
 
+		it("decodes an SDK-encoded slug", async () => {
+			wikiMocks.updateWikiPage.mockResolvedValue({
+				...SAMPLE_PAGE,
+				revision: 2,
+			})
+			const res = await createApp().request(
+				`/v1/wiki/${encodeURIComponent("tables/a b")}?scope=workspace&scopeRef=ws-1`,
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ summary: "Updated summary" }),
+				},
+			)
+			expect(res.status).toBe(200)
+			expect(wikiMocks.updateWikiPage.mock.calls[0]?.[1]).toBe("tables/a b")
+		})
+
 		it("returns 404 when updating a missing page", async () => {
 			wikiMocks.updateWikiPage.mockResolvedValue(undefined)
 			const res = await createApp().request(
@@ -685,6 +711,16 @@ describe("wiki routes", () => {
 			expect(json.hard).toBe(false)
 			const [, , , , opts] = wikiMocks.deleteWikiPage.mock.calls[0]
 			expect(opts.hard).toBe(false)
+		})
+
+		it("decodes an SDK-encoded slug", async () => {
+			wikiMocks.deleteWikiPage.mockResolvedValue(true)
+			const res = await createApp().request(
+				`/v1/wiki/${encodeURIComponent("tables/a b")}?scope=workspace&scopeRef=ws-1`,
+				{ method: "DELETE" },
+			)
+			expect(res.status).toBe(200)
+			expect(wikiMocks.deleteWikiPage.mock.calls[0]?.[1]).toBe("tables/a b")
 		})
 
 		it("hard-deletes when hard=true", async () => {

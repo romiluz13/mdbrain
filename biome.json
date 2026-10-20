@@ -30,7 +30,8 @@
 			"!tmp",
 			"!**/tmp",
 			"!docs/contracts",
-			"!**/docs/contracts"
+			"!**/docs/contracts",
+			"!apps/demo-agents/corpus"
 		]
 	},
 	"formatter": {
