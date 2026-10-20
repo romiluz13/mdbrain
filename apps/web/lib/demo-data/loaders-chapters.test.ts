@@ -8,6 +8,7 @@ import {
 import { json, stubUpstream } from "./test-upstream.js"
 import type { DemoDataUpstream } from "./loaders.js"
 import {
+	loadAgentActivity,
 	loadClaimSources,
 	loadContradictionCase,
 	loadWikiSearch,
@@ -24,7 +25,8 @@ afterEach(() => {
 	vi.unstubAllGlobals()
 })
 
-const eventMarker = (id: string) => formatCitationMarker({ kind: "event", eventId: id })
+const eventMarker = (id: string) =>
+	formatCitationMarker({ kind: "event", eventId: id })
 
 function claim(
 	slug: string,
@@ -37,7 +39,12 @@ function claim(
 		text,
 		status: "active",
 		confidence: 0.9,
-		marker: formatCitationMarker({ kind: "wiki", slug, claimId: id, revision: 2 }),
+		marker: formatCitationMarker({
+			kind: "wiki",
+			slug,
+			claimId: id,
+			revision: 2,
+		}),
 		evidence: eventIds.map((eventId) => ({
 			kind: "event" as const,
 			sourceId: eventId,
@@ -66,15 +73,23 @@ function cited(eventId: string, text: string | undefined, timestamp?: string) {
 
 describe("loadClaimSources", () => {
 	it("cites every event the claim rests on, keeping business time apart", async () => {
-		const c = claim("accounts/halvorsen", "healthy", "The renewal is healthy.", [
-			"evt-1",
-			"evt-2",
-		])
+		const c = claim(
+			"accounts/halvorsen",
+			"healthy",
+			"The renewal is healthy.",
+			["evt-1", "evt-2"],
+		)
 		const calls = stubUpstream({
 			"/v1/cite": (url) => {
 				const marker = url.searchParams.get("marker") ?? ""
 				return marker === eventMarker("evt-1")
-					? json(cited("evt-1", "CRM note: budget confirmed.", "2026-09-14T15:20:00.000Z"))
+					? json(
+							cited(
+								"evt-1",
+								"CRM note: budget confirmed.",
+								"2026-09-14T15:20:00.000Z",
+							),
+						)
 					: json(cited("evt-2", "Call recap with no date."))
 			},
 		})
@@ -135,8 +150,18 @@ describe("loadClaimSources", () => {
 })
 
 describe("loadContradictionCase", () => {
-	const healthy = claim("accounts/halvorsen", "healthy", "The renewal is healthy.", ["evt-1"])
-	const unhealthy = claim("risks/halvorsen", "unhealthy", "The renewal is not healthy.", ["evt-2"])
+	const healthy = claim(
+		"accounts/halvorsen",
+		"healthy",
+		"The renewal is healthy.",
+		["evt-1"],
+	)
+	const unhealthy = claim(
+		"risks/halvorsen",
+		"unhealthy",
+		"The renewal is not healthy.",
+		["evt-2"],
+	)
 	const entry = {
 		pageSlug: "accounts/halvorsen",
 		pageTitle: "Halvorsen",
@@ -162,8 +187,18 @@ describe("loadContradictionCase", () => {
 		resolution: "unresolved",
 		note: "opposite negation",
 		claims: [
-			{ pageSlug: "accounts/halvorsen", pageTitle: "Halvorsen", revision: 2, claim: healthy },
-			{ pageSlug: "risks/halvorsen", pageTitle: "Halvorsen risk", revision: 1, claim: unhealthy },
+			{
+				pageSlug: "accounts/halvorsen",
+				pageTitle: "Halvorsen",
+				revision: 2,
+				claim: healthy,
+			},
+			{
+				pageSlug: "risks/halvorsen",
+				pageTitle: "Halvorsen risk",
+				revision: 1,
+				claim: unhealthy,
+			},
 		],
 	}
 
@@ -176,7 +211,13 @@ describe("loadContradictionCase", () => {
 				const marker = url.searchParams.get("marker")
 				return marker === eventMarker("evt-1")
 					? json(cited("evt-1", "CRM: healthy", "2026-09-14T15:20:00.000Z"))
-					: json(cited("evt-2", "Ticket: eroded trust", "2026-09-20T08:00:00.000Z"))
+					: json(
+							cited(
+								"evt-2",
+								"Ticket: eroded trust",
+								"2026-09-20T08:00:00.000Z",
+							),
+						)
 			},
 		})
 		const result = await loadContradictionCase(direct)
@@ -185,7 +226,10 @@ describe("loadContradictionCase", () => {
 		expect(result.data.id).toBe("contra-1")
 		expect(result.data.detectedAt).toBe("2026-10-20T09:43:00.000Z")
 		expect(result.data.unresolvedCount).toBe(1)
-		expect(result.data.claims.map((c) => c.pageTitle)).toEqual(["Halvorsen", "Halvorsen risk"])
+		expect(result.data.claims.map((c) => c.pageTitle)).toEqual([
+			"Halvorsen",
+			"Halvorsen risk",
+		])
 		expect(result.data.claims.map((c) => c.sources[0]?.businessTime)).toEqual([
 			"2026-09-14T15:20:00.000Z",
 			"2026-09-20T08:00:00.000Z",
@@ -200,7 +244,8 @@ describe("loadContradictionCase", () => {
 
 	it("reports empty when the lint read lists none", async () => {
 		stubUpstream({
-			"/v1/wiki/lint": () => json({ pages: 3, total: 3, unresolvedContradictions: [] }),
+			"/v1/wiki/lint": () =>
+				json({ pages: 3, total: 3, unresolvedContradictions: [] }),
 		})
 		expect((await loadContradictionCase(direct)).kind).toBe("empty")
 	})
@@ -228,7 +273,11 @@ describe("loadWikiSearch", () => {
 			{
 				page: page("accounts/halvorsen", [
 					claim("accounts/halvorsen", "fleet", "Halvorsen runs 4,200 trucks."),
-					claim("accounts/halvorsen", "healthy", "The Halvorsen renewal is healthy."),
+					claim(
+						"accounts/halvorsen",
+						"healthy",
+						"The Halvorsen renewal is healthy.",
+					),
 					claim("accounts/halvorsen", "arr", "Halvorsen brings $1.26M ARR."),
 					claim("accounts/halvorsen", "owner", "Camille owns the account."),
 				]),
@@ -249,7 +298,10 @@ describe("loadWikiSearch", () => {
 				return json(envelope)
 			},
 		})
-		const result = await loadWikiSearch(direct, "Is the Halvorsen renewal safe?")
+		const result = await loadWikiSearch(
+			direct,
+			"Is the Halvorsen renewal safe?",
+		)
 		expect(body).toMatchObject({
 			query: "Is the Halvorsen renewal safe?",
 			recipe: "text",
@@ -278,7 +330,12 @@ describe("loadWikiSearch", () => {
 		stubUpstream({
 			"/v1/wiki/search": () =>
 				json(
-					{ error: { code: "SEARCH_UNAVAILABLE", message: "wiki search is currently unavailable" } },
+					{
+						error: {
+							code: "SEARCH_UNAVAILABLE",
+							message: "wiki search is currently unavailable",
+						},
+					},
 					503,
 				),
 		})
@@ -292,5 +349,15 @@ describe("loadWikiSearch", () => {
 		const result = await loadWikiSearch(direct, "   ")
 		expect(result.kind).toBe("empty")
 		expect(calls).toHaveLength(0)
+	})
+})
+
+describe("loadAgentActivity", () => {
+	it("reads as not yet in this run, never as an error and never as invented activity", () => {
+		expect(loadAgentActivity()).toEqual({
+			kind: "incomplete",
+			reason: "AGENT_ACTIVITY_NOT_EXPOSED",
+			state: null,
+		})
 	})
 })

@@ -197,16 +197,34 @@ describe("loaders through the demo proxy route", () => {
 
 describe("the search read through the whole production path", () => {
 	it("goes out as one fixed-shape upstream POST with the server's scope", async () => {
-		const seen: Array<{ url: URL; method: string; body: Record<string, unknown> }> = []
-		const upstreamFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-			const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
+		const seen: Array<{
+			url: URL
+			method: string
+			body: Record<string, unknown>
+		}> = []
+		const upstreamFetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			const url = new URL(
+				typeof input === "string"
+					? input
+					: input instanceof URL
+						? input.href
+						: input.url,
+			)
 			seen.push({
 				url,
 				method: init?.method ?? "GET",
 				body: init?.body ? JSON.parse(String(init.body)) : {},
 			})
 			return new Response(
-				JSON.stringify({ results: [], total: 0, recipe: "text", mode: "text-only" }),
+				JSON.stringify({
+					results: [],
+					total: 0,
+					recipe: "text",
+					mode: "text-only",
+				}),
 				{ headers: { "content-type": "application/json" } },
 			)
 		}) as typeof fetch

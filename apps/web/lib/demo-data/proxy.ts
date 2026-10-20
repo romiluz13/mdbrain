@@ -375,7 +375,10 @@ function validateParam(
 				}
 			}
 			if (CONTROL_CHARACTERS.test(value)) {
-				return { ok: false, reason: `${name} must not contain control characters` }
+				return {
+					ok: false,
+					reason: `${name} must not contain control characters`,
+				}
 			}
 			return { ok: true }
 		}

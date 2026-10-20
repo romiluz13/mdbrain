@@ -1,0 +1,230 @@
+.stage {
+	display: grid;
+	gap: 12px;
+	align-content: start;
+	padding: 16px;
+	border-radius: var(--r3);
+	background: var(--scope);
+	color: var(--scope-ink);
+	min-width: 0;
+}
+
+.stage :focus-visible {
+	outline-color: var(--focus-dark);
+}
+
+.stageHead {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 4px 16px;
+}
+
+.stageHead h2 {
+	font-size: var(--t17);
+	font-weight: 700;
+	font-stretch: 112%;
+}
+
+.stageHead p {
+	color: var(--scope-ink-2);
+	font-size: var(--t13);
+}
+
+.canvasWrap {
+	position: relative;
+	width: min(100%, max(380px, calc(100dvh - 400px)));
+	aspect-ratio: 1 / 1;
+	margin-inline: auto;
+	cursor: crosshair;
+	touch-action: manipulation;
+}
+
+.stage[data-compact="true"] .canvasWrap {
+	width: min(100%, 420px);
+}
+
+.canvas {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+}
+
+.stageState {
+	min-height: 240px;
+	display: grid;
+	align-items: center;
+}
+
+.legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 16px;
+	font-size: var(--t13);
+}
+
+.legend li {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.legendCount {
+	color: var(--scope-ink-2);
+	font-family: var(--font-mono);
+	font-size: var(--t12);
+}
+
+.swatch {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	margin-right: 4px;
+}
+
+.stageCaption {
+	color: var(--scope-ink-2);
+	font-size: var(--t13);
+}
+
+.inspector {
+	display: grid;
+	gap: 12px;
+	align-content: start;
+	padding: 16px;
+	border-radius: var(--r3);
+	background: var(--panel);
+	min-width: 0;
+}
+
+.inspector h2 {
+	font-size: var(--t17);
+	font-weight: 700;
+	font-stretch: 112%;
+}
+
+.inspector h4 {
+	margin-top: 8px;
+	font-size: var(--t13);
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-2);
+}
+
+.picker {
+	display: grid;
+	gap: 4px;
+}
+
+.picker label {
+	font-size: var(--t13);
+	font-weight: 600;
+}
+
+.picker select {
+	min-height: var(--target);
+	width: 100%;
+	padding: 0 8px;
+	border: 1px solid var(--ink-2);
+	border-radius: var(--r1);
+	background: var(--panel);
+	color: var(--ink);
+	font: inherit;
+}
+
+.inspectorHint {
+	color: var(--ink-2);
+	font-size: var(--t13);
+}
+
+.inspectorBody {
+	display: grid;
+	gap: 8px;
+}
+
+.pageTitle {
+	font-size: var(--t21);
+	font-weight: 700;
+	line-height: 1.2;
+}
+
+.pageMeta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	color: var(--ink-2);
+	font-size: var(--t13);
+}
+
+.linkList {
+	display: grid;
+	gap: 4px;
+}
+
+.linkList button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	width: 100%;
+	min-height: var(--target);
+	padding: 4px 12px;
+	border: 0;
+	border-radius: var(--r1);
+	background: var(--inset);
+	color: var(--ink);
+	font-size: var(--t15);
+	font-weight: 600;
+	text-align: left;
+	cursor: pointer;
+}
+
+.linkList button:hover {
+	background: var(--rail);
+}
+
+.linkKind {
+	flex: none;
+	color: var(--ink-2);
+	font-size: var(--t12);
+	font-weight: 400;
+}
+
+.claimList {
+	display: grid;
+	gap: 12px;
+}
+
+.claimList li {
+	display: grid;
+	gap: 4px;
+	justify-items: start;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--line);
+}
+
+.claimMeta {
+	color: var(--ink-2);
+	font-size: var(--t12);
+}
+
+.linkButton {
+	min-height: var(--target);
+	min-width: var(--target);
+	padding: 0 12px;
+	border: 1px solid var(--ink-2);
+	border-radius: var(--r1);
+	background: transparent;
+	color: var(--ink);
+	font-size: var(--t13);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.linkButton:hover {
+	background: var(--inset);
+}

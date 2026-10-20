@@ -14,11 +14,17 @@ const env: DemoProxyEnv = {
 
 type UpstreamCall = { url: URL; method: string; headers: Headers; body: string }
 
-function upstream(answer: () => Response = () => json({ results: [], total: 0 })) {
+function upstream(
+	answer: () => Response = () => json({ results: [], total: 0 }),
+) {
 	const calls: UpstreamCall[] = []
 	const impl = async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = new URL(
-			typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+			typeof input === "string"
+				? input
+				: input instanceof URL
+					? input.href
+					: input.url,
 		)
 		calls.push({
 			url,
@@ -53,7 +59,9 @@ describe("the governed search read", () => {
 	it("sends one fixed-shape upstream read: the text lane, the server's scope, a bounded result count", async () => {
 		const up = upstream(() => json({ results: [], total: 0, recipe: "text" }))
 		const response = await handleDemoRead(
-			get("/api/demo/v1/wiki/search?query=Is%20the%20Halvorsen%20renewal%20safe%3F"),
+			get(
+				"/api/demo/v1/wiki/search?query=Is%20the%20Halvorsen%20renewal%20safe%3F",
+			),
 			env,
 			up.fetch,
 		)
@@ -76,7 +84,11 @@ describe("the governed search read", () => {
 
 	it("lets the caller lower the result count, within bounds", async () => {
 		const up = upstream()
-		await handleDemoRead(get("/api/demo/v1/wiki/search?query=renewal&maxResults=3"), env, up.fetch)
+		await handleDemoRead(
+			get("/api/demo/v1/wiki/search?query=renewal&maxResults=3"),
+			env,
+			up.fetch,
+		)
 		expect(JSON.parse((up.calls[0] as UpstreamCall).body).maxResults).toBe(3)
 		for (const bad of ["0", "11", "x"]) {
 			const refused = await handleDemoRead(
@@ -92,13 +104,19 @@ describe("the governed search read", () => {
 	it.each([
 		["a missing query", "/api/demo/v1/wiki/search"],
 		["a blank query", "/api/demo/v1/wiki/search?query=%20%20"],
-		["a query over 200 characters", `/api/demo/v1/wiki/search?query=${"a".repeat(201)}`],
+		[
+			"a query over 200 characters",
+			`/api/demo/v1/wiki/search?query=${"a".repeat(201)}`,
+		],
 		["a control character", "/api/demo/v1/wiki/search?query=a%00b"],
 		["a repeated query", "/api/demo/v1/wiki/search?query=a&query=b"],
 		["a caller-chosen lane", "/api/demo/v1/wiki/search?query=a&recipe=hybrid"],
 		["a caller-set filter", "/api/demo/v1/wiki/search?query=a&state=draft"],
 		["a caller-set scope", "/api/demo/v1/wiki/search?query=a&scope=agent"],
-		["a caller-set scopeRef", "/api/demo/v1/wiki/search?query=a&scopeRef=demo-run-2"],
+		[
+			"a caller-set scopeRef",
+			"/api/demo/v1/wiki/search?query=a&scopeRef=demo-run-2",
+		],
 	])("refuses %s before any upstream call", async (_name, path) => {
 		const up = upstream()
 		const response = await handleDemoRead(get(path), env, up.fetch)
@@ -108,16 +126,32 @@ describe("the governed search read", () => {
 
 	it("is a GET toward the caller: a POST is refused", async () => {
 		const up = upstream()
-		const response = await handleDemoRead(get("/api/demo/v1/wiki/search?query=a", "POST"), env, up.fetch)
+		const response = await handleDemoRead(
+			get("/api/demo/v1/wiki/search?query=a", "POST"),
+			env,
+			up.fetch,
+		)
 		expect(response.status).toBe(405)
 		expect(up.calls).toHaveLength(0)
 	})
 
 	it("passes an upstream outage through and keeps the key out of the body", async () => {
 		const up = upstream(() =>
-			json({ error: { code: "SEARCH_UNAVAILABLE", message: "down test-read-key-123" } }, 503),
+			json(
+				{
+					error: {
+						code: "SEARCH_UNAVAILABLE",
+						message: "down test-read-key-123",
+					},
+				},
+				503,
+			),
 		)
-		const response = await handleDemoRead(get("/api/demo/v1/wiki/search?query=a"), env, up.fetch)
+		const response = await handleDemoRead(
+			get("/api/demo/v1/wiki/search?query=a"),
+			env,
+			up.fetch,
+		)
 		expect(response.status).toBe(503)
 		const text = await response.text()
 		expect(text).toContain("SEARCH_UNAVAILABLE")

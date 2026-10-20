@@ -2,7 +2,7 @@
 // no rendering. Everything here is computed from loader results.
 
 import type { MdbrainWikiChange, MdbrainWikiClaim } from "@mdbrain/client"
-import type { ChangesView, WikiMapPage, WikiMapView } from "./loaders.js"
+import type { ChangesView, WikiMapView } from "./loaders.js"
 
 export type GroupId =
 	| "account"
@@ -27,14 +27,39 @@ type GroupSpec = {
 // page-type hues; teams share the document hue and unknown types get a
 // neutral one, because the direction names eight hues for ten stored types.
 const GROUPS: readonly GroupSpec[] = [
-	{ id: "account", label: "Accounts", color: "#F0B84B", types: ["customer-account", "account", "customer"] },
+	{
+		id: "account",
+		label: "Accounts",
+		color: "#F0B84B",
+		types: ["customer-account", "account", "customer"],
+	},
 	{ id: "person", label: "People", color: "#8DBDF2", types: ["person"] },
 	{ id: "team", label: "Teams", color: "#C8D4D6", types: ["team"] },
-	{ id: "product", label: "Products", color: "#6FD3A8", types: ["product", "project"] },
-	{ id: "process", label: "Processes", color: "#4DC3D6", types: ["processes", "process", "runbook"] },
+	{
+		id: "product",
+		label: "Products",
+		color: "#6FD3A8",
+		types: ["product", "project"],
+	},
+	{
+		id: "process",
+		label: "Processes",
+		color: "#4DC3D6",
+		types: ["processes", "process", "runbook"],
+	},
 	{ id: "policy", label: "Policies", color: "#B8A2F0", types: ["policy"] },
-	{ id: "incident", label: "Incidents", color: "#F46F5B", types: ["incidents", "incident"] },
-	{ id: "concept", label: "Concepts", color: "#F2B8D2", types: ["concepts", "concept", "company", "model-release"] },
+	{
+		id: "incident",
+		label: "Incidents",
+		color: "#F46F5B",
+		types: ["incidents", "incident"],
+	},
+	{
+		id: "concept",
+		label: "Concepts",
+		color: "#F2B8D2",
+		types: ["concepts", "concept", "company", "model-release"],
+	},
 	{ id: "other", label: "Other pages", color: "#8FA3A0", types: [] },
 ]
 
@@ -60,7 +85,12 @@ export type GraphNode = {
 
 export type GraphEdge = { a: number; b: number; kind: string }
 
-export type GraphGroup = { id: GroupId; label: string; color: string; count: number }
+export type GraphGroup = {
+	id: GroupId
+	label: string
+	color: string
+	count: number
+}
 
 export type Graph = {
 	nodes: GraphNode[]
@@ -74,12 +104,11 @@ export type Graph = {
 
 /** The brain as a graph: one node per stored page, one edge per linked pair
  *  of stored pages (a relationship to a page outside the run is not drawn). */
-export function buildGraph(
-	view: WikiMapView,
-	flagged: ReadonlySet<string> = new Set(),
-): Graph {
+export function buildGraph(view: WikiMapView): Graph {
 	const index = new Map<string, number>()
-	view.pages.forEach((page, position) => index.set(page.slug, position))
+	for (const [position, page] of view.pages.entries()) {
+		index.set(page.slug, position)
+	}
 	const edges: GraphEdge[] = []
 	const seen = new Set<string>()
 	const degree = new Array<number>(view.pages.length).fill(0)
@@ -109,7 +138,7 @@ export function buildGraph(
 			color: group.color,
 			degree: degree[position] ?? 0,
 			claimCount: page.claimCount,
-			contradicted: page.contradictedClaims > 0 || flagged.has(page.slug),
+			contradicted: page.contradictedClaims > 0,
 		}
 	})
 	let hub = 0
@@ -132,6 +161,61 @@ export function buildGraph(
 		count: nodes.filter((node) => node.group === spec.id).length,
 	})).filter((group) => group.count > 0)
 	return { nodes, edges, groups, index, hub }
+}
+
+/** The same graph with the named pages marked contradicted. Layout reads only
+ *  slugs, groups and degrees, so a flag never moves a node. */
+export function flagPages(graph: Graph, slugs: ReadonlySet<string>): Graph {
+	if (![...slugs].some((slug) => graph.index.has(slug))) {
+		return graph
+	}
+	return {
+		...graph,
+		nodes: graph.nodes.map((node) =>
+			slugs.has(node.slug) && !node.contradicted
+				? { ...node, contradicted: true }
+				: node,
+		),
+	}
+}
+
+export type SourceIndexEntry = {
+	eventId: string
+	pageSlug: string
+	pageTitle: string
+	revision: number
+	claim: MdbrainWikiClaim
+}
+
+/** The source events the stored claims cite, each once, with the first claim
+ *  that cites it (the claim a citation opens through), in page order. */
+export function buildSourceIndex(
+	view: WikiMapView,
+	limit: number,
+): SourceIndexEntry[] {
+	const seen = new Set<string>()
+	const entries: SourceIndexEntry[] = []
+	for (const page of view.pages) {
+		for (const claim of page.claims) {
+			for (const evidence of claim.evidence) {
+				if (evidence.kind !== "event" || seen.has(evidence.sourceId)) {
+					continue
+				}
+				if (entries.length >= limit) {
+					return entries
+				}
+				seen.add(evidence.sourceId)
+				entries.push({
+					eventId: evidence.sourceId,
+					pageSlug: page.slug,
+					pageTitle: page.title,
+					revision: page.revision,
+					claim,
+				})
+			}
+		}
+	}
+	return entries
 }
 
 function tally(values: readonly string[]): Array<[string, number]> {
@@ -203,7 +287,20 @@ export function summarizeChanges(view: ChangesView): ChangesSummary {
 	return summary
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+const MONTHS = [
+	"Jan",
+	"Feb",
+	"Mar",
+	"Apr",
+	"May",
+	"Jun",
+	"Jul",
+	"Aug",
+	"Sep",
+	"Oct",
+	"Nov",
+	"Dec",
+]
 
 const pad = (value: number): string => String(value).padStart(2, "0")
 

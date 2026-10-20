@@ -19,7 +19,9 @@ describe("layoutRadial", () => {
 		expect(x).toHaveLength(250)
 		expect(y).toHaveLength(250)
 		for (let i = 0; i < 250; i++) {
-			expect(Math.hypot(x[i] as number, y[i] as number)).toBeLessThanOrEqual(1.0001)
+			expect(Math.hypot(x[i] as number, y[i] as number)).toBeLessThanOrEqual(
+				1.0001,
+			)
 		}
 		expect([x[3], y[3]]).toEqual([0, 0])
 	})
@@ -38,7 +40,10 @@ describe("layoutRadial", () => {
 			for (let j = i + 1; j < 250; j++) {
 				min = Math.min(
 					min,
-					Math.hypot((x[i] as number) - (x[j] as number), (y[i] as number) - (y[j] as number)),
+					Math.hypot(
+						(x[i] as number) - (x[j] as number),
+						(y[i] as number) - (y[j] as number),
+					),
 				)
 			}
 		}
@@ -67,20 +72,31 @@ describe("layoutRadial", () => {
 			// Measured from the first sector's start (straight up) so a sector
 			// that crosses the atan2 seam still reads as one range.
 			const angle =
-				(Math.atan2(y[i] as number, x[i] as number) + Math.PI / 2 + 4 * Math.PI) %
+				(Math.atan2(y[i] as number, x[i] as number) +
+					Math.PI / 2 +
+					4 * Math.PI) %
 				(2 * Math.PI)
 			const range = ranges.get(node.group) ?? [angle, angle]
-			ranges.set(node.group, [Math.min(range[0], angle), Math.max(range[1], angle)])
+			ranges.set(node.group, [
+				Math.min(range[0], angle),
+				Math.max(range[1], angle),
+			])
 		})
 		const spans = [...ranges.values()].sort((a, b) => a[0] - b[0])
 		for (let i = 1; i < spans.length; i++) {
-			expect((spans[i] as [number, number])[0]).toBeGreaterThan((spans[i - 1] as [number, number])[1] - 1e-6)
+			expect((spans[i] as [number, number])[0]).toBeGreaterThan(
+				(spans[i - 1] as [number, number])[1] - 1e-6,
+			)
 		}
 	})
 
 	it("handles no nodes and a single node", () => {
 		expect(layoutRadial([], 0, ORDER).x).toHaveLength(0)
-		const one = layoutRadial([{ slug: "a", group: "account", degree: 0 }], 0, ORDER)
+		const one = layoutRadial(
+			[{ slug: "a", group: "account", degree: 0 }],
+			0,
+			ORDER,
+		)
 		expect([one.x[0], one.y[0]]).toEqual([0, 0])
 	})
 

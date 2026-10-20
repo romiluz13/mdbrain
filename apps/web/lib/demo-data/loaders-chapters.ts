@@ -54,7 +54,8 @@ export async function loadClaimSources(
 		return {
 			kind: "error",
 			code: "NO_CLAIM_MARKER",
-			message: "the claim carries no citation marker to cite its sources through",
+			message:
+				"the claim carries no citation marker to cite its sources through",
 		}
 	}
 	const citedBy = claim.marker
@@ -84,10 +85,7 @@ export async function loadClaimSources(
 			}
 		}),
 	)
-	return mapWithStatus(
-		{ data: { sources, otherEvidence } },
-		upstream.readKey,
-	)
+	return mapWithStatus({ data: { sources, otherEvidence } }, upstream.readKey)
 }
 
 export type ContradictionCaseClaim = {
@@ -221,5 +219,16 @@ export async function loadWikiSearch(
 		)
 	} catch (error) {
 		return errorState(error, upstream.readKey)
+	}
+}
+
+/** The agents-at-work chapter. No stored read carries agent activity yet
+ * (ticket 10 is not merged), so this reports "not yet in this run" instead
+ * of presenting the seeder's writer ids as agents at work. */
+export function loadAgentActivity(): DataState<never> {
+	return {
+		kind: "incomplete",
+		reason: "AGENT_ACTIVITY_NOT_EXPOSED",
+		state: null,
 	}
 }

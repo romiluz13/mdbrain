@@ -66,7 +66,8 @@ export function layoutRadial(
 			const radius =
 				CORE_RADIUS +
 				(1 - CORE_RADIUS) * Math.sqrt((rank + 0.5) / members.length)
-			const angle = start + margin + (width - 2 * margin) * fraction((rank + 1) * GOLDEN)
+			const angle =
+				start + margin + (width - 2 * margin) * fraction((rank + 1) * GOLDEN)
 			x[position] = Math.cos(angle) * radius
 			y[position] = Math.sin(angle) * radius
 		})
