@@ -49,6 +49,13 @@ export const DEMO_READ_OPERATIONS: ReadonlyArray<{
 		chapter: "contradictions",
 	},
 	{ operation: "cite", upstream: "GET /v1/cite", chapter: "sources" },
+	// The one POST: a fixed-shape governed read. The caller sends a GET with a
+	// bounded question; the proxy builds the whole upstream body itself.
+	{
+		operation: "wiki-search",
+		upstream: "POST /v1/wiki/search",
+		chapter: "ask",
+	},
 ]
 
 /** Principal-naming parameters. The server sets these from its own env; a
@@ -64,8 +71,9 @@ export const DEMO_PROXY_FORBIDDEN_PARAMS: readonly string[] = [
 // read allowlist: the revisions reads and the okf interchange names. They
 // are refused at any raw depth. `lint` and `changes` are readable operations
 // on their own and page-slug prefixes beyond that (mirroring the API's
-// wildcard route); `overview` beyond the overview route is a page slug too,
-// while bare `overview` names no readable page.
+// wildcard route) and so does `search`, the governed question read; `overview`
+// beyond the overview route is a page slug too, while bare `overview` names no
+// readable page.
 const REFUSED_SUBROUTE_SEGMENTS: readonly string[] = [
 	"revisions",
 	"okf-import",
@@ -77,6 +85,8 @@ const SCOPE_REF_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 const TOKEN_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/
 const CURSOR_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/
+const SEARCH_QUERY_MAX = 200
+const SEARCH_RESULTS_DEFAULT = 6
 
 /** Reads the proxy's server-only env. Returns null when any variable is
  * missing or malformed; the route answers 503 in that case. */
@@ -116,6 +126,7 @@ type ParamSpec =
 	| { kind: "token" }
 	| { kind: "cursor" }
 	| { kind: "datetime" }
+	| { kind: "text" }
 	| { kind: "citation"; markerKind: "event" | "wiki" }
 
 type QuerySpec = {
@@ -128,7 +139,13 @@ type QuerySpec = {
  * forwards it with the API's own encoding rules (one percent-encoded
  * component, the form the SDK sends). */
 type MatchedOperation =
-	| { operation: string; upstreamPath: string; query: QuerySpec }
+	| {
+			operation: string
+			upstreamPath: string
+			query: QuerySpec
+			/** The upstream read is a POST whose body the proxy builds. */
+			search?: true
+	  }
 	| {
 			operation: string
 			slugRoute: "/v1/wiki" | "/v1/wiki/overview"
@@ -206,6 +223,17 @@ function matchOperation(rawParts: string[]): MatchedOperation | null {
 				operation: "wiki-lint",
 				upstreamPath: "/v1/wiki/lint",
 				query: { optional: { limit: INT_LIMIT_1_100, kind: TOKEN } },
+			}
+		}
+		if (second === "search") {
+			return {
+				operation: "wiki-search",
+				upstreamPath: "/v1/wiki/search",
+				search: true,
+				query: {
+					required: { query: { kind: "text" } },
+					optional: { maxResults: { kind: "int", min: 1, max: 10 } },
+				},
 			}
 		}
 		if (second === "overview") {
@@ -338,6 +366,19 @@ function validateParam(
 			}
 			return { ok: true }
 		}
+		case "text": {
+			const trimmed = value.trim()
+			if (trimmed === "" || value.length > SEARCH_QUERY_MAX) {
+				return {
+					ok: false,
+					reason: `${name} must be between 1 and ${SEARCH_QUERY_MAX} characters`,
+				}
+			}
+			if (CONTROL_CHARACTERS.test(value)) {
+				return { ok: false, reason: `${name} must not contain control characters` }
+			}
+			return { ok: true }
+		}
 		case "citation": {
 			const parsed = parseCitationMarker(value)
 			if (!parsed.ok) {
@@ -449,20 +490,45 @@ export async function handleDemoRead(
 		forwarded.set(key, values[0])
 	}
 	const upstreamUrl = new URL(`${env.apiBaseUrl}${upstreamPath}`)
-	upstreamUrl.searchParams.set("scope", env.scope)
-	upstreamUrl.searchParams.set("scopeRef", env.scopeRef)
-	for (const [key, value] of forwarded) {
-		upstreamUrl.searchParams.set(key, value)
-	}
-	let response: Response
-	try {
-		response = await fetchImpl(upstreamUrl, {
+	let init: RequestInit
+	if ("search" in matched) {
+		// One fixed-shape read: the text lane (no model, no embedding), the
+		// server's scope, a bounded result count. The caller supplies only the
+		// question and may lower the count.
+		init = {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${env.readKey}`,
+				accept: "application/json",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				scope: env.scope,
+				scopeRef: env.scopeRef,
+				query: (forwarded.get("query") ?? "").trim(),
+				recipe: "text",
+				maxResults: Number(
+					forwarded.get("maxResults") ?? SEARCH_RESULTS_DEFAULT,
+				),
+			}),
+		}
+	} else {
+		upstreamUrl.searchParams.set("scope", env.scope)
+		upstreamUrl.searchParams.set("scopeRef", env.scopeRef)
+		for (const [key, value] of forwarded) {
+			upstreamUrl.searchParams.set(key, value)
+		}
+		init = {
 			method: "GET",
 			headers: {
 				authorization: `Bearer ${env.readKey}`,
 				accept: "application/json",
 			},
-		})
+		}
+	}
+	let response: Response
+	try {
+		response = await fetchImpl(upstreamUrl, init)
 	} catch (error) {
 		const raw =
 			error instanceof Error

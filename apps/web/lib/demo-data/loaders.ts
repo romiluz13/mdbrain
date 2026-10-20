@@ -70,7 +70,7 @@ export interface PinnedPageRef {
 	claims: ReadonlyArray<{ id: string }>
 }
 
-function errorState(error: unknown, secret: string): DataState<never> {
+export function errorState(error: unknown, secret: string): DataState<never> {
 	if (error instanceof MdbrainClientError) {
 		return mapWithStatus(
 			{
@@ -99,25 +99,37 @@ const MAX_LIST_CALLS = 50
 const MAX_CHANGE_CALLS = 10
 
 // The wiki-lint envelope. The SDK types wikiLint as unknown, so the loader
-// keeps its own narrow, guarded view of it.
-interface LintContradiction {
-	id: string
-	detectedAt?: string
-	resolution?: string
-	note?: string
-	claims?: unknown[]
+// keeps its own narrow, guarded view of it. Each entry is the page that holds
+// an unresolved record and the stored record itself (wiki-engine
+// UnresolvedContradiction).
+interface LintEntry {
+	pageSlug: string
+	pageTitle: string
+	contradiction: {
+		id: string
+		claimIds?: unknown
+		detectedAt?: unknown
+		resolution?: unknown
+		note?: unknown
+	}
 }
 type LintEnvelope = {
 	pages?: number
 	total?: number
-	unresolvedContradictions?: LintContradiction[]
+	unresolvedContradictions?: unknown[]
 }
 
-function isLintContradiction(value: unknown): value is LintContradiction {
+function isLintEntry(value: unknown): value is LintEntry {
+	if (typeof value !== "object" || value === null) {
+		return false
+	}
+	const entry = value as Partial<LintEntry>
 	return (
-		typeof value === "object" &&
-		value !== null &&
-		typeof (value as { id?: unknown }).id === "string"
+		typeof entry.pageSlug === "string" &&
+		typeof entry.pageTitle === "string" &&
+		typeof entry.contradiction === "object" &&
+		entry.contradiction !== null &&
+		typeof entry.contradiction.id === "string"
 	)
 }
 
@@ -125,17 +137,62 @@ export type WikiMapPage = {
 	slug: string
 	title: string
 	kind: string
+	/** The page's own type (frontmatter.type), falling back to its kind. */
+	type: string
 	trustTier: string
 	state: string
 	revision: number
 	claimCount: number
 	linkCount: number
+	/** Ingestion time: when mdbrain stored the page. */
+	createdAt: string
 	updatedAt: string
+	/** The pages this page links to, as the stored relationships name them. */
+	links: Array<{ slug: string; kind: string }>
+	/** Event sources the page's claims cite. */
+	sourceIds: string[]
+	contradictedClaims: number
 }
 export type WikiMapView = {
 	pages: WikiMapPage[]
 	pageTotal: number
+	claimTotal: number
+	/** Distinct event sources cited by the stored claims. */
+	sourceTotal: number
 	unresolvedContradictionCount: number
+}
+
+function pageLinks(page: MdbrainWikiPageView): WikiMapPage["links"] {
+	const seen = new Set<string>()
+	const links: WikiMapPage["links"] = []
+	for (const relationship of page.relationships) {
+		const { targetPageSlug, kind } = (relationship ?? {}) as {
+			targetPageSlug?: unknown
+			kind?: unknown
+		}
+		if (typeof targetPageSlug !== "string") {
+			continue
+		}
+		const label = typeof kind === "string" ? kind : "related"
+		const key = `${targetPageSlug}\u0000${label}`
+		if (!seen.has(key)) {
+			seen.add(key)
+			links.push({ slug: targetPageSlug, kind: label })
+		}
+	}
+	return links
+}
+
+function pageSourceIds(page: MdbrainWikiPageView): string[] {
+	const ids = new Set<string>()
+	for (const claim of page.claims) {
+		for (const evidence of claim.evidence) {
+			if (evidence.kind === "event") {
+				ids.add(evidence.sourceId)
+			}
+		}
+	}
+	return [...ids]
 }
 
 /** The map chapter: every page in the run scope plus the unresolved
@@ -171,26 +228,47 @@ export async function loadWikiMap(
 				typeof lint === "object" &&
 				Array.isArray(lint.unresolvedContradictions)
 			) {
-				unresolvedContradictionCount = lint.unresolvedContradictions.length
+				unresolvedContradictionCount =
+					lint.unresolvedContradictions.filter(isLintEntry).length
 			}
 		} catch {
 			// The map stays usable without the contradiction count.
 		}
+		const allSources = new Set<string>()
+		let claimTotal = 0
+		const mapPages = pages.map((page): WikiMapPage => {
+			const sourceIds = pageSourceIds(page)
+			for (const id of sourceIds) {
+				allSources.add(id)
+			}
+			claimTotal += page.claims.length
+			const type = page.frontmatter?.type
+			return {
+				slug: page.slug,
+				title: page.title,
+				kind: page.kind,
+				type: typeof type === "string" && type !== "" ? type : page.kind,
+				trustTier: page.trustTier,
+				state: page.state,
+				revision: page.revision,
+				claimCount: page.claims.length,
+				linkCount: page.relationships.length,
+				createdAt: page.createdAt,
+				updatedAt: page.updatedAt,
+				links: pageLinks(page),
+				sourceIds,
+				contradictedClaims: page.claims.filter(
+					(claim) => claim.status === "contradicted",
+				).length,
+			}
+		})
 		return mapWithStatus(
 			{
 				data: {
-					pages: pages.map((page) => ({
-						slug: page.slug,
-						title: page.title,
-						kind: page.kind,
-						trustTier: page.trustTier,
-						state: page.state,
-						revision: page.revision,
-						claimCount: page.claims.length,
-						linkCount: page.relationships.length,
-						updatedAt: page.updatedAt,
-					})),
+					pages: mapPages,
 					pageTotal: total,
+					claimTotal,
+					sourceTotal: allSources.size,
 					unresolvedContradictionCount,
 				},
 			},
@@ -283,13 +361,39 @@ export async function loadEntityOverview(
 	}
 }
 
+/** One unresolved record, flattened with the page that holds it. */
+export type UnresolvedContradictionView = {
+	id: string
+	pageSlug: string
+	pageTitle: string
+	claimIds: string[]
+	/** Ingestion time: when the detector recorded it. */
+	detectedAt?: string
+	resolution?: string
+	note?: string
+}
 export type ContradictionsView = {
-	unresolved: LintContradiction[]
+	unresolved: UnresolvedContradictionView[]
 	pageCount: number
 	pageTotal: number
 }
 
-/** The contradiction chapter: the flat unresolved list from the lint read. */
+function flattenLintEntry(entry: LintEntry): UnresolvedContradictionView {
+	const { id, claimIds, detectedAt, resolution, note } = entry.contradiction
+	return {
+		id,
+		pageSlug: entry.pageSlug,
+		pageTitle: entry.pageTitle,
+		claimIds: Array.isArray(claimIds)
+			? claimIds.filter((c): c is string => typeof c === "string")
+			: [],
+		...(typeof detectedAt === "string" ? { detectedAt } : {}),
+		...(typeof resolution === "string" ? { resolution } : {}),
+		...(typeof note === "string" ? { note } : {}),
+	}
+}
+
+/** The contradiction chapter: the unresolved records from the lint read. */
 export async function loadContradictions(
 	upstream: DemoDataUpstream,
 ): Promise<DataState<ContradictionsView>> {
@@ -303,7 +407,9 @@ export async function loadContradictions(
 			Array.isArray(envelope.unresolvedContradictions)
 				? envelope.unresolvedContradictions
 				: []
-		).filter(isLintContradiction)
+		)
+			.filter(isLintEntry)
+			.map(flattenLintEntry)
 		const pageCount =
 			typeof envelope.pages === "number" ? envelope.pages : unresolved.length
 		const pageTotal =

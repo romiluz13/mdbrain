@@ -9,7 +9,7 @@ import type {
 	MdbrainWikiPageView,
 	MdbrainWikiRevisionSummary,
 } from "@mdbrain/client"
-import { json } from "./test-upstream.js"
+import { json, stubUpstream } from "./test-upstream.js"
 import {
 	loadContradictions,
 	loadEntityOverview,
@@ -25,35 +25,6 @@ const baseUpstream = {
 	readKey: "test-read-key-123",
 	scope: "workspace",
 	scopeRef: "demo-run-2",
-}
-
-/** Stubs the global fetch MdbrainClient uses, keyed by exact upstream path. */
-function stubUpstream(routes: Record<string, (url: URL) => Response>): URL[] {
-	const calls: URL[] = []
-	vi.stubGlobal(
-		"fetch",
-		async (input: RequestInfo | URL): Promise<Response> => {
-			const raw =
-				typeof input === "string"
-					? input
-					: input instanceof URL
-						? input.href
-						: input.url
-			const url = new URL(raw)
-			calls.push(url)
-			const handler = routes[url.pathname]
-			if (!handler) {
-				return json(
-					{
-						error: { code: "NO_STUB", message: `no stub for ${url.pathname}` },
-					},
-					500,
-				)
-			}
-			return handler(url)
-		},
-	)
-	return calls
 }
 
 afterEach(() => {
@@ -121,30 +92,28 @@ describe("loadWikiMap", () => {
 		const result = await loadWikiMap(baseUpstream)
 		expect(result.kind).toBe("ready")
 		if (result.kind !== "ready") return
+		const expectedPage = (slug: string) => ({
+			slug,
+			title: "Halvorsen Renewal",
+			kind: "person",
+			type: "person",
+			trustTier: "standard",
+			state: "active",
+			revision: 3,
+			claimCount: 1,
+			linkCount: 1,
+			createdAt: "2026-11-16T10:00:00.000Z",
+			updatedAt: "2026-11-16T10:30:00.000Z",
+			links: [{ slug: "havnor", kind: "related" }],
+			sourceIds: ["evt-1"],
+			contradictedClaims: 0,
+		})
 		expect(result.data.pages).toEqual([
-			{
-				slug: "halvorsen-renewal",
-				title: "Halvorsen Renewal",
-				kind: "person",
-				trustTier: "standard",
-				state: "active",
-				revision: 3,
-				claimCount: 1,
-				linkCount: 1,
-				updatedAt: "2026-11-16T10:30:00.000Z",
-			},
-			{
-				slug: "havnor",
-				title: "Halvorsen Renewal",
-				kind: "person",
-				trustTier: "standard",
-				state: "active",
-				revision: 3,
-				claimCount: 1,
-				linkCount: 1,
-				updatedAt: "2026-11-16T10:30:00.000Z",
-			},
+			expectedPage("halvorsen-renewal"),
+			expectedPage("havnor"),
 		])
+		expect(result.data.claimTotal).toBe(2)
+		expect(result.data.sourceTotal).toBe(1)
 		expect(listCall).toHaveBeenCalledTimes(1)
 		expect(result.data.pageTotal).toBe(2)
 		expect(result.data.unresolvedContradictionCount).toBe(0)
@@ -252,20 +221,27 @@ describe("loadEntityOverview", () => {
 })
 
 describe("loadContradictions", () => {
-	it("returns a flat unresolved list from the lint read", async () => {
+	// The lint route lists one entry per unresolved record: the page that holds
+	// it, and the stored record (SDK type unknown; see wiki-engine
+	// UnresolvedContradiction).
+	const entry = {
+		pageSlug: "halvorsen-renewal",
+		pageTitle: "Halvorsen Renewal",
+		contradiction: {
+			id: "c1",
+			claimIds: ["claim-1", "claim-9"],
+			claimRefs: [
+				{ pageSlug: "halvorsen-renewal", claimId: "claim-1" },
+				{ pageSlug: "risks", claimId: "claim-9" },
+			],
+			detectedAt: "2026-11-16T12:00:00.000Z",
+			resolution: "unresolved",
+		},
+	}
+
+	it("flattens the lint entries into one record per contradiction", async () => {
 		const lintCall = vi.fn(() =>
-			json({
-				pages: 2,
-				total: 2,
-				unresolvedContradictions: [
-					{
-						id: "c1",
-						detectedAt: "2026-11-16T12:00:00.000Z",
-						resolution: "unresolved",
-						claims: [],
-					},
-				],
-			}),
+			json({ pages: 2, total: 2, unresolvedContradictions: [entry] }),
 		)
 		stubUpstream({ "/v1/wiki/lint": lintCall })
 		const result = await loadContradictions(baseUpstream)
@@ -274,14 +250,32 @@ describe("loadContradictions", () => {
 		expect(result.data.unresolved).toEqual([
 			{
 				id: "c1",
+				pageSlug: "halvorsen-renewal",
+				pageTitle: "Halvorsen Renewal",
+				claimIds: ["claim-1", "claim-9"],
 				detectedAt: "2026-11-16T12:00:00.000Z",
 				resolution: "unresolved",
-				claims: [],
 			},
 		])
 		expect(result.data.pageCount).toBe(2)
 		expect(result.data.pageTotal).toBe(2)
 		expect(lintCall).toHaveBeenCalledTimes(1)
+	})
+
+	it("drops an entry that does not carry a stored record", async () => {
+		stubUpstream({
+			"/v1/wiki/lint": () =>
+				json({
+					pages: 1,
+					total: 1,
+					unresolvedContradictions: [
+						{ pageSlug: "x", pageTitle: "X" },
+						{ id: "flat", detectedAt: "2026-11-16T12:00:00.000Z" },
+					],
+				}),
+		})
+		const result = await loadContradictions(baseUpstream)
+		expect(result.kind).toBe("empty")
 	})
 
 	it("reports empty when there are none", async () => {
