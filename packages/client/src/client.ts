@@ -21,11 +21,13 @@ import type {
 	MdbrainSearchKBResponse,
 	MdbrainSearchResponse,
 	SearchConfig,
+	MdbrainWikiClaimInput,
 	MdbrainWikiPageCreateInput,
 	MdbrainWikiPageListResponse,
 	MdbrainWikiPageUpdateInput,
 	MdbrainWikiPageView,
 	MdbrainWikiPromotion,
+	MdbrainWikiRelationshipInput,
 	MdbrainWikiRevisionListResponse,
 	MdbrainWikiRevisionRecord,
 } from "./types.js"
@@ -996,6 +998,8 @@ export class MdbrainClient {
 				summary: input.summary,
 				body: input.body,
 				frontmatter: input.frontmatter,
+				claims: input.claims,
+				relationships: input.relationships,
 				scope: input.scope,
 				scopeRef: input.scopeRef,
 				trustTier: input.trustTier,
@@ -1096,6 +1100,8 @@ export class MdbrainClient {
 				entityTypes?: string[]
 				privacyTier?: string
 			}
+			claims?: MdbrainWikiClaimInput[]
+			relationships?: MdbrainWikiRelationshipInput[]
 			scope: string
 			scopeRef: string
 			trustTier: string
@@ -1119,6 +1125,8 @@ export class MdbrainClient {
 			summary: input.summary,
 			body: input.body,
 			frontmatter: input.frontmatter,
+			claims: input.claims,
+			relationships: input.relationships,
 			scope: input.scope,
 			scopeRef: input.scopeRef,
 			trustTier: input.trustTier,

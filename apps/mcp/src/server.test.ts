@@ -6,6 +6,14 @@ function parseTextPayload(result: { content: Array<{ text: string }> }) {
 	return JSON.parse(result.content[0]?.text ?? "null")
 }
 
+type SchemaNode = {
+	type?: string
+	enum?: readonly string[]
+	required?: readonly string[]
+	properties?: Record<string, SchemaNode>
+	items?: SchemaNode
+}
+
 describe("toolList", () => {
 	it("advertises and forwards explicit constraint relaxation to detailed search", async () => {
 		const searchDetailed = vi
@@ -482,6 +490,36 @@ describe("wiki MCP tools", () => {
 		})
 	})
 
+	it("wiki_search advertises and forwards the text-only recipe", async () => {
+		const tool = toolList.find((entry) => entry.name === "mdbrain_wiki_search")
+		const schema = tool?.inputSchema as SchemaNode
+		expect(schema.properties?.recipe?.enum).toEqual([
+			"fast",
+			"hybrid",
+			"deep",
+			"text",
+		])
+		const wikiSearch = vi.fn().mockResolvedValue({
+			results: [],
+			total: 0,
+			recipe: "text",
+			mode: "text-only",
+		})
+		await handleToolCall(
+			"mdbrain_wiki_search",
+			{
+				query: "halvorsen renewal",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				recipe: "text",
+			},
+			{ wikiSearch } as any,
+		)
+		expect(wikiSearch).toHaveBeenCalledWith(
+			expect.objectContaining({ recipe: "text" }),
+		)
+	})
+
 	it("wiki_search forwards state, privacyTier and minScore filters", async () => {
 		const wikiSearch = vi.fn().mockResolvedValue({
 			results: [],
@@ -649,6 +687,106 @@ describe("wiki MCP tools", () => {
 			trustTier: "standard",
 			agentId: undefined,
 		})
+	})
+
+	it("wiki_apply advertises claims with evidence and relationships", () => {
+		const tool = toolList.find((entry) => entry.name === "mdbrain_wiki_apply")
+		const schema = tool?.inputSchema as SchemaNode
+		const claim = schema.properties?.claims?.items
+		const evidence = claim?.properties?.evidence?.items
+		expect(schema.properties?.claims?.type).toBe("array")
+		expect(claim?.required).toEqual(["id", "text"])
+		expect(claim?.properties?.status?.enum).toEqual([
+			"active",
+			"superseded",
+			"contradicted",
+			"disputed",
+		])
+		expect(evidence?.required).toEqual(["kind", "sourceId"])
+		expect(evidence?.properties?.kind?.enum).toEqual([
+			"file",
+			"url",
+			"event",
+			"api",
+			"manual",
+			"agent",
+		])
+		expect(claim?.properties?.writerAgent?.required).toEqual(["id", "name"])
+		expect(claim?.properties).not.toHaveProperty("validFrom")
+		expect(schema.properties?.relationships?.type).toBe("array")
+		expect(schema.properties?.relationships?.items?.required).toEqual([
+			"targetPageSlug",
+			"targetTitle",
+			"kind",
+		])
+		expect(schema.required).not.toContain("claims")
+		expect(schema.required).not.toContain("relationships")
+	})
+
+	it("wiki_apply forwards claims with evidence and relationships to the client", async () => {
+		const wikiApply = vi.fn().mockResolvedValue({ _id: "id1", slug: "x" })
+		const claims = [
+			{
+				id: "clm_halvorsen_renewal_healthy",
+				text: "The Halvorsen renewal is healthy.",
+				confidence: 0.82,
+				evidence: [
+					{ kind: "event", sourceId: "evt_call_notes_0914", weight: 0.9 },
+				],
+				writerAgent: { id: "account-manager", name: "Account Manager" },
+			},
+		]
+		const relationships = [
+			{
+				targetPageSlug: "projects/identity-gateway",
+				targetTitle: "Identity Gateway v2",
+				kind: "depends_on",
+			},
+		]
+		await handleToolCall(
+			"mdbrain_wiki_apply",
+			{
+				kind: "entity",
+				title: "Halvorsen Freight",
+				slug: "accounts/halvorsen",
+				summary: "Freight customer",
+				body: "Renewal is healthy.",
+				frontmatter: { type: "account" },
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				claims,
+				relationships,
+			},
+			{ wikiApply } as any,
+		)
+		const sent = wikiApply.mock.calls[0][0]
+		expect(sent.claims).toEqual(claims)
+		expect(sent.relationships).toEqual(relationships)
+	})
+
+	it("wiki_apply forwards claims it cannot interpret unchanged so the API rejects them", async () => {
+		const wikiApply = vi.fn().mockResolvedValue({ _id: "id1", slug: "x" })
+		await handleToolCall(
+			"mdbrain_wiki_apply",
+			{
+				kind: "entity",
+				title: "T",
+				slug: "t",
+				summary: "S",
+				body: "B",
+				frontmatter: { type: "account" },
+				scope: "workspace",
+				scopeRef: "ws-1",
+				trustTier: "standard",
+				claims: "not a list",
+				relationships: [{ kind: "depends_on" }],
+			},
+			{ wikiApply } as any,
+		)
+		const sent = wikiApply.mock.calls[0][0]
+		expect(sent.claims).toBe("not a list")
+		expect(sent.relationships).toEqual([{ kind: "depends_on" }])
 	})
 
 	it("wiki_apply upsert: 409 on POST falls back to PATCH (update existing)", async () => {

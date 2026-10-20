@@ -2199,6 +2199,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		if (reservedSlug) return jsonError(c, 400, "VALIDATION_ERROR", reservedSlug)
 		if (!summary.trim())
 			return jsonError(c, 400, "VALIDATION_ERROR", "summary is required")
+		if (typeof body.body !== "string")
+			return jsonError(c, 400, "VALIDATION_ERROR", "body is required")
 		if (!WIKI_VALID_KINDS.includes(kind))
 			return jsonError(
 				c,

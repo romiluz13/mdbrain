@@ -2132,7 +2132,7 @@ const openApiDocument = {
 							schema: {
 								type: "object",
 								// REV-07 C5/C6 parity fix: matches the runtime contract
-								// (routes/v1.ts POST /wiki) — summary, trustTier and
+								// (routes/v1.ts POST /wiki) — summary, body, trustTier and
 								// frontmatter.type are required at runtime, and
 								// kind/scope/trustTier are enum-validated there.
 								required: [
@@ -2140,6 +2140,7 @@ const openApiDocument = {
 									"title",
 									"slug",
 									"summary",
+									"body",
 									"scope",
 									"scopeRef",
 									"trustTier",

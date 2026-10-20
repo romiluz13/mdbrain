@@ -911,6 +911,35 @@ export type MdbrainWikiClaim = {
 	writerAgent?: MdbrainSourceAgent
 }
 
+/** A claim sent to POST /v1/wiki or PATCH /v1/wiki/:slug. The caller owns the
+ *  id: a patch merges claims into the page by id (same id replaces, new id is
+ *  appended, `claims: []` clears them all). validFrom and validTo are left out
+ *  on purpose: the store holds them as dates and a JSON body can only carry
+ *  strings, which the schema rejects. */
+export type MdbrainWikiClaimInput = {
+	id: string
+	text: string
+	status?: MdbrainWikiClaim["status"]
+	confidence?: number
+	evidence?: MdbrainWikiClaimEvidence[]
+	writerAgent?: MdbrainSourceAgent
+	derivedFrom?: string[]
+	supersedesClaimId?: string
+	sourceMemId?: string
+}
+
+/** A relationship sent to POST /v1/wiki or PATCH /v1/wiki/:slug. A patch
+ *  replaces the page's whole relationship list rather than merging it. */
+export type MdbrainWikiRelationshipInput = {
+	targetPageSlug: string
+	targetTitle: string
+	kind: string
+	weight?: number
+	confidence?: number
+	evidenceKind?: string
+	privacyTier?: string
+}
+
 /** A wiki page as served by GET /v1/wiki/:slug (format=json) and the wiki
  *  mutation routes. JSON-serialized: timestamps are ISO strings. */
 export type MdbrainWikiPageView = {
@@ -967,6 +996,8 @@ export type MdbrainWikiPageCreateInput = {
 	 *  The API rejects create bodies with an omitted/empty tier, so the SDK
 	 *  does not default it. */
 	trustTier: string
+	claims?: MdbrainWikiClaimInput[]
+	relationships?: MdbrainWikiRelationshipInput[]
 	agentId?: string
 }
 
@@ -986,6 +1017,8 @@ export type MdbrainWikiPageUpdateInput = {
 	frontmatter?: { type: string } & Record<string, unknown>
 	trustTier?: string
 	permissions?: Record<string, unknown>
+	claims?: MdbrainWikiClaimInput[]
+	relationships?: MdbrainWikiRelationshipInput[]
 	agentId?: string
 }
 

@@ -413,6 +413,67 @@ describe("MdbrainClient public contract", () => {
 		})
 	})
 
+	it("wikiApply sends claims with evidence and relationships on both the create and the update attempt", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				Response.json(
+					{
+						error: {
+							code: "DUPLICATE_SLUG",
+							message: 'wiki page slug "accounts/halvorsen" already exists',
+						},
+					},
+					{ status: 409 },
+				),
+			)
+			.mockResolvedValueOnce(
+				Response.json({ slug: "accounts/halvorsen", revision: 1 }),
+			)
+			.mockResolvedValueOnce(
+				Response.json({ slug: "accounts/halvorsen", revision: 2 }),
+			)
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+		const claims = [
+			{
+				id: "clm_halvorsen_renewal_at_risk",
+				text: "The Halvorsen renewal is at risk.",
+				confidence: 0.9,
+				evidence: [{ kind: "event" as const, sourceId: "evt_ticket_4471" }],
+			},
+		]
+		const relationships = [
+			{
+				targetPageSlug: "incidents/eta-drift",
+				targetTitle: "ETA drift escalation",
+				kind: "relates_to",
+			},
+		]
+
+		await client.wikiApply({
+			kind: "entity",
+			title: "Halvorsen Freight",
+			slug: "accounts/halvorsen",
+			summary: "Freight customer",
+			body: "Renewal is at risk.",
+			frontmatter: { type: "account" },
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			claims,
+			relationships,
+		})
+
+		const createBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+		const patchBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))
+		expect(createBody.claims).toEqual(claims)
+		expect(createBody.relationships).toEqual(relationships)
+		expect(patchBody.claims).toEqual(claims)
+		expect(patchBody.relationships).toEqual(relationships)
+		expect(patchBody.expectedRevision).toBe(1)
+	})
+
 	it("wikiApply surfaces REVISION_CONFLICT from the update fallback instead of overwriting", async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()
@@ -721,6 +782,80 @@ describe("MdbrainClient public contract", () => {
 		})
 	})
 
+	it("wikiCreate sends claims with their evidence and relationships", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(pageView, { status: 201 }))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await client.wikiCreate({
+			kind: "entity",
+			title: "Halvorsen Freight",
+			slug: "accounts/halvorsen",
+			summary: "Freight customer",
+			body: "Renewal is healthy.",
+			frontmatter: { type: "account" },
+			scope: "workspace",
+			scopeRef: "ws-1",
+			trustTier: "standard",
+			claims: [
+				{
+					id: "clm_halvorsen_renewal_healthy",
+					text: "The Halvorsen renewal is healthy.",
+					status: "active",
+					confidence: 0.82,
+					evidence: [
+						{
+							kind: "event",
+							sourceId: "evt_call_notes_0914",
+							note: "Renewal call, 14 Sep",
+							weight: 0.9,
+						},
+					],
+					writerAgent: { id: "account-manager", name: "Account Manager" },
+					derivedFrom: ["evt_call_notes_0914"],
+				},
+			],
+			relationships: [
+				{
+					targetPageSlug: "projects/identity-gateway",
+					targetTitle: "Identity Gateway v2",
+					kind: "depends_on",
+					weight: 0.5,
+				},
+			],
+		})
+
+		const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+		expect(body.claims).toEqual([
+			{
+				id: "clm_halvorsen_renewal_healthy",
+				text: "The Halvorsen renewal is healthy.",
+				status: "active",
+				confidence: 0.82,
+				evidence: [
+					{
+						kind: "event",
+						sourceId: "evt_call_notes_0914",
+						note: "Renewal call, 14 Sep",
+						weight: 0.9,
+					},
+				],
+				writerAgent: { id: "account-manager", name: "Account Manager" },
+				derivedFrom: ["evt_call_notes_0914"],
+			},
+		])
+		expect(body.relationships).toEqual([
+			{
+				targetPageSlug: "projects/identity-gateway",
+				targetTitle: "Identity Gateway v2",
+				kind: "depends_on",
+				weight: 0.5,
+			},
+		])
+	})
+
 	it("wikiUpdate sends the inspected revision unchanged and URL-encodes the slug", async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()
@@ -752,6 +887,55 @@ describe("MdbrainClient public contract", () => {
 			scopeRef: "ws-1",
 			expectedRevision: 2,
 			agentId: "main",
+		})
+	})
+
+	it("wikiUpdate sends claims and relationships in the patch body", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(pageView))
+		vi.stubGlobal("fetch", fetchMock)
+		const client = new MdbrainClient()
+
+		await client.wikiUpdate({
+			slug: "accounts/halvorsen",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			expectedRevision: 1,
+			claims: [
+				{
+					id: "clm_halvorsen_renewal_at_risk",
+					text: "The Halvorsen renewal is at risk.",
+					evidence: [{ kind: "event", sourceId: "evt_ticket_4471" }],
+				},
+			],
+			relationships: [
+				{
+					targetPageSlug: "incidents/eta-drift",
+					targetTitle: "ETA drift escalation",
+					kind: "relates_to",
+				},
+			],
+		})
+
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			expectedRevision: 1,
+			claims: [
+				{
+					id: "clm_halvorsen_renewal_at_risk",
+					text: "The Halvorsen renewal is at risk.",
+					evidence: [{ kind: "event", sourceId: "evt_ticket_4471" }],
+				},
+			],
+			relationships: [
+				{
+					targetPageSlug: "incidents/eta-drift",
+					targetTitle: "ETA drift escalation",
+					kind: "relates_to",
+				},
+			],
 		})
 	})
 

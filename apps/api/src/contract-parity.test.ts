@@ -209,6 +209,7 @@ describe("wiki contract matrix (runtime ↔ spec ↔ MCP)", () => {
 			"title",
 			"slug",
 			"summary",
+			"body",
 			"scope",
 			"scopeRef",
 			"trustTier",

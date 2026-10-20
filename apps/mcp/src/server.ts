@@ -13,6 +13,7 @@ const mdbrain = new MdbrainClient({
 })
 
 type MdbrainMcpClient = typeof mdbrain
+type WikiApplyInput = Parameters<MdbrainMcpClient["wikiApply"]>[0]
 
 const RECALL_TOOL_NAMES = new Set([
 	"mdbrain_recall_conversation",
@@ -708,7 +709,10 @@ export const toolList = [
 					description: "Page state filter (e.g. draft, published, superseded).",
 				},
 				privacyTier: { type: "string" },
-				recipe: { type: "string", enum: ["fast", "hybrid", "deep"] },
+				recipe: {
+					type: "string",
+					enum: ["fast", "hybrid", "deep", "text"],
+				},
 				maxResults: { type: "number" },
 				minScore: {
 					type: "number",
@@ -785,6 +789,95 @@ export const toolList = [
 						tags: { type: "array", items: { type: "string" } },
 					},
 					required: ["type"],
+				},
+				claims: {
+					type: "array",
+					description:
+						"Claims on the page, each with the evidence it cites. On an update they merge into the page's claims by id (same id replaces, new id is appended, an empty list clears them all).",
+					items: {
+						type: "object",
+						properties: {
+							id: {
+								type: "string",
+								description: "Caller-owned claim id, stable across updates.",
+							},
+							text: { type: "string" },
+							status: {
+								type: "string",
+								enum: ["active", "superseded", "contradicted", "disputed"],
+							},
+							confidence: { type: "number", minimum: 0, maximum: 1 },
+							evidence: {
+								type: "array",
+								items: {
+									type: "object",
+									properties: {
+										kind: {
+											type: "string",
+											enum: ["file", "url", "event", "api", "manual", "agent"],
+										},
+										sourceId: {
+											type: "string",
+											description:
+												"Reference to the raw source, entity or memory event.",
+										},
+										path: { type: "string" },
+										lines: { type: "string" },
+										weight: { type: "number", minimum: 0, maximum: 1 },
+										confidence: { type: "number", minimum: 0, maximum: 1 },
+										privacyTier: {
+											type: "string",
+											enum: [
+												"public",
+												"internal",
+												"confidential",
+												"restricted",
+											],
+										},
+										note: { type: "string" },
+									},
+									required: ["kind", "sourceId"],
+								},
+							},
+							writerAgent: {
+								type: "object",
+								properties: {
+									id: { type: "string" },
+									name: { type: "string" },
+									runId: { type: "string" },
+								},
+								required: ["id", "name"],
+							},
+							derivedFrom: { type: "array", items: { type: "string" } },
+							supersedesClaimId: { type: "string" },
+							sourceMemId: { type: "string" },
+						},
+						required: ["id", "text"],
+					},
+				},
+				relationships: {
+					type: "array",
+					description:
+						"Links to other pages. On an update this list replaces the page's relationships.",
+					items: {
+						type: "object",
+						properties: {
+							targetPageSlug: { type: "string" },
+							targetTitle: { type: "string" },
+							kind: {
+								type: "string",
+								description: "e.g. works_at, uses, depends_on, relates_to.",
+							},
+							weight: { type: "number", minimum: 0, maximum: 1 },
+							confidence: { type: "number", minimum: 0, maximum: 1 },
+							evidenceKind: { type: "string" },
+							privacyTier: {
+								type: "string",
+								enum: ["public", "internal", "confidential", "restricted"],
+							},
+						},
+						required: ["targetPageSlug", "targetTitle", "kind"],
+					},
 				},
 				scope: {
 					type: "string",
@@ -1484,7 +1577,8 @@ export async function handleToolCall(
 				recipe:
 					args.recipe === "fast" ||
 					args.recipe === "hybrid" ||
-					args.recipe === "deep"
+					args.recipe === "deep" ||
+					args.recipe === "text"
 						? args.recipe
 						: undefined,
 				maxResults:
@@ -1540,6 +1634,9 @@ export async function handleToolCall(
 					entityTypes?: string[]
 					privacyTier?: string
 				},
+				// Passed through as received: the HTTP route is the only validator.
+				claims: args.claims as WikiApplyInput["claims"],
+				relationships: args.relationships as WikiApplyInput["relationships"],
 				scope: typeof args.scope === "string" ? args.scope : "",
 				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
 				trustTier: typeof args.trustTier === "string" ? args.trustTier : "",

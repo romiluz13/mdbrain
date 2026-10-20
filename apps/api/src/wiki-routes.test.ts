@@ -296,6 +296,31 @@ describe("wiki routes", () => {
 			expect(wikiMocks.createWikiPage).not.toHaveBeenCalled()
 		})
 
+		it("rejects a missing body with a 400 that names the field", async () => {
+			const { body: _omitted, ...withoutBody } = VALID_BODY
+			void _omitted
+			const res = await createApp().request("/v1/wiki", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(withoutBody),
+			})
+			expect(res.status).toBe(400)
+			const json = await asJson(res)
+			expect(json.error?.code).toBe("VALIDATION_ERROR")
+			expect(json.error?.message).toBe("body is required")
+			expect(wikiMocks.createWikiPage).not.toHaveBeenCalled()
+		})
+
+		it("accepts an empty body string, which the page schema allows", async () => {
+			wikiMocks.createWikiPage.mockResolvedValue(SAMPLE_PAGE)
+			const res = await createApp().request("/v1/wiki", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ ...VALID_BODY, body: "" }),
+			})
+			expect(res.status).toBe(201)
+		})
+
 		it("rejects invalid kind", async () => {
 			const res = await createApp().request("/v1/wiki", {
 				method: "POST",
