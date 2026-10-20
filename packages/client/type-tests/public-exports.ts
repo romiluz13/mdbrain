@@ -6,6 +6,8 @@ import type {
 	MdbrainCitationResponse,
 	MdbrainWikiClaim,
 	MdbrainWikiClaimInput,
+	MdbrainWikiOverviewInput,
+	MdbrainWikiOverviewResponse,
 	MdbrainWikiPageCreateInput,
 	MdbrainWikiPageUpdateInput,
 	MdbrainWikiRelationshipInput,
@@ -89,3 +91,53 @@ const inputEvidence: MdbrainWikiClaimInput = {
 	evidence: [{ kind: "event", sourceId: "evt_1", marker: "[[event:evt_1]]" }],
 }
 void inputEvidence
+
+declare const overview: MdbrainWikiOverviewResponse
+const overviewClaimMarker: string | undefined = overview.page.claims[0]?.marker
+const backlinkClaimMarker: string | undefined =
+	overview.backlinks.items[0]?.context?.claim?.marker
+const backlinkText: string | undefined =
+	overview.backlinks.items[0]?.context?.text
+const neighborMarker: string | undefined =
+	overview.neighbors.items[0]?.claims[0]?.marker
+const neighborTruncated: boolean | undefined =
+	overview.neighbors.items[0]?.claimsTruncated
+const contradictionClaim: string | undefined =
+	overview.contradictions.items[0]?.claims[0]?.claim.marker
+const contradictionPage: string | undefined =
+	overview.contradictions.items[0]?.claims[0]?.pageSlug
+const revisionKind: string | undefined = overview.revisions.items[0]?.editKind
+const moreRevisions: boolean = overview.revisions.hasMore
+const claimsPerNeighbor: number = overview.limits.neighborClaims
+void [
+	overviewClaimMarker,
+	backlinkClaimMarker,
+	backlinkText,
+	neighborMarker,
+	neighborTruncated,
+	contradictionClaim,
+	contradictionPage,
+	revisionKind,
+	moreRevisions,
+	claimsPerNeighbor,
+]
+// @ts-expect-error The ungoverned stored backlink list is replaced by the governed backlinks section.
+void overview.page.backlinks
+// @ts-expect-error The stored contradiction list is replaced by the governed contradictions section.
+void overview.page.contradictions
+// @ts-expect-error No section carries a total: a count of what the caller may not see is a leak.
+void overview.backlinks.total
+
+// @ts-expect-error An overview is of one page in one scope: slug, scope and scopeRef are required.
+const overviewWithoutScope: MdbrainWikiOverviewInput = {
+	slug: "accounts/halvorsen",
+}
+void overviewWithoutScope
+const overviewBounded: MdbrainWikiOverviewInput = {
+	slug: "accounts/halvorsen",
+	scope: "workspace",
+	scopeRef: "ws-1",
+	maxBacklinks: 5,
+	maxNeighborClaims: 2,
+}
+void overviewBounded

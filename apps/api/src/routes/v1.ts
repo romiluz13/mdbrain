@@ -44,12 +44,14 @@ import {
 	listWikiPageRevisions,
 	listMemoryDeliveryIntents,
 	MemoryDeliveryPayloadTooLargeError,
+	getWikiEntityOverview,
 	getWikiPageRevision,
 	resolveTransclusions,
 	recordWikiMutationIntent,
 	WikiDuplicateSlugError,
 	WikiRevisionConflictError,
 	type WikiDbHandle,
+	type WikiOverviewLimitName,
 	type WikiPageEditor,
 	type WikiPageInput,
 	type GovernanceContext,
@@ -60,6 +62,7 @@ import {
 	resolveClaimMarker,
 	resolveEventMarker,
 	uncitableClaimError,
+	withOverviewMarkers,
 	withPageMarkers,
 	withRevisionMarkers,
 } from "../lib/citations.js"
@@ -110,10 +113,18 @@ export const WIKI_VALID_SCOPES = [
 	"global",
 ]
 // Slugs whose first path segment collides with a wiki sub-route registered
-// before the /wiki/* wildcard (lint, revisions) would be unreachable via GET
-// (the sub-route answers instead of the page). Create/patch reject them
+// before the /wiki/* wildcard (lint, revisions, overview) would be unreachable
+// via GET (the sub-route answers instead of the page). Create/patch reject them
 // instead of letting a page silently shadow itself (REV-07 N2).
-export const WIKI_RESERVED_SLUG_SEGMENTS = ["lint", "revisions"]
+export const WIKI_RESERVED_SLUG_SEGMENTS = ["lint", "revisions", "overview"]
+export const WIKI_OVERVIEW_LIMIT_PARAMS: Record<string, WikiOverviewLimitName> =
+	{
+		maxBacklinks: "backlinks",
+		maxNeighbors: "neighbors",
+		maxNeighborClaims: "neighborClaims",
+		maxRevisions: "revisions",
+		maxContradictions: "contradictions",
+	}
 type MemongoFailure = {
 	code: string
 	message: string
@@ -2477,6 +2488,63 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "WIKI_REVISIONS_FAILED", message)
+		}
+	})
+
+	// Entity overview: the page, its claims, open contradictions, backlinks with
+	// context, one-hop neighbors' top claims and recent revisions, in one read.
+	// Registered before the /wiki/* wildcard so it is not read as a page named
+	// "overview/<slug>"; the bare /wiki/overview names no page to summarize and
+	// falls through to the page route. Assembly and governance filtering live in
+	// the engine.
+	v1.get("/wiki/overview/*", async (c, next) => {
+		const slug = readWikiSlug(c).replace(/^overview\/?/, "")
+		if (!slug) return next()
+		const authorizedScope = getAuthorizedRequestScope(c)
+		const scope = authorizedScope.scope
+		const scopeRef = authorizedScope.scopeRef
+		if (!scope || !scopeRef)
+			return jsonError(
+				c,
+				400,
+				"VALIDATION_ERROR",
+				"scope and scopeRef query params are required",
+			)
+		const limits: Partial<Record<WikiOverviewLimitName, number>> = {}
+		for (const [param, name] of Object.entries(WIKI_OVERVIEW_LIMIT_PARAMS)) {
+			const raw = c.req.query(param)
+			if (raw === undefined) continue
+			const value = /^\d+$/.test(raw) ? Number(raw) : Number.NaN
+			if (!Number.isSafeInteger(value) || value < 1) {
+				return jsonError(
+					c,
+					400,
+					"VALIDATION_ERROR",
+					`${param} must be a positive integer`,
+				)
+			}
+			limits[name] = value
+		}
+		try {
+			const handle = await readWikiDbHandle(authorizedScope.agentId)
+			const overview = await getWikiEntityOverview(handle, {
+				slug,
+				scope,
+				scopeRef,
+				governance: buildWikiGovContext(c, scope, scopeRef),
+				limits,
+			})
+			if (!overview)
+				return jsonError(
+					c,
+					404,
+					"WIKI_NOT_FOUND",
+					`wiki page "${slug}" not found in scope ${scope}:${scopeRef}`,
+				)
+			return c.json(withOverviewMarkers(overview))
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			return jsonError(c, 500, "WIKI_OVERVIEW_FAILED", message)
 		}
 	})
 

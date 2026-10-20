@@ -86,6 +86,21 @@ export {
 } from "./wiki-revisions.js"
 
 export {
+	getWikiEntityOverview,
+	WIKI_OVERVIEW_LIMITS,
+	type WikiEntityOverview,
+	type WikiEntityOverviewParams,
+	type WikiOverviewBacklink,
+	type WikiOverviewClaim,
+	type WikiOverviewContradiction,
+	type WikiOverviewLimitName,
+	type WikiOverviewLimits,
+	type WikiOverviewNeighbor,
+	type WikiOverviewRevision,
+	type WikiOverviewSection,
+} from "./wiki-overview.js"
+
+export {
 	extractTransclusionTargets,
 	resolveTransclusions,
 } from "./wiki-transclusion.js"

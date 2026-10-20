@@ -995,6 +995,112 @@ describe("wiki MCP tools", () => {
 		})
 	})
 
+	it("wiki_overview is advertised with the page and request-owned scope required, and every bound optional", () => {
+		const tool = toolList.find(
+			(entry) => entry.name === "mdbrain_wiki_overview",
+		)
+		const schema = tool?.inputSchema as SchemaNode | undefined
+
+		expect(schema?.required).toEqual(["slug", "scope", "scopeRef"])
+		expect(Object.keys(schema?.properties ?? {}).sort()).toEqual([
+			"agentId",
+			"maxBacklinks",
+			"maxContradictions",
+			"maxNeighborClaims",
+			"maxNeighbors",
+			"maxRevisions",
+			"scope",
+			"scopeRef",
+			"slug",
+		])
+		expect(tool?.description).toContain("hasMore")
+		expect(tool?.description).toContain("backlinks")
+		expect(tool?.description).toContain("contradictions")
+	})
+
+	it("wiki_overview forwards the slug, the caller's scope and each bound, and returns the overview as JSON text", async () => {
+		const overview = {
+			page: { slug: "accounts/halvorsen" },
+			backlinks: { items: [], hasMore: false },
+			limits: { backlinks: 5 },
+		}
+		const wikiOverview = vi.fn().mockResolvedValue(overview)
+
+		const out = await handleToolCall(
+			"mdbrain_wiki_overview",
+			{
+				slug: "accounts/halvorsen",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				agentId: "main",
+				maxBacklinks: 5,
+				maxNeighbors: 6,
+				maxNeighborClaims: 2,
+				maxRevisions: 7,
+				maxContradictions: 8,
+			},
+			{ overview: wikiOverview } as any,
+		)
+
+		expect(wikiOverview).toHaveBeenCalledWith({
+			slug: "accounts/halvorsen",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: "main",
+			maxBacklinks: 5,
+			maxNeighbors: 6,
+			maxNeighborClaims: 2,
+			maxRevisions: 7,
+			maxContradictions: 8,
+		})
+		expect(parseTextPayload(out)).toEqual(overview)
+		expect("isError" in out ? out.isError : undefined).toBeUndefined()
+	})
+
+	it("wiki_overview leaves out a bound that was not a number", async () => {
+		const wikiOverview = vi.fn().mockResolvedValue({})
+
+		await handleToolCall(
+			"mdbrain_wiki_overview",
+			{
+				slug: "a",
+				scope: "workspace",
+				scopeRef: "ws-1",
+				maxBacklinks: "5",
+			},
+			{ overview: wikiOverview } as any,
+		)
+
+		expect(wikiOverview).toHaveBeenCalledTimes(1)
+		expect(wikiOverview.mock.calls[0]?.[0].maxBacklinks).toBeUndefined()
+	})
+
+	it("wiki_overview passes a missing or hidden page through as a coded error with no content", async () => {
+		const wikiOverview = vi.fn().mockRejectedValue(
+			new MdbrainClientError(
+				404,
+				JSON.stringify({
+					error: { code: "WIKI_NOT_FOUND", message: "wiki page not found" },
+				}),
+			),
+		)
+
+		const out = await handleToolCall(
+			"mdbrain_wiki_overview",
+			{ slug: "accounts/secret", scope: "workspace", scopeRef: "ws-1" },
+			{ overview: wikiOverview } as any,
+		)
+
+		expect("isError" in out ? out.isError : undefined).toBe(true)
+		expect(parseTextPayload(out)).toEqual({
+			error: {
+				code: "WIKI_NOT_FOUND",
+				message: "wiki page not found",
+				status: 404,
+			},
+		})
+	})
+
 	it("wiki_get returns the page JSON with the markers the API put on its claims", async () => {
 		const page = {
 			slug: "accounts/halvorsen",

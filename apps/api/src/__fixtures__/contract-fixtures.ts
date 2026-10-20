@@ -32,6 +32,7 @@ const contractFixtures = {
 		"/v1/wiki/okf-export",
 		"/v1/wiki/search",
 		"/v1/wiki/lint",
+		"/v1/wiki/overview/{slug}",
 		"/v1/cite",
 	],
 	removedTenantControlPaths: [

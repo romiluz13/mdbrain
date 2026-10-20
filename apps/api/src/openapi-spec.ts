@@ -2162,7 +2162,7 @@ const openApiDocument = {
 									slug: {
 										type: "string",
 										description:
-											"OKF concept ID; may contain slashes (e.g. tables/users). Must not start with a reserved segment (lint, revisions).",
+											"OKF concept ID; may contain slashes (e.g. tables/users). Must not start with a reserved segment (lint, revisions, overview): those first segments belong to GET /v1/wiki/lint, GET /v1/wiki/revisions and GET /v1/wiki/overview/{slug}. Create refuses them. A page stored earlier under an overview/ slug is not touched: PATCH and DELETE still reach it, and GET reaches it by percent-encoding the slash (/v1/wiki/overview%2Fname); the raw-slash GET /v1/wiki/overview/name is the overview of the page named name.",
 									},
 									summary: { type: "string" },
 									body: { type: "string" },
@@ -2424,6 +2424,110 @@ const openApiDocument = {
 				responses: {
 					"200": { description: "Wiki page revision" },
 					"404": { description: "Wiki page or revision not found" },
+				},
+			},
+		},
+		"/v1/wiki/overview/{slug}": {
+			get: {
+				summary:
+					"Get a wiki page with its claims, open contradictions, backlinks, neighbors and recent revisions in one response",
+				description:
+					"One governed read of an entity. The response carries `page` (with its claims and their markers; its stored `backlinks` and `contradictions` are replaced by the governed sections below, and its `relationships` and `transcludes` list only pages the caller may read), `contradictions` (unresolved only, each with the claims it names and the page that holds each), `backlinks` (pages that link here, with the link kinds and, where one exists, the citing claim or body line), `neighbors` (pages this page links to, with their top claims by confidence), `revisions` (recent revision summaries, newest first) and `limits` (the bounds that applied). Every section is `{ items, hasMore }`. Scope and governance come from the request: a neighbor, backlink, contradiction counterpart or revision the caller may not read is left out before its content, existence or any count is computed, so `hasMore` reflects only what the caller can see and no total is returned. A contradiction is omitted whole when any claim it names cannot be shown to the caller. A missing page and a page the caller may not read answer the same 404. Each bound has a default and a maximum; a value above the maximum is clamped and `limits` reports the value used, a non-integer or a value below 1 is a 400. Reserved first slug segments: lint, revisions, overview. A page cannot be created under them, because GET /v1/wiki/lint, GET /v1/wiki/revisions and this route answer first. A page stored earlier under an `overview/` slug is not touched: PATCH and DELETE still reach it, and GET reaches it by percent-encoding the slash (/v1/wiki/overview%2Fname). The bare path /v1/wiki/overview names no page to summarize and reads the page called overview.",
+				parameters: [
+					{
+						name: "slug",
+						in: "path",
+						required: true,
+						description:
+							"Slug of the page. It may contain slashes, raw (/v1/wiki/overview/accounts/halvorsen) or percent-encoded.",
+						schema: { type: "string" },
+					},
+					{
+						name: "scope",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{
+						name: "scopeRef",
+						in: "query",
+						required: true,
+						schema: { type: "string" },
+					},
+					{ name: "agentId", in: "query", schema: { type: "string" } },
+					{
+						name: "maxBacklinks",
+						in: "query",
+						description: "Backlinks returned.",
+						schema: {
+							type: "integer",
+							minimum: 1,
+							maximum: 100,
+							default: 20,
+						},
+					},
+					{
+						name: "maxNeighbors",
+						in: "query",
+						description: "Neighbors returned.",
+						schema: {
+							type: "integer",
+							minimum: 1,
+							maximum: 50,
+							default: 10,
+						},
+					},
+					{
+						name: "maxNeighborClaims",
+						in: "query",
+						description: "Top claims returned per neighbor.",
+						schema: {
+							type: "integer",
+							minimum: 1,
+							maximum: 10,
+							default: 3,
+						},
+					},
+					{
+						name: "maxRevisions",
+						in: "query",
+						description: "Recent revisions returned.",
+						schema: {
+							type: "integer",
+							minimum: 1,
+							maximum: 20,
+							default: 5,
+						},
+					},
+					{
+						name: "maxContradictions",
+						in: "query",
+						description: "Open contradictions returned.",
+						schema: {
+							type: "integer",
+							minimum: 1,
+							maximum: 100,
+							default: 20,
+						},
+					},
+				],
+				responses: {
+					"200": {
+						description:
+							"The overview: page, contradictions, backlinks, neighbors, revisions and the limits that applied",
+					},
+					"400": {
+						description:
+							"A missing scope or scopeRef, or a bound that is not a positive integer (VALIDATION_ERROR)",
+					},
+					"403": {
+						description: "The key has no grant for the requested scope",
+					},
+					"404": {
+						description:
+							"WIKI_NOT_FOUND: the page does not exist in the scope, or the caller may not read it",
+					},
+					"500": { description: "Wiki overview failed (WIKI_OVERVIEW_FAILED)" },
 				},
 			},
 		},

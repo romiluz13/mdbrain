@@ -24,6 +24,8 @@ import type {
 	MdbrainSearchResponse,
 	SearchConfig,
 	MdbrainWikiClaimInput,
+	MdbrainWikiOverviewInput,
+	MdbrainWikiOverviewResponse,
 	MdbrainWikiPageCreateInput,
 	MdbrainWikiPageListResponse,
 	MdbrainWikiPageUpdateInput,
@@ -1080,6 +1082,35 @@ export class MdbrainClient {
 		return apiGet<MdbrainWikiRevisionRecord>(
 			this._opts,
 			`/v1/wiki/revisions/${input.revision}?${qs}`,
+			requestOptions,
+		)
+	}
+
+	/** Reads one page with its claims, open contradictions, backlinks with
+	 *  context, one-hop neighbors' top claims and recent revisions, all filtered
+	 *  by the caller's governance. A missing page and a page the caller may not
+	 *  read reject with the same MdbrainClientError (WIKI_NOT_FOUND). */
+	async overview(
+		input: MdbrainWikiOverviewInput,
+		requestOptions?: MdbrainRequestOptions,
+	): Promise<MdbrainWikiOverviewResponse> {
+		const qs = new URLSearchParams({
+			scope: input.scope,
+			scopeRef: input.scopeRef,
+		})
+		if (input.agentId) qs.set("agentId", input.agentId)
+		for (const bound of [
+			"maxBacklinks",
+			"maxNeighbors",
+			"maxNeighborClaims",
+			"maxRevisions",
+			"maxContradictions",
+		] as const) {
+			if (input[bound] !== undefined) qs.set(bound, String(input[bound]))
+		}
+		return apiGet<MdbrainWikiOverviewResponse>(
+			this._opts,
+			`/v1/wiki/overview/${encodeURIComponent(input.slug)}?${qs}`,
 			requestOptions,
 		)
 	}

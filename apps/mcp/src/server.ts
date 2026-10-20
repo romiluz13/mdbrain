@@ -985,6 +985,59 @@ export const toolList = [
 		},
 	},
 	{
+		name: "mdbrain_wiki_overview",
+		description:
+			"Read everything known about one wiki page in a single call: the page with its claims, its unresolved contradictions (each with the claims it names and where they live), the pages that link to it (backlinks, with the link kind and the claim or line that cites it), the pages it links to (neighbors, with their top claims by confidence) and its recent revisions. Claims carry citation markers you can pass to mdbrain_cite. Everything is filtered by your access before it is shown: a page, backlink, contradiction counterpart or revision you may not read is absent, and the counts do not include it. Each section is {items, hasMore}: hasMore true means more readable items exist than the bound allowed (raise the max* bound). limits reports the bounds that applied. A page that does not exist and a page you may not read both return WIKI_NOT_FOUND. The slug is the page's own slug, including slashes; the first segments lint, revisions and overview are reserved and cannot be page slugs.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				slug: {
+					type: "string",
+					description: "Slug of the page, e.g. accounts/halvorsen.",
+				},
+				scope: { type: "string" },
+				scopeRef: { type: "string" },
+				agentId: { type: "string" },
+				maxBacklinks: {
+					type: "integer",
+					minimum: 1,
+					maximum: 100,
+					description:
+						"Backlinks returned. Default 20, maximum 100; a larger value is clamped and reported in limits.",
+				},
+				maxNeighbors: {
+					type: "integer",
+					minimum: 1,
+					maximum: 50,
+					description:
+						"Neighbors returned. Default 10, maximum 50; a larger value is clamped and reported in limits.",
+				},
+				maxNeighborClaims: {
+					type: "integer",
+					minimum: 1,
+					maximum: 10,
+					description:
+						"Top claims returned per neighbor. Default 3, maximum 10; a larger value is clamped and reported in limits.",
+				},
+				maxRevisions: {
+					type: "integer",
+					minimum: 1,
+					maximum: 20,
+					description:
+						"Recent revisions returned. Default 5, maximum 20; a larger value is clamped and reported in limits.",
+				},
+				maxContradictions: {
+					type: "integer",
+					minimum: 1,
+					maximum: 100,
+					description:
+						"Unresolved contradictions returned. Default 20, maximum 100; a larger value is clamped and reported in limits.",
+				},
+			},
+			required: ["slug", "scope", "scopeRef"],
+		},
+	},
+	{
 		name: "mdbrain_cite",
 		description:
 			"Resolve a citation marker to what it names. Wiki claims show markers like [[wiki:SLUG#CLAIM_ID@rREVISION]]: this returns the claim text and evidence as stored at exactly that revision, even after later edits. An event marker [[event:EVENT_ID]] is confirmed only in the context of a citing claim: pass that claim's wiki marker as citedBy. Scope comes from scope/scopeRef, never from the marker. A missing, hidden or unconfirmed citation returns a coded error (CITATION_NOT_FOUND, CITATION_UNRESOLVED) with no content; CITATION_RECALL_DEGRADED means retry.",
@@ -1713,6 +1766,22 @@ export async function handleToolCall(
 				kind: typeof args.kind === "string" ? args.kind : undefined,
 				limit: typeof args.limit === "number" ? args.limit : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+			})
+			return { content: [{ type: "text", text: JSON.stringify(out) }] }
+		}
+		if (name === "mdbrain_wiki_overview") {
+			const bound = (value: unknown) =>
+				typeof value === "number" ? value : undefined
+			const out = await mdbrain.overview({
+				slug: typeof args.slug === "string" ? args.slug : "",
+				scope: typeof args.scope === "string" ? args.scope : "",
+				scopeRef: typeof args.scopeRef === "string" ? args.scopeRef : "",
+				agentId: typeof args.agentId === "string" ? args.agentId : undefined,
+				maxBacklinks: bound(args.maxBacklinks),
+				maxNeighbors: bound(args.maxNeighbors),
+				maxNeighborClaims: bound(args.maxNeighborClaims),
+				maxRevisions: bound(args.maxRevisions),
+				maxContradictions: bound(args.maxContradictions),
 			})
 			return { content: [{ type: "text", text: JSON.stringify(out) }] }
 		}

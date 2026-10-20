@@ -7,6 +7,8 @@ import type { MemoryScope } from "@mdbrain/lib"
 import {
 	type GovernanceContext,
 	type WikiDbHandle,
+	type WikiEntityOverview,
+	type WikiOverviewClaim,
 	getWikiPageRevision,
 } from "@mdbrain/wiki-engine"
 
@@ -118,6 +120,61 @@ export function withPageMarkers<T>(page: T): T {
 		...page,
 		claims: markClaims(page.claims, page.slug, page.revision as number),
 	} as T
+}
+
+// The overview shows claims of several pages, each marked with the slug and
+// revision of the page it was read from (a neighbor's or a backlink source's
+// own current revision, not the requested page's).
+export function withOverviewMarkers(
+	overview: WikiEntityOverview,
+): WikiEntityOverview {
+	return {
+		...overview,
+		page: withPageMarkers(overview.page),
+		backlinks: {
+			...overview.backlinks,
+			items: overview.backlinks.items.map((item) =>
+				item.context?.claim
+					? {
+							...item,
+							context: {
+								...item.context,
+								claim: withClaimMarker(
+									item.context.claim,
+									item.slug,
+									item.revision,
+								) as WikiOverviewClaim,
+							},
+						}
+					: item,
+			),
+		},
+		neighbors: {
+			...overview.neighbors,
+			items: overview.neighbors.items.map((item) => ({
+				...item,
+				claims: markClaims(
+					item.claims,
+					item.slug,
+					item.revision,
+				) as WikiOverviewClaim[],
+			})),
+		},
+		contradictions: {
+			...overview.contradictions,
+			items: overview.contradictions.items.map((item) => ({
+				...item,
+				claims: item.claims.map((entry) => ({
+					...entry,
+					claim: withClaimMarker(
+						entry.claim,
+						entry.pageSlug,
+						entry.revision,
+					) as WikiOverviewClaim,
+				})),
+			})),
+		},
+	}
 }
 
 // A stored revision: its claims are marked with the revision they were stored at.

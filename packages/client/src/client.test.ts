@@ -1124,6 +1124,81 @@ describe("MdbrainClient public contract", () => {
 		})
 	})
 
+	it("overview reads the page's overview with the scope, agentId and every bound in the query", async () => {
+		const overview = { page: { slug: "notes/deploy windows" } }
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json(overview))
+		vi.stubGlobal("fetch", fetchMock)
+
+		const out = await new MdbrainClient().overview({
+			slug: "notes/deploy windows",
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: "main",
+			maxBacklinks: 5,
+			maxNeighbors: 6,
+			maxNeighborClaims: 2,
+			maxRevisions: 7,
+			maxContradictions: 8,
+		})
+
+		expect(out).toEqual(overview)
+		const [href, init] = fetchMock.mock.calls[0] ?? []
+		const url = new URL(String(href))
+		expect(url.pathname).toBe("/v1/wiki/overview/notes%2Fdeploy%20windows")
+		expect(Object.fromEntries(url.searchParams)).toEqual({
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: "main",
+			maxBacklinks: "5",
+			maxNeighbors: "6",
+			maxNeighborClaims: "2",
+			maxRevisions: "7",
+			maxContradictions: "8",
+		})
+		expect(init?.method ?? "GET").toBe("GET")
+	})
+
+	it("overview leaves the bounds and agentId out when they are not given", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json({ page: {} }))
+		vi.stubGlobal("fetch", fetchMock)
+
+		await new MdbrainClient().overview({
+			slug: "accounts/halvorsen",
+			scope: "workspace",
+			scopeRef: "ws-1",
+		})
+
+		const url = new URL(String(fetchMock.mock.calls[0]?.[0]))
+		expect([...url.searchParams.keys()].sort()).toEqual(["scope", "scopeRef"])
+	})
+
+	it("overview surfaces a missing or hidden page as a client error with the API's code", async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				Response.json(
+					{ error: { code: "WIKI_NOT_FOUND", message: "wiki page not found" } },
+					{ status: 404 },
+				),
+			)
+		vi.stubGlobal("fetch", fetchMock)
+
+		await expect(
+			new MdbrainClient().overview({
+				slug: "accounts/secret",
+				scope: "workspace",
+				scopeRef: "ws-1",
+			}),
+		).rejects.toMatchObject({
+			status: 404,
+			envelope: { code: "WIKI_NOT_FOUND" },
+		})
+	})
+
 	it("wikiGet accepts a runtime format of any JSON value for MCP-style callers", async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()

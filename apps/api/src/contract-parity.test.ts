@@ -8,10 +8,12 @@
 // rejects (looser-than-runtime is a bug), and the runtime validation sets
 // are the single source of truth (imported here, never duplicated).
 
+import { WIKI_OVERVIEW_LIMITS } from "@mdbrain/wiki-engine"
 import { describe, expect, it } from "vitest"
 import { createApp } from "./app.js"
 import { openApiSpec } from "./openapi-spec.js"
 import {
+	WIKI_OVERVIEW_LIMIT_PARAMS,
 	WIKI_RESERVED_SLUG_SEGMENTS,
 	WIKI_VALID_KINDS,
 	WIKI_VALID_SCOPES,
@@ -367,6 +369,49 @@ describe("wiki contract matrix (runtime ↔ spec ↔ MCP)", () => {
 		const tool = mcpTool("mdbrain_cite")
 		expect(tool.inputSchema.required).toEqual(["marker", "scope", "scopeRef"])
 		for (const name of ["marker", "citedBy", "scope", "scopeRef", "agentId"]) {
+			expect(tool.inputSchema.properties[name], name).toBeDefined()
+		}
+	})
+
+	it("overview: spec and MCP document the scope, every bound with the engine's default and maximum, and the reserved slugs", () => {
+		const op = specOperation("/v1/wiki/overview/{slug}", "get")
+		const params = op.parameters ?? []
+		const byName = (name: string) => params.find((p) => p.name === name)
+		expect(byName("slug")).toMatchObject({ in: "path", required: true })
+		for (const required of ["scope", "scopeRef"]) {
+			expect(byName(required), required).toMatchObject({
+				in: "query",
+				required: true,
+			})
+		}
+		expect(byName("agentId")).toMatchObject({ in: "query" })
+		const tool = mcpTool("mdbrain_wiki_overview")
+		expect(tool.inputSchema.required).toEqual(["slug", "scope", "scopeRef"])
+		for (const [param, limit] of Object.entries(WIKI_OVERVIEW_LIMIT_PARAMS)) {
+			const bound = WIKI_OVERVIEW_LIMITS[limit]
+			expect(byName(param), param).toMatchObject({
+				in: "query",
+				schema: {
+					type: "integer",
+					minimum: 1,
+					maximum: bound.max,
+					default: bound.default,
+				},
+			})
+			expect(tool.inputSchema.properties[param], param).toMatchObject({
+				type: "integer",
+				minimum: 1,
+				maximum: bound.max,
+			})
+		}
+		for (const status of ["200", "400", "403", "404", "500"]) {
+			expect(op.responses?.[status], status).toBeDefined()
+		}
+		const description = String(op.description)
+		for (const segment of WIKI_RESERVED_SLUG_SEGMENTS) {
+			expect(description, segment).toContain(segment)
+		}
+		for (const name of ["slug", "scope", "scopeRef", "agentId"]) {
 			expect(tool.inputSchema.properties[name], name).toBeDefined()
 		}
 	})

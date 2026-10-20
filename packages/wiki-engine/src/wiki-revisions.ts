@@ -181,7 +181,7 @@ export async function getWikiPageRevision(
 	return record
 }
 
-function toRevisionSummary(
+export function toRevisionSummary(
 	doc: Record<string, unknown>,
 ): Omit<WikiPageRevisionRecord, "snapshot"> {
 	return {

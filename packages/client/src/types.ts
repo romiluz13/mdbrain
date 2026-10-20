@@ -1106,3 +1106,89 @@ export type MdbrainCitationEventResponse = {
 export type MdbrainCitationResponse =
 	| MdbrainCitationClaimResponse
 	| MdbrainCitationEventResponse
+
+/** Input for GET /v1/wiki/overview/:slug. Each bound has a default and a
+ *  maximum (see the OpenAPI document); a value above the maximum is clamped
+ *  and `limits` in the response reports what applied. */
+export type MdbrainWikiOverviewInput = {
+	slug: string
+	scope: string
+	scopeRef: string
+	agentId?: string
+	maxBacklinks?: number
+	maxNeighbors?: number
+	maxNeighborClaims?: number
+	maxRevisions?: number
+	maxContradictions?: number
+}
+
+/** One section of an overview. `hasMore` is true when more items exist that
+ *  the caller may read; it never reflects items the caller may not see, and no
+ *  section carries a total. */
+export type MdbrainWikiOverviewSection<T> = {
+	items: T[]
+	hasMore: boolean
+}
+
+/** A page that links to the overview's page. `context` names the claim on the
+ *  linking page that cites the target and the body line that links it, where
+ *  either exists. */
+export type MdbrainWikiOverviewBacklink = {
+	slug: string
+	title: string
+	revision: number
+	kinds: string[]
+	context?: { claim?: MdbrainWikiClaim; text?: string }
+}
+
+/** A page the overview's page links to, with its top claims by confidence. */
+export type MdbrainWikiOverviewNeighbor = {
+	slug: string
+	title: string
+	summary: string
+	revision: number
+	linkKinds: string[]
+	claimCount: number
+	claimsTruncated: boolean
+	claims: MdbrainWikiClaim[]
+}
+
+/** An unresolved contradiction with every claim it names, each with the page
+ *  and revision it was read from. A contradiction with a claim the caller may
+ *  not read is not listed at all. */
+export type MdbrainWikiOverviewContradiction = {
+	id: string
+	detectedAt: string
+	resolution: string
+	note?: string
+	claims: Array<{
+		pageSlug: string
+		pageTitle: string
+		revision: number
+		claim: MdbrainWikiClaim
+	}>
+}
+
+/** The page as served in an overview: the stored `backlinks` and
+ *  `contradictions` are replaced by the governed sections, and `relationships`
+ *  and `transcludes` list only pages the caller may read. */
+export type MdbrainWikiOverviewPage = Omit<
+	MdbrainWikiPageView,
+	"backlinks" | "contradictions"
+>
+
+/** Response of GET /v1/wiki/overview/:slug. */
+export type MdbrainWikiOverviewResponse = {
+	page: MdbrainWikiOverviewPage
+	contradictions: MdbrainWikiOverviewSection<MdbrainWikiOverviewContradiction>
+	backlinks: MdbrainWikiOverviewSection<MdbrainWikiOverviewBacklink>
+	neighbors: MdbrainWikiOverviewSection<MdbrainWikiOverviewNeighbor>
+	revisions: MdbrainWikiOverviewSection<MdbrainWikiRevisionSummary>
+	limits: {
+		backlinks: number
+		neighbors: number
+		neighborClaims: number
+		revisions: number
+		contradictions: number
+	}
+}
