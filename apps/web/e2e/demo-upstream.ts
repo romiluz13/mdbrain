@@ -20,6 +20,18 @@ export const FIXTURE_FIRST_INGESTION = "2026-10-20T09:00:00.000Z"
 const FIXTURE_UNTIL = "2026-10-20T10:00:00.000Z"
 const DETECTED_AT = "2026-10-20T09:43:00.000Z"
 const PAGE_STEP_MS = 20_000
+const REVISION_STEP_MS = 5 * 60_000
+
+/** What each revision after the first did to the page's claims: how many it
+ * added, changed and removed. The corpus has one revision per page; these later
+ * ones give the value checks tiers, states and counts that differ. */
+type RevisionPlan = Array<[added: number, changed: number, removed: number]>
+
+const tierOf = (type: string): "restricted" | "standard" | "admin" =>
+	type === "policy" ? "admin" : type === "incidents" ? "restricted" : "standard"
+
+const stateOf = (position: number): "active" | "superseded" | "draft" =>
+	position % 13 === 6 ? "superseded" : position % 17 === 8 ? "draft" : "active"
 
 export function corpusDir(): string {
 	for (const root of [join(process.cwd(), ".."), join(process.cwd(), "apps")]) {
@@ -110,11 +122,24 @@ function build(padTo = 0) {
 	}
 	const contradicted = new Set([targetClaimId, incomingClaimId])
 
+	const plans = new Map<string, RevisionPlan>()
 	const pages = worldPages.map((page, position) => {
-		const revision = page.slug === targetPageSlug ? 2 : 1
-		const createdAt = new Date(
-			Date.parse(FIXTURE_FIRST_INGESTION) + position * PAGE_STEP_MS,
-		).toISOString()
+		const plan: RevisionPlan =
+			page.slug === targetPageSlug
+				? [[0, 1, 0]]
+				: position % 11 === 3
+					? [[1, 1, 1]]
+					: position % 11 === 7
+						? [
+								[1, 0, 0],
+								[0, 1, 1],
+							]
+						: []
+		plans.set(page.slug, plan)
+		const revision = plan.length + 1
+		const createdMs =
+			Date.parse(FIXTURE_FIRST_INGESTION) + position * PAGE_STEP_MS
+		const createdAt = new Date(createdMs).toISOString()
 		return {
 			_id: `page-${position}`,
 			kind: page.kind,
@@ -154,16 +179,18 @@ function build(padTo = 0) {
 			personCard: null,
 			scope: FIXTURE_ENV.scope,
 			scopeRef: FIXTURE_ENV.scopeRef,
-			trustTier: "standard",
+			trustTier: tierOf(page.type),
 			permissions: {},
-			state: "active",
+			state: stateOf(position),
 			revision,
 			validFrom: null,
 			freshness: "fresh",
 			backlinks: [],
 			transcludes: [],
 			createdAt,
-			updatedAt: createdAt,
+			updatedAt: new Date(
+				createdMs + plan.length * REVISION_STEP_MS,
+			).toISOString(),
 		}
 	})
 	const bySlug = new Map(pages.map((page) => [page.slug, page]))
@@ -191,6 +218,7 @@ function build(padTo = 0) {
 	return {
 		pages,
 		bySlug,
+		plans,
 		record,
 		bodies,
 		dates,
@@ -313,23 +341,63 @@ export function createDemoUpstream(options: { padTo?: number } = {}) {
 		if (path === "/v1/wiki/changes") {
 			const since = url.searchParams.get("since") ?? FIXTURE_FIRST_INGESTION
 			const changes = pages
-				.filter((page) => Date.parse(page.createdAt) >= Date.parse(since))
-				.map((page) => ({
-					pageSlug: page.slug,
-					title: page.title,
-					revision: 1,
-					editKind: "create",
-					createdAt: page.createdAt,
-					baseline: "none",
-					baselineRevision: null,
-					claims: {
-						added: page.claims,
-						changed: [],
-						removed: [],
-						counts: { added: page.claims.length, changed: 0, removed: 0 },
-						truncated: false,
-					},
-				}))
+				.flatMap((page) => {
+					const plan = data.plans.get(page.slug) ?? []
+					const head = { pageSlug: page.slug, title: page.title }
+					const created = {
+						...head,
+						revision: 1,
+						editKind: "create",
+						createdAt: page.createdAt,
+						baseline: "none",
+						baselineRevision: null,
+						claims: {
+							added: page.claims,
+							changed: [],
+							removed: [],
+							counts: { added: page.claims.length, changed: 0, removed: 0 },
+							truncated: false,
+						},
+					}
+					const updates = plan.map(([add, change, remove], at) => {
+						const added = page.claims.slice(0, add)
+						const changed = page.claims
+							.slice(add, add + change)
+							.map((claim) => ({
+								id: claim.id,
+								fields: ["confidence"],
+								before: claim,
+								after: { ...claim, confidence: claim.confidence * 0.9 },
+							}))
+						const removed = page.claims.slice(
+							add + change,
+							add + change + remove,
+						)
+						return {
+							...head,
+							revision: at + 2,
+							editKind: "update",
+							createdAt: new Date(
+								Date.parse(page.createdAt) + (at + 1) * REVISION_STEP_MS,
+							).toISOString(),
+							baseline: "previous",
+							baselineRevision: at + 1,
+							claims: {
+								added,
+								changed,
+								removed,
+								counts: {
+									added: added.length,
+									changed: changed.length,
+									removed: removed.length,
+								},
+								truncated: false,
+							},
+						}
+					})
+					return [created, ...updates]
+				})
+				.filter((change) => Date.parse(change.createdAt) >= Date.parse(since))
 			return reply({
 				window: { since, until: FIXTURE_UNTIL, settled: true },
 				limits: { limit: 100, maxClaims: 50 },

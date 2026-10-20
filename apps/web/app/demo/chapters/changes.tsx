@@ -1,5 +1,6 @@
 "use client"
 
+import type { MdbrainWikiChange, MdbrainWikiClaim } from "@mdbrain/client"
 import { useMemo } from "react"
 import { formatUtc, summarizeChanges } from "../../../lib/demo-data/views.js"
 import { useDemo } from "../demo-context.js"
@@ -10,6 +11,24 @@ import { StatTile } from "../parts/stat-tile.js"
 import { TimeLine } from "../parts/time-line.js"
 
 const SHOWN = 12
+
+/** The first claim a revision moved, with how it moved: an added claim, the
+ * new side of a changed one, or a removed one. */
+function firstMovement(
+	change: MdbrainWikiChange,
+): { verb: string; claim: MdbrainWikiClaim } | undefined {
+	const claims = change.claims
+	if (claims?.added[0]) {
+		return { verb: "Added", claim: claims.added[0] }
+	}
+	if (claims?.changed[0]) {
+		return { verb: "Changed", claim: claims.changed[0].after }
+	}
+	if (claims?.removed[0]) {
+		return { verb: "Removed", claim: claims.removed[0] }
+	}
+	return undefined
+}
 
 export function ChangesChapter() {
 	const { data, cite, reload } = useDemo()
@@ -74,7 +93,7 @@ export function ChangesChapter() {
 										change.title ??
 										map?.pages.find((p) => p.slug === change.pageSlug)?.title ??
 										change.pageSlug
-									const added = change.claims?.added[0]
+									const moved = firstMovement(change)
 									const counts = change.claims?.counts
 									return (
 										<li
@@ -103,17 +122,18 @@ export function ChangesChapter() {
 												iso={undefined}
 												missingNote="missing on a revision; its sources carry their own"
 											/>
-											{added ? (
+											{moved ? (
 												<>
-													<p className={styles.record}>{added.text}</p>
+													<p className={styles.claimMeta}>{moved.verb}</p>
+													<p className={styles.record}>{moved.claim.text}</p>
 													<button
 														type="button"
 														className={styles.linkButton}
-														aria-label={`Open citation for: ${added.text.slice(0, 48)}`}
+														aria-label={`Open citation for: ${moved.claim.text.slice(0, 48)}`}
 														onClick={(event) =>
 															cite(
 																{
-																	claim: added,
+																	claim: moved.claim,
 																	pageSlug: change.pageSlug,
 																	pageTitle: title,
 																	revision: change.revision,

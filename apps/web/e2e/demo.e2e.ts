@@ -159,8 +159,8 @@ async function journey(
 		act,
 		page
 			.getByTestId("change-row")
-			.first()
-			.getByRole("button", { name: /^Open citation for:/ }),
+			.getByRole("button", { name: /^Open citation for:/ })
+			.first(),
 		how,
 	)
 

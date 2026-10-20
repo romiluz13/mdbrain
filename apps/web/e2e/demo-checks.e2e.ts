@@ -256,6 +256,10 @@ test.describe("values on screen equal the proxy's responses", () => {
 		const pages = listPages(proxy)
 		await goto(page, 5)
 		await expect(page.getByTestId("review-queue-boundary")).toBeVisible()
+		if (!LIVE) {
+			expect(new Set(pages.map((p) => p.trustTier)).size).toBeGreaterThan(1)
+			expect(new Set(pages.map((p) => p.state)).size).toBeGreaterThan(1)
+		}
 		for (const tier of new Set(pages.map((p) => p.trustTier))) {
 			await expect(page.locator(`[data-bar="${tier}"]`)).toContainText(
 				String(pages.filter((p) => p.trustTier === tier).length),
@@ -270,12 +274,55 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await expect(stat(page, "revisions")).not.toHaveText("—")
 		await proxy.flush()
 		const changes = bodyOf<{
-			changes: Array<{ claims: { counts: { added: number } } | null }>
+			changes: Array<{
+				pageSlug: string
+				revision: number
+				createdAt: string
+				claims: {
+					added: unknown[]
+					changed: unknown[]
+					removed: unknown[]
+					counts: { added: number; changed: number; removed: number }
+				} | null
+			}>
 		}>(proxy.latest("wiki/changes"), "changes").changes
+		const sum = (pick: (c: (typeof changes)[number]) => number) =>
+			String(changes.reduce((n, c) => n + pick(c), 0))
 		await expect(stat(page, "revisions")).toHaveText(String(changes.length))
-		await expect(stat(page, "claims-added")).toHaveText(
-			String(changes.reduce((n, c) => n + (c.claims?.counts.added ?? 0), 0)),
+		await expect(stat(page, "pages-touched")).toHaveText(
+			String(new Set(changes.map((c) => c.pageSlug)).size),
 		)
+		await expect(stat(page, "claims-added")).toHaveText(
+			sum((c) => c.claims?.counts.added ?? 0),
+		)
+		await expect(stat(page, "claims-moved")).toHaveText(
+			sum(
+				(c) =>
+					(c.claims?.counts.changed ?? 0) + (c.claims?.counts.removed ?? 0),
+			),
+		)
+		const shown = [...changes]
+			.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+			.slice(0, 12)
+		const rows = page.getByTestId("change-row")
+		await expect(rows).toHaveCount(shown.length)
+		for (const [position, change] of shown.entries()) {
+			const verb = change.claims?.added.length
+				? "Added"
+				: change.claims?.changed.length
+					? "Changed"
+					: change.claims?.removed.length
+						? "Removed"
+						: null
+			await expect(rows.nth(position)).toContainText(
+				`revision ${change.revision}`,
+			)
+			if (verb) {
+				await expect(
+					rows.nth(position).getByText(verb, { exact: true }),
+				).toBeVisible()
+			}
+		}
 	})
 
 	test("under the hood shows the status the proxy answered", async ({
@@ -482,6 +529,42 @@ test.describe("states", () => {
 			"SEARCH_UNAVAILABLE",
 		)
 	})
+})
+
+test("the arrow keys step the chapters from the pager, and walk the rail without selecting", async ({
+	page,
+}) => {
+	await installDemoProxy(page)
+	await openDemo(page)
+	await mapReady(page)
+	const heading = (index: number) =>
+		page.getByRole("heading", { level: 1, name: chapterTitle(index) })
+	const next = page.getByRole("button", { name: /^Ask →/ })
+	await next.focus()
+	await page.keyboard.press("ArrowRight")
+	await expect(heading(1)).toBeFocused()
+	await page.getByRole("button", { name: /^Sources arrive →/ }).focus()
+	await page.keyboard.press("ArrowLeft")
+	await expect(heading(0)).toBeFocused()
+
+	const rail = page.getByRole("navigation", { name: "Chapters" })
+	await rail.getByRole("button", { name: chapterTitle(0), exact: true }).focus()
+	await page.keyboard.press("ArrowDown")
+	await expect(
+		rail.getByRole("button", { name: chapterTitle(1), exact: true }),
+	).toBeFocused()
+	await expect(heading(0)).toBeVisible()
+	await page.keyboard.press("ArrowUp")
+	await expect(
+		rail.getByRole("button", { name: chapterTitle(0), exact: true }),
+	).toBeFocused()
+	await page.keyboard.press("End")
+	await expect(
+		rail.getByRole("button", {
+			name: chapterTitle(CHAPTERS.length - 1),
+			exact: true,
+		}),
+	).toBeFocused()
 })
 
 test.describe("reduced motion", () => {

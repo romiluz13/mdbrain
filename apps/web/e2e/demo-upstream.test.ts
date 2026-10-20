@@ -15,6 +15,7 @@ import {
 	loadWikiSearch,
 } from "../lib/demo-data/loaders-chapters.js"
 import { handleDemoRead } from "../lib/demo-data/proxy.js"
+import { governanceMix, summarizeChanges } from "../lib/demo-data/views.js"
 import { corpusDir, createDemoUpstream, FIXTURE_ENV } from "./demo-upstream.js"
 
 const browserUpstream: DemoDataUpstream = {
@@ -119,8 +120,41 @@ describe("demo upstream fixture", () => {
 		)
 		expect(result.kind).toBe("ready")
 		if (result.kind !== "ready") return
-		expect(result.data.changes).toHaveLength(pages)
 		expect(result.data.complete).toBe(true)
+	})
+
+	it("varies tiers, states and revisions, so a value check cannot pass by accident", async () => {
+		throughProxy()
+		const map = await loadWikiMap(browserUpstream)
+		const changes = await loadWikiChanges(
+			browserUpstream,
+			"2026-10-20T08:59:59.000Z",
+		)
+		if (map.kind !== "ready" || changes.kind !== "ready") {
+			throw new Error("the fixture did not read")
+		}
+		const mix = governanceMix(map.data)
+		expect(mix.tiers.length).toBeGreaterThan(1)
+		expect(mix.states.length).toBeGreaterThan(1)
+		const revised = map.data.pages.filter((stored) => stored.revision > 1)
+		expect(revised.length).toBeGreaterThan(2)
+		const later = revised.reduce((n, stored) => n + stored.revision - 1, 0)
+		expect(changes.data.changes).toHaveLength(pages + later)
+		for (const stored of revised) {
+			const own = changes.data.changes.filter(
+				(change) => change.pageSlug === stored.slug,
+			)
+			expect(own.map((change) => change.revision).sort()).toEqual(
+				Array.from({ length: stored.revision }, (_, at) => at + 1),
+			)
+			expect(
+				own.find((change) => change.revision === stored.revision)?.createdAt,
+			).toBe(stored.updatedAt)
+		}
+		const totals = summarizeChanges(changes.data)
+		expect(totals.added).toBeGreaterThan(0)
+		expect(totals.changed).toBeGreaterThan(0)
+		expect(totals.removed).toBeGreaterThan(0)
 	})
 
 	it("opens any claim's sources through cite", async () => {

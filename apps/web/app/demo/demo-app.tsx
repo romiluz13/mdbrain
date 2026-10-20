@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import {
+	type KeyboardEvent,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -123,6 +124,44 @@ export function DemoApp() {
 		}
 	}, [])
 
+	// Arrow keys step the chapters from the pager, and walk the rail's buttons
+	// without selecting one (Enter selects), so a keyboard visitor can move
+	// through the story without tabbing past every control.
+	const stepFromPager = (event: KeyboardEvent<HTMLElement>) => {
+		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+			return
+		}
+		const step =
+			event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0
+		if (step !== 0 && CHAPTERS[index + step]) {
+			event.preventDefault()
+			goToIndex(index + step)
+		}
+	}
+	const walkRail = (event: KeyboardEvent<HTMLElement>) => {
+		const buttons = [
+			...(navRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+		]
+		const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+		if (at === -1 || event.altKey || event.ctrlKey || event.metaKey) {
+			return
+		}
+		const target =
+			event.key === "ArrowDown" || event.key === "ArrowRight"
+				? buttons[at + 1]
+				: event.key === "ArrowUp" || event.key === "ArrowLeft"
+					? buttons[at - 1]
+					: event.key === "Home"
+						? buttons[0]
+						: event.key === "End"
+							? buttons[buttons.length - 1]
+							: undefined
+		if (target) {
+			event.preventDefault()
+			target.focus()
+		}
+	}
+
 	const value = useMemo<DemoContextValue>(
 		() => ({
 			upstream: DEMO_UPSTREAM,
@@ -169,7 +208,12 @@ export function DemoApp() {
 						</Link>
 						<span className={styles.brandSub}>Control room</span>
 					</div>
-					<nav ref={navRef} aria-label="Chapters" className={styles.chapterNav}>
+					<nav
+						ref={navRef}
+						aria-label="Chapters"
+						className={styles.chapterNav}
+						onKeyDown={walkRail}
+					>
 						<ol>
 							{CHAPTERS.map((entry, position) => (
 								<li key={entry.id} data-chapter={position}>
@@ -219,6 +263,7 @@ export function DemoApp() {
 								className={styles.button}
 								data-variant="quiet"
 								onClick={() => goToIndex(index - 1)}
+								onKeyDown={stepFromPager}
 							>
 								← {previous.title}
 							</button>
@@ -230,6 +275,7 @@ export function DemoApp() {
 								type="button"
 								className={styles.button}
 								onClick={() => goToIndex(index + 1)}
+								onKeyDown={stepFromPager}
 							>
 								{next.title} →
 							</button>
