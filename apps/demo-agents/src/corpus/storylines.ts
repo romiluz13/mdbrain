@@ -175,7 +175,7 @@ export function storylineSources(ctx: StorylineContext): SourceSpec[] {
 			accountId: driftA.id,
 			productIds: ["predict"],
 			facts: ["NS-4955", "multi-stop routes"],
-			brief: `A planner at ${driftA.name} reports Predict ETA running early on multi-stop routes; customers are waiting at docks. Emeka links it to NS-4871.`,
+			brief: `A planner at ${driftA.name} reports Predict ETA running late on multi-stop routes; receiving crews are scheduled against times that are not real. Emeka links it to NS-4871.`,
 			length: "medium",
 		}),
 		s({
