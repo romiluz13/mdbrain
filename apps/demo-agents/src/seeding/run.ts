@@ -27,6 +27,7 @@ import { createRunManifests, type RunManifestDoc } from "./manifest.js"
 import { createPacer } from "./pacing.js"
 import { buildLoadPlan } from "./plan.js"
 import { createRunSlotPool, type SlotDoc } from "./pool.js"
+import { isTerminalSeedFailure } from "./retries.js"
 import { seedSlot, type SeedSlotSummary } from "./seed.js"
 import { createControlStores } from "./stores.js"
 
@@ -111,6 +112,19 @@ export type SeedRunResult = {
 	resumed: boolean
 }
 
+/** Marks the run failed in the pool and the manifest when no resume could
+ * get past the error; anything uncertain stays seeding for a resume. */
+export async function recordTerminalFailure(
+	control: Pick<ControlContext, "pool" | "manifests">,
+	runId: string,
+	error: unknown,
+): Promise<void> {
+	if (!isTerminalSeedFailure(error)) return
+	const reason = error instanceof Error ? error.message : String(error)
+	await control.manifests.markFailed(runId, reason)
+	await control.pool.markFailed(runId, reason)
+}
+
 /** Claims a slot for the run and seeds it through the API. Re-running with
  * the same --run-id resumes the same slot without duplicates. */
 export async function seedRun(input: {
@@ -137,32 +151,38 @@ export async function seedRun(input: {
 	})
 	const client = slotClient(token)
 	const startedAt = Date.now()
-	const summary = await seedSlot(plan, {
-		client,
-		ledger: input.control.manifests,
-		runId: input.runId,
-		agentId: slot.agentId,
-		scopeRef: slot.scopeRef,
-		manifestInit: {
-			slotIndex: slot.index,
-			corpus: {
-				sha256: corpusDigest({
-					sources: world.sources,
-					records,
-					pages: world.pages,
-					contradiction: world.contradiction,
-				}),
-				records: records.size,
-				eventsPlanned: plan.counts.eventsPlanned,
-				pagesPlanned: plan.counts.pagesPlanned,
-				replaySourceIds: plan.heldBackSourceIds,
+	let summary: SeedSlotSummary
+	try {
+		summary = await seedSlot(plan, {
+			client,
+			ledger: input.control.manifests,
+			runId: input.runId,
+			agentId: slot.agentId,
+			scopeRef: slot.scopeRef,
+			manifestInit: {
+				slotIndex: slot.index,
+				corpus: {
+					sha256: corpusDigest({
+						sources: world.sources,
+						records,
+						pages: world.pages,
+						contradiction: world.contradiction,
+					}),
+					records: records.size,
+					eventsPlanned: plan.counts.eventsPlanned,
+					pagesPlanned: plan.counts.pagesPlanned,
+					replaySourceIds: plan.heldBackSourceIds,
+				},
+				limitSources: input.limitSources,
 			},
-			limitSources: input.limitSources,
-		},
-		pacer: createPacer({ startsPerMinute: input.rate ?? 90 }),
-		requestTimeoutMs: REQUEST_DEADLINE_MS,
-		concurrency: input.concurrency ?? 6,
-	})
+			pacer: createPacer({ startsPerMinute: input.rate ?? 90 }),
+			requestTimeoutMs: REQUEST_DEADLINE_MS,
+			concurrency: input.concurrency ?? 6,
+		})
+	} catch (error) {
+		await recordTerminalFailure(input.control, input.runId, error)
+		throw error
+	}
 	const elapsedMs = Date.now() - startedAt
 	await input.control.manifests.markReady(input.runId)
 	const ready = await input.control.pool.markReady(input.runId)

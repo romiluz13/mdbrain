@@ -8,7 +8,9 @@ export type RetryOptions = {
 	maxRetries?: number
 	/** Default 1000ms backoff when the envelope carries no retryAfterMs. */
 	retryDelayMs?: number
-	/** Default 180000ms total patience for one in-flight memory delivery. */
+	/** Default 180000ms of backoff sleep for one in-flight memory delivery.
+	 *  Request time and pacer waits come on top, so it is not a wall-clock
+	 *  bound. */
 	deliveryBudgetMs?: number
 }
 
@@ -46,6 +48,21 @@ export function isTerminalDeliveryFailure(error: unknown): boolean {
 	const message = error.envelope.message
 	return TERMINAL_DELIVERY_STATES.some((state) =>
 		message.endsWith(`is ${state}`),
+	)
+}
+
+/** Refusals that repeat identically on every retry. 409 is left out: a
+ *  resumed seed can meet DUPLICATE_SLUG or REVISION_CONFLICT on writes its
+ *  own earlier attempt made. */
+const TERMINAL_REFUSAL_STATUSES = new Set([400, 401, 403])
+
+/** A failure no resume can get past: the run is marked failed instead of
+ *  being left seeding for a retry. */
+export function isTerminalSeedFailure(error: unknown): boolean {
+	return (
+		isTerminalDeliveryFailure(error) ||
+		(error instanceof MdbrainClientError &&
+			TERMINAL_REFUSAL_STATUSES.has(error.status))
 	)
 }
 

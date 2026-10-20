@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { MdbrainClientError } from "@mdbrain/client"
-import { withRetries } from "./retries.js"
+import { isTerminalSeedFailure, withRetries } from "./retries.js"
 
 function apiError(
 	status: number,
@@ -167,5 +167,38 @@ describe("withRetries keeps the existing policies", () => {
 			),
 		).rejects.toThrow("IDEMPOTENCY_CONFLICT")
 		expect(log).toEqual([])
+	})
+})
+
+describe("isTerminalSeedFailure", () => {
+	it.each([
+		[
+			"a dead-lettered delivery",
+			deliveryPending("Memory delivery is dead-letter"),
+		],
+		["a conflicted delivery", deliveryPending("Memory delivery is conflict")],
+		["a validation refusal", apiError(400, "VALIDATION_ERROR", "bad page")],
+		["a rejected key", apiError(401, "UNAUTHORIZED", "no key")],
+		["a forbidden scope", apiError(403, "FORBIDDEN", "scope not granted")],
+	])("treats %s as terminal", (_name, error) => {
+		expect(isTerminalSeedFailure(error)).toBe(true)
+	})
+
+	it.each([
+		["an in-flight delivery", deliveryPending()],
+		["a lost delivery lease", apiError(409, "DELIVERY_LEASE_LOST", "lease")],
+		[
+			"a slug conflict seen on resume",
+			apiError(409, "DUPLICATE_SLUG", "exists"),
+		],
+		["a rate limit", apiError(429, "RATE_LIMITED", "slow down")],
+		["a server error", apiError(500, "INTERNAL", "boom")],
+		[
+			"a deadline",
+			new MdbrainClientError(0, "", "deadline", "DEADLINE_EXCEEDED"),
+		],
+		["a network failure", new TypeError("fetch failed")],
+	])("leaves %s resumable", (_name, error) => {
+		expect(isTerminalSeedFailure(error)).toBe(false)
 	})
 })
