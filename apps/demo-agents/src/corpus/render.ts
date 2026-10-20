@@ -81,6 +81,7 @@ const system = systemPrompt(world)
 const totals = { calls: 0, input: 0, cacheRead: 0, output: 0, repaired: 0 }
 const failures: string[] = []
 let stopped: string | undefined
+const lastFinish = new Map<string, string>()
 
 function problems(spec: SourceSpec, text: string): string[] {
 	const lower = text.toLowerCase()
@@ -110,6 +111,9 @@ async function call(
 		model,
 		maxOutputTokens: OUTPUT_TOKENS[spec.length],
 		maxRetries: 1,
+		// Haiku 5.5 thinks adaptively by default and its reasoning counts
+		// against maxOutputTokens; run 1 got empty text on short records.
+		providerOptions: { anthropic: { thinking: { type: "disabled" } } },
 		messages: [
 			{
 				role: "system",
@@ -125,14 +129,20 @@ async function call(
 	totals.input += result.usage.inputTokens ?? 0
 	totals.cacheRead += result.usage.cachedInputTokens ?? 0
 	totals.output += result.usage.outputTokens ?? 0
+	lastFinish.set(
+		spec.id,
+		`${result.finishReason}, ${result.usage.reasoningTokens ?? 0} reasoning tokens`,
+	)
 	return result.text.trim()
 }
 
 async function render(spec: SourceSpec): Promise<void> {
 	const user = recordPrompt(world, spec)
 	let text = await call(spec, [{ role: "user", content: user }])
-	let issues = problems(spec, text)
-	if (issues.length) {
+	// An empty reply cannot be sent back as an assistant turn; ask afresh.
+	if (!text) text = await call(spec, [{ role: "user", content: user }])
+	let issues = text ? problems(spec, text) : ["empty reply"]
+	if (issues.length && text) {
 		totals.repaired++
 		text = await call(spec, [
 			{ role: "user", content: user },
@@ -145,7 +155,9 @@ async function render(spec: SourceSpec): Promise<void> {
 		issues = problems(spec, text)
 	}
 	if (issues.length) {
-		failures.push(`${spec.id}: ${issues.join("; ")}`)
+		failures.push(
+			`${spec.id}: ${issues.join("; ")} (${lastFinish.get(spec.id)})`,
+		)
 		return
 	}
 	appendRecord({
