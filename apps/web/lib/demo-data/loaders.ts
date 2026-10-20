@@ -152,6 +152,8 @@ export type WikiMapPage = {
 	/** Event sources the page's claims cite. */
 	sourceIds: string[]
 	contradictedClaims: number
+	/** The stored claims, so a citation can open one without another read. */
+	claims: MdbrainWikiClaim[]
 }
 export type WikiMapView = {
 	pages: WikiMapPage[]
@@ -260,6 +262,7 @@ export async function loadWikiMap(
 				contradictedClaims: page.claims.filter(
 					(claim) => claim.status === "contradicted",
 				).length,
+				claims: page.claims,
 			}
 		})
 		return mapWithStatus(

@@ -107,6 +107,7 @@ describe("loadWikiMap", () => {
 			links: [{ slug: "havnor", kind: "related" }],
 			sourceIds: ["evt-1"],
 			contradictedClaims: 0,
+			claims: [claimView()],
 		})
 		expect(result.data.pages).toEqual([
 			expectedPage("halvorsen-renewal"),
