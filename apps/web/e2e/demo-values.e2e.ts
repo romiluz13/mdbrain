@@ -17,7 +17,7 @@ import {
 	squash,
 	stat,
 } from "./demo-helpers"
-import { installDemoProxy, LIVE, SLOW_READ } from "./demo-proxy"
+import { GENERATED, installDemoProxy, SLOW_READ } from "./demo-proxy"
 
 test.describe("values on screen equal the proxy's responses", () => {
 	test("the brain, the sources and the run's own table", async ({ page }) => {
@@ -262,7 +262,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		const pages = listPages(proxy)
 		await goto(page, 5)
 		await expect(page.getByTestId("review-queue-boundary")).toBeVisible()
-		if (!LIVE) {
+		if (GENERATED) {
 			expect(new Set(pages.map((p) => p.trustTier)).size).toBeGreaterThan(1)
 			expect(new Set(pages.map((p) => p.state)).size).toBeGreaterThan(1)
 		}

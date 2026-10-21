@@ -4,6 +4,7 @@
 import { gzipSync } from "node:zlib"
 import type { Page } from "@playwright/test"
 import { handleDemoRead } from "../lib/demo-data/proxy.js"
+import { createRecordedUpstream, readRecording } from "./demo-recorded.js"
 import { createDemoUpstream, FIXTURE_ENV } from "./demo-upstream.js"
 
 export type ProxyResponse = {
@@ -16,6 +17,14 @@ export type ProxyResponse = {
 /** Set DEMO_E2E_LIVE=1 to skip the fixture and let the page read the dev
  * server's own /api/demo route, which uses MDBRAIN_DEMO_* from its environment. */
 export const LIVE = process.env.DEMO_E2E_LIVE === "1"
+
+/** DEMO_REPLAY=<recording.json> serves a recording made by the recorder (see
+ * demo-record.e2e.ts) instead of the generated fixture. */
+export const REPLAY = process.env.DEMO_REPLAY
+
+/** The data is the generated fixture: not a live stack and not a recording, so
+ * a test may assert what the generator plants. */
+export const GENERATED = !LIVE && REPLAY === undefined
 
 /** How long a test waits for a read that is slow on the live stack: an event
  * cite is a Memongo recall of 5 to 7 s, and the first page list is large. The
@@ -68,10 +77,12 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 	const transfer = { raw: 0, wire: 0 }
 	let linkFreeAt = 0
 	if (!LIVE) {
-		const upstream = createDemoUpstream({
-			padTo: options.padTo,
-			contradiction: options.contradiction,
-		})
+		const upstreamFetch = REPLAY
+			? createRecordedUpstream(readRecording(REPLAY))
+			: createDemoUpstream({
+					padTo: options.padTo,
+					contradiction: options.contradiction,
+				}).fetch
 		await page.route("**/api/demo/v1/**", async (route) => {
 			const request = route.request()
 			const url = new URL(request.url())
@@ -84,7 +95,7 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 						headers: request.headers(),
 					}),
 					FIXTURE_ENV,
-					upstream.fetch,
+					upstreamFetch,
 				))
 			const text = await served.text()
 			if (options.link) {

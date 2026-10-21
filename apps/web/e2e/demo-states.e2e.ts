@@ -12,10 +12,10 @@ import {
 	settleContradiction,
 	stat,
 } from "./demo-helpers"
-import { installDemoProxy, LIVE } from "./demo-proxy"
+import { GENERATED, installDemoProxy } from "./demo-proxy"
 
 test.describe("states", () => {
-	test.skip(LIVE, "the states are forced through the fixture route")
+	test.skip(!GENERATED, "the states are forced through the generated fixture")
 
 	test("loading, then ready", async ({ page }) => {
 		let release: () => void = () => {}

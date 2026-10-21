@@ -14,7 +14,7 @@ import {
 	settled,
 	sourcesSettled,
 } from "./demo-helpers"
-import { installDemoProxy, LIVE, SLOW_READ } from "./demo-proxy"
+import { GENERATED, installDemoProxy, SLOW_READ } from "./demo-proxy"
 
 test("the arrow keys step the chapters from the pager, and walk the rail without selecting", async ({
 	page,
@@ -280,7 +280,7 @@ test("the layout runs in a Worker and interaction redraws only the live layer", 
 	else await wrap.click({ position: center })
 	const inspector = page.getByRole("complementary", { name: "Page inspector" })
 	await expect(inspector.getByRole("heading", { level: 3 })).toBeVisible()
-	if (!LIVE) {
+	if (GENERATED) {
 		await expect(inspector.getByRole("heading", { level: 3 })).toHaveText(
 			"Northstar Track",
 		)
