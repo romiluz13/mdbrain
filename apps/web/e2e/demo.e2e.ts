@@ -15,7 +15,7 @@ import {
 	tabTo,
 	type DemoProxy,
 } from "./demo-helpers"
-import { installDemoProxy, LIVE } from "./demo-proxy"
+import { installDemoProxy, LIVE, SLOW_READ } from "./demo-proxy"
 
 type Act = (target: Locator) => Promise<void>
 
@@ -105,7 +105,7 @@ async function journey(
 			.getByRole("button")
 			.first(),
 	)
-	await expect(page.getByTestId("ask-hit").first()).toBeVisible()
+	await expect(page.getByTestId("ask-hit").first()).toBeVisible(SLOW_READ)
 	await citeAndReturn(
 		page,
 		proxy,
@@ -162,7 +162,7 @@ async function journey(
 
 	// 7 What changed.
 	await nextChapter(page, act, 5)
-	await expect(page.getByTestId("change-row").first()).toBeVisible()
+	await expect(page.getByTestId("change-row").first()).toBeVisible(SLOW_READ)
 	await citeAndReturn(
 		page,
 		proxy,

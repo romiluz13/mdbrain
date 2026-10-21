@@ -10,6 +10,8 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react"
+import { claimSourceRefs } from "../../lib/demo-data/loaders-chapters.js"
+import { createSourceReader } from "../../lib/demo-data/source-reader.js"
 import { buildGraph, flagPages } from "../../lib/demo-data/views.js"
 import { AgentsChapter } from "./chapters/agents.js"
 import { AskChapter } from "./chapters/ask.js"
@@ -91,6 +93,24 @@ export function DemoApp() {
 		[baseGraph, flagged],
 	)
 	const layout = useLayout(baseGraph)
+	const sources = useMemo(() => createSourceReader(DEMO_UPSTREAM), [])
+
+	// A cite is a governed recall that takes seconds, so the recorded
+	// contradiction's own sources are read as soon as it is known, and chapter 5
+	// finds them waiting.
+	useEffect(() => {
+		if (data.contradiction.kind !== "ready") {
+			return
+		}
+		for (const { claim } of data.contradiction.data.claims) {
+			const named = claimSourceRefs(claim)
+			if (named.kind === "ready") {
+				for (const ref of named.data.refs) {
+					void sources.read(claim, ref)
+				}
+			}
+		}
+	}, [data.contradiction, sources])
 
 	useEffect(() => {
 		const fromHash = chapterIndex(window.location.hash.slice(1))
@@ -165,6 +185,7 @@ export function DemoApp() {
 	const value = useMemo<DemoContextValue>(
 		() => ({
 			upstream: DEMO_UPSTREAM,
+			sources,
 			data,
 			reload,
 			graph,
@@ -176,7 +197,7 @@ export function DemoApp() {
 			setAsk,
 			goTo: (id) => goToIndex(chapterIndex(id)),
 		}),
-		[data, reload, graph, layout, pinned, ask, goToIndex],
+		[data, sources, reload, graph, layout, pinned, ask, goToIndex],
 	)
 
 	const citationRef = useRef(citation)

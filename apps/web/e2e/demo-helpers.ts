@@ -7,7 +7,7 @@ import type {
 } from "@mdbrain/client"
 import { CHAPTERS, chapterIndex } from "../app/demo/chapters"
 import { formatUtc } from "../lib/demo-data/views.js"
-import type { installDemoProxy } from "./demo-proxy"
+import { SLOW_READ, type installDemoProxy } from "./demo-proxy"
 
 export type DemoProxy = Awaited<ReturnType<typeof installDemoProxy>>
 
@@ -29,10 +29,14 @@ export async function openDemo(page: Page, hash = ""): Promise<void> {
 
 /** The map has its data and both canvas layers have drawn. */
 export async function mapReady(page: Page): Promise<void> {
-	await expect(page.locator('[data-stat="pages"]')).not.toHaveText("—")
+	await expect(page.locator('[data-stat="pages"]')).not.toHaveText(
+		"—",
+		SLOW_READ,
+	)
 	await expect(page.locator('canvas[data-layer="static"]')).toHaveAttribute(
 		"data-draws",
 		/[1-9]/,
+		SLOW_READ,
 	)
 }
 
@@ -125,6 +129,23 @@ export const squash = (text: string): string => text.replace(/\s+/g, " ").trim()
 
 type CitedEvent = { eventId: string; text?: string; timestamp?: string }
 
+/** Every source slip under `scope` has been read: each is its own cite, and a
+ * cite is slow live, so the slips fill in one by one. At least one slip must
+ * exist, so an absent list is not mistaken for a finished one. */
+export async function sourcesSettled(scope: Locator): Promise<void> {
+	await expect(scope.locator("article[data-status]").first()).toBeVisible(
+		SLOW_READ,
+	)
+	await expect(scope.locator('[data-state="loading"]')).toHaveCount(
+		0,
+		SLOW_READ,
+	)
+	await expect(scope.locator('article[data-status="loading"]')).toHaveCount(
+		0,
+		SLOW_READ,
+	)
+}
+
 /** An open citation shows what the proxy's `cite` answers said: one resolved
  * slip per resolved source, each with its full stored text and its own business
  * time (or the statement that it has none), and no source marked unavailable. */
@@ -132,7 +153,7 @@ export async function expectCitationMatchesCites(
 	proxy: DemoProxy,
 	dialog: Locator,
 ): Promise<void> {
-	await expect(dialog.locator("article[data-status]").first()).toBeVisible()
+	await sourcesSettled(dialog)
 	await proxy.flush()
 	const marker = squash(
 		(await dialog.getByTestId("citation-marker").textContent()) ?? "",
@@ -222,7 +243,7 @@ export async function settleContradiction(
 	const screen = page.getByTestId("screen")
 	const stamp = screen.getByTestId("contradiction-stamp")
 	const honest = screen.getByText(NONE_YET)
-	await expect(stamp.or(honest)).toBeVisible()
+	await expect(stamp.or(honest)).toBeVisible(SLOW_READ)
 	await proxy.flush()
 	const lint = bodyOf<{ unresolvedContradictions: unknown[] }>(
 		proxy.latest("wiki/lint"),

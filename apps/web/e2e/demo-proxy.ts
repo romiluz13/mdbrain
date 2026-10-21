@@ -17,6 +17,11 @@ export type ProxyResponse = {
  * server's own /api/demo route, which uses MDBRAIN_DEMO_* from its environment. */
 export const LIVE = process.env.DEMO_E2E_LIVE === "1"
 
+/** How long a test waits for a read that is slow on the live stack: an event
+ * cite is a Memongo recall of 5 to 7 s, and the first page list is large. The
+ * fixture answers at once, so it keeps Playwright's default wait. */
+export const SLOW_READ = LIVE ? { timeout: 30_000 } : {}
+
 export type ProxyOptions = {
 	/** Answer a request instead of the proxy (an outage, an empty run), or hold
 	 * it by awaiting before returning undefined. */

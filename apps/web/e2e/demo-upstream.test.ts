@@ -17,7 +17,12 @@ import {
 } from "../lib/demo-data/loaders-chapters.js"
 import { handleDemoRead } from "../lib/demo-data/proxy.js"
 import { governanceMix, summarizeChanges } from "../lib/demo-data/views.js"
-import { corpusDir, createDemoUpstream, FIXTURE_ENV } from "./demo-upstream.js"
+import {
+	corpusDir,
+	createDemoUpstream,
+	eventIdOf,
+	FIXTURE_ENV,
+} from "./demo-upstream.js"
 
 const browserUpstream: DemoDataUpstream = {
 	apiBaseUrl: "http://demo.local/api/demo",
@@ -91,13 +96,14 @@ describe("demo upstream fixture", () => {
 		expect(result.data.claims).toHaveLength(2)
 		for (const entry of result.data.claims) {
 			expect(entry.claim.status).toBe("contradicted")
-			expect(entry.sources.kind).toBe("ready")
+			const sources = await loadClaimSources(browserUpstream, entry.claim)
+			expect(sources.kind).toBe("ready")
 			const source =
-				entry.sources.kind === "ready"
-					? entry.sources.data.sources[0]
-					: undefined
+				sources.kind === "ready" ? sources.data.sources[0] : undefined
 			expect(source?.status).toBe("resolved")
-			const dated = world.sources.find((s) => `evt-${s.id}` === source?.eventId)
+			const dated = world.sources.find(
+				(s) => eventIdOf(s.id) === source?.eventId,
+			)
 			expect(source?.businessTime).toBe(dated?.date)
 			expect(source?.text?.length ?? 0).toBeGreaterThan(20)
 		}
@@ -189,7 +195,7 @@ describe("demo upstream fixture", () => {
 describe("event citations in the fixture", () => {
 	const upstream = createDemoUpstream()
 	const sourceId = [...upstream.data.bodies.keys()][0]
-	const marker = `[[event:evt-${sourceId}]]`
+	const marker = `[[event:${eventIdOf(String(sourceId))}]]`
 	const citedBy = "[[wiki:company/northstar-systems#northstar-sla@r1]]"
 
 	const cite = (agentId: string | null) => {
@@ -281,6 +287,41 @@ describe("live shapes in the fixture", () => {
 			`http://demo.local/api/demo/v1/wiki/changes?since=2026-10-20T09:30:00.000Z&cursor=${first.nextCursor}`,
 		)
 		expect(moved.status).toBe(502)
+	})
+
+	it("names every event source by a Memongo UUID, not by the corpus's own id", async () => {
+		throughOptions({})
+		const map = await loadWikiMap(browserUpstream)
+		if (map.kind !== "ready") throw new Error("the map did not read")
+		const ids = new Set(
+			map.data.pages.flatMap((stored) =>
+				stored.claims.flatMap((claim) =>
+					claim.evidence.map((item) => item.sourceId),
+				),
+			),
+		)
+		expect(ids.size).toBeGreaterThan(10)
+		for (const id of ids) {
+			expect(id).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+			)
+		}
+	})
+
+	it("serves event text with the role label Memongo stores in front of it", async () => {
+		throughOptions({})
+		const result = await loadContradictionCase(browserUpstream)
+		if (result.kind !== "ready") throw new Error("no contradiction case")
+		const claim = result.data.claims[0]?.claim
+		if (!claim) throw new Error("no claim")
+		const first = await loadClaimSources(browserUpstream, claim)
+		if (first.kind !== "ready") throw new Error("no sources")
+		const text = first.data.sources[0]?.text ?? ""
+		expect(text).toMatch(/^User: /)
+		const corpus = readFileSync(join(corpusDir(), "records.jsonl"), "utf8")
+		expect(corpus).toContain(
+			JSON.stringify(text.slice("User: ".length)).slice(1, -1),
+		)
 	})
 
 	it("can hold no contradiction, as a seeded slot does before its agent run", async () => {

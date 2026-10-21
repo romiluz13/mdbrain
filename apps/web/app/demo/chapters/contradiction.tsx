@@ -4,7 +4,7 @@ import { useMemo } from "react"
 import { useDemo } from "../demo-context.js"
 import styles from "../chapters.module.css"
 import { GraphStage } from "../parts/graph-stage.js"
-import { SourceSlip } from "../parts/source-slip.js"
+import { ClaimSources } from "../parts/claim-sources.js"
 import { StatePanel } from "../parts/state-panel.js"
 import { TimeLine } from "../parts/time-line.js"
 
@@ -66,25 +66,11 @@ export function ContradictionChapter() {
 									iso={undefined}
 									missingNote="missing on the claim; its sources below carry their own"
 								/>
-								<StatePanel
-									state={entry.sources}
-									what="this claim's sources"
+								<ClaimSources
+									claim={entry.claim}
+									listClassName={styles.slipList}
 									emptyNote="This claim cites no source event."
-									onRetry={reload}
-								>
-									{(view) => (
-										<ul className={styles.slipList}>
-											{view.sources.map((source) => (
-												<li key={source.eventId}>
-													<SourceSlip
-														source={source}
-														claimText={entry.claim.text}
-													/>
-												</li>
-											))}
-										</ul>
-									)}
-								</StatePanel>
+								/>
 								<button
 									type="button"
 									className={styles.linkButton}

@@ -1,16 +1,10 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import {
-	loadClaimSources,
-	type ClaimSourcesView,
-} from "../../../lib/demo-data/loaders-chapters.js"
-import type { DataState } from "../../../lib/demo-data/states.js"
+import { useEffect, useRef } from "react"
 import { revisionStoredAt } from "../../../lib/demo-data/views.js"
 import { useDemo, type CitationTarget } from "../demo-context.js"
 import styles from "../citation.module.css"
-import { StatePanel } from "./state-panel.js"
-import { SourceSlip } from "./source-slip.js"
+import { ClaimSources } from "./claim-sources.js"
 import { TimeLine } from "./time-line.js"
 
 type Props = {
@@ -19,7 +13,7 @@ type Props = {
 }
 
 /** A claim's citation, opened as a modal dialog: the claim, then every source
- * event it rests on read through `cite`, each with its full stored text. The
+ * event it rests on read through `cite`, each shown as its own read lands. The
  * browser makes the page behind it inert and Escape closes it; focus returns
  * to the element that opened it. */
 export function CitationDialog({ target, onClose }: Props) {
@@ -56,24 +50,8 @@ export function CitationDialog({ target, onClose }: Props) {
 }
 
 function CitationBody({ target }: { target: CitationTarget }) {
-	const { upstream, data } = useDemo()
-	const [sources, setSources] = useState<DataState<ClaimSourcesView>>({
-		kind: "loading",
-	})
+	const { data } = useDemo()
 	const { claim } = target
-
-	useEffect(() => {
-		let live = true
-		setSources({ kind: "loading" })
-		void loadClaimSources(upstream, claim).then((state) => {
-			if (live) {
-				setSources(state)
-			}
-		})
-		return () => {
-			live = false
-		}
-	}, [upstream, claim])
 
 	const storedAt =
 		target.revision === undefined
@@ -84,10 +62,6 @@ function CitationBody({ target }: { target: CitationTarget }) {
 					target.pageSlug,
 					target.revision,
 				)
-	const eventCount = claim.evidence.filter(
-		(evidence) => evidence.kind === "event",
-	).length
-
 	return (
 		<div className={styles.sheet}>
 			<header className={styles.head}>
@@ -138,35 +112,11 @@ function CitationBody({ target }: { target: CitationTarget }) {
 				</p>
 			) : null}
 			<h3>Evidence</h3>
-			<StatePanel
-				state={sources}
-				what="the cited sources"
+			<ClaimSources
+				claim={claim}
+				listClassName={styles.slips}
 				emptyNote="This claim cites no source event. It may rest on other evidence."
-			>
-				{(view) => (
-					<>
-						{eventCount > view.sources.length ? (
-							<p className={styles.note}>
-								Showing {view.sources.length} of {eventCount} source events.
-							</p>
-						) : null}
-						<ol className={styles.slips}>
-							{view.sources.map((source) => (
-								<li key={source.eventId}>
-									<SourceSlip source={source} claimText={claim.text} />
-								</li>
-							))}
-						</ol>
-						{view.otherEvidence > 0 ? (
-							<p className={styles.note}>
-								Also rests on {view.otherEvidence} evidence item
-								{view.otherEvidence === 1 ? "" : "s"} that are not source
-								events.
-							</p>
-						) : null}
-					</>
-				)}
-			</StatePanel>
+			/>
 		</div>
 	)
 }

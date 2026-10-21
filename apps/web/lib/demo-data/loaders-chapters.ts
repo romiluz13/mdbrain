@@ -38,15 +38,25 @@ export type ClaimSourcesView = {
 	otherEvidence: number
 }
 
-/** The sources behind a claim: one cite per event it rests on, through the
- *  claim's own marker. A source that cannot be cited is marked unavailable and
- *  does not fail the claim. */
-export async function loadClaimSources(
-	upstream: DemoDataUpstream,
-	claim: MdbrainWikiClaim,
-): Promise<DataState<ClaimSourcesView>> {
+/** One event a claim cites: what to read, not yet read. */
+export type SourceRef = { eventId: string; marker: string }
+export type ClaimSourceRefs = {
+	refs: SourceRef[]
+	/** Every event the claim cites; `refs` stops at SOURCE_LIMIT. */
+	eventCount: number
+	otherEvidence: number
+}
+
+export type ClaimSourceRefsState =
+	| { kind: "ready"; data: ClaimSourceRefs }
+	| { kind: "empty" }
+	| { kind: "error"; code: string; message: string }
+
+/** The events a claim rests on, named without reading any of them, so a screen
+ * can show each source as it is read. A claim with no marker cannot be cited
+ * through, and says so rather than showing no sources. */
+export function claimSourceRefs(claim: MdbrainWikiClaim): ClaimSourceRefsState {
 	const events = claim.evidence.filter((evidence) => evidence.kind === "event")
-	const otherEvidence = claim.evidence.length - events.length
 	if (events.length === 0) {
 		return { kind: "empty" }
 	}
@@ -58,34 +68,71 @@ export async function loadClaimSources(
 				"the claim carries no citation marker to cite its sources through",
 		}
 	}
-	const citedBy = claim.marker
-	const reads = readsFor(upstream)
+	return {
+		kind: "ready",
+		data: {
+			refs: events.slice(0, SOURCE_LIMIT).map((evidence) => ({
+				eventId: evidence.sourceId,
+				marker:
+					evidence.marker ??
+					formatCitationMarker({ kind: "event", eventId: evidence.sourceId }),
+			})),
+			eventCount: events.length,
+			otherEvidence: claim.evidence.length - events.length,
+		},
+	}
+}
+
+/** One source of a claim, read through the governed cite route. A source that
+ * cannot be cited is marked unavailable; this never throws. */
+export async function loadSource(
+	upstream: DemoDataUpstream,
+	claim: MdbrainWikiClaim,
+	ref: SourceRef,
+): Promise<SourceView> {
+	const { eventId, marker } = ref
+	if (claim.marker === undefined) {
+		return { eventId, marker, status: "unavailable" }
+	}
+	try {
+		const response = await readsFor(upstream).cite({
+			marker,
+			citedBy: claim.marker,
+		})
+		if (response.kind !== "event") {
+			return { eventId, marker, status: "unavailable" }
+		}
+		const { event } = response
+		return {
+			eventId,
+			marker,
+			status: "resolved",
+			...(event.text !== undefined ? { text: event.text } : {}),
+			...(event.timestamp !== undefined
+				? { businessTime: event.timestamp }
+				: {}),
+		}
+	} catch {
+		return { eventId, marker, status: "unavailable" }
+	}
+}
+
+/** The sources behind a claim, all read before it returns. */
+export async function loadClaimSources(
+	upstream: DemoDataUpstream,
+	claim: MdbrainWikiClaim,
+): Promise<DataState<ClaimSourcesView>> {
+	const named = claimSourceRefs(claim)
+	if (named.kind !== "ready") {
+		return named
+	}
 	const sources = await Promise.all(
-		events.slice(0, SOURCE_LIMIT).map(async (evidence): Promise<SourceView> => {
-			const marker =
-				evidence.marker ??
-				formatCitationMarker({ kind: "event", eventId: evidence.sourceId })
-			try {
-				const response = await reads.cite({ marker, citedBy })
-				if (response.kind !== "event") {
-					return { eventId: evidence.sourceId, marker, status: "unavailable" }
-				}
-				const { event } = response
-				return {
-					eventId: evidence.sourceId,
-					marker,
-					status: "resolved",
-					...(event.text !== undefined ? { text: event.text } : {}),
-					...(event.timestamp !== undefined
-						? { businessTime: event.timestamp }
-						: {}),
-				}
-			} catch {
-				return { eventId: evidence.sourceId, marker, status: "unavailable" }
-			}
-		}),
+		named.data.refs.map((ref) => loadSource(upstream, claim, ref)),
 	)
-	return mapWithStatus({ data: { sources, otherEvidence } }, upstream.readKey)
+	return mapWithStatus(
+		{ data: { sources, otherEvidence: named.data.otherEvidence } },
+		upstream.readKey,
+	)
 }
 
 const NOT_READABLE: DataState<never> = {
@@ -99,8 +146,6 @@ export type ContradictionCaseClaim = {
 	pageTitle: string
 	revision: number
 	claim: MdbrainWikiClaim
-	/** Kept as a state so a failed read is never shown as "no sources". */
-	sources: DataState<ClaimSourcesView>
 }
 export type ContradictionCase = {
 	id: string
@@ -114,9 +159,10 @@ export type ContradictionCase = {
 
 /** The recorded contradiction chapter: the first unresolved record from the
  *  lint read, read back through the overview of the page that holds it, so both
- *  claims arrive with the page and revision they were read from, then each
- *  claim's sources. A record the lint read lists but this caller cannot read
- *  back is reported as not readable, never as "none recorded". */
+ *  claims arrive with the page and revision they were read from. Their sources
+ *  are read apart (see ./source-reader.ts), so the case shows before they land.
+ *  A record the lint read lists but this caller cannot read back is reported as
+ *  not readable, never as "none recorded". */
 export async function loadContradictionCase(
 	upstream: DemoDataUpstream,
 ): Promise<DataState<ContradictionCase>> {
@@ -140,13 +186,12 @@ export async function loadContradictionCase(
 			return NOT_READABLE
 		}
 		const claims = await Promise.all(
-			record.claims.map(async (named): Promise<ContradictionCaseClaim> => {
+			record.claims.map((named): ContradictionCaseClaim => {
 				return {
 					pageSlug: named.pageSlug,
 					pageTitle: named.pageTitle,
 					revision: named.revision,
 					claim: named.claim,
-					sources: await loadClaimSources(upstream, named.claim),
 				}
 			}),
 		)

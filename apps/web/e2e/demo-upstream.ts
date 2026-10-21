@@ -4,6 +4,7 @@
 // shapes, with generated ids and ingestion times. The /demo e2e serves it
 // through the real proxy handler (handleDemoRead), so the allowlist, the
 // server-set principal and the read key are exercised, not bypassed.
+import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { formatCitationMarker, parseCitationMarker } from "@mdbrain/client"
@@ -96,7 +97,23 @@ type World = {
 	}
 }
 
-const eventIdOf = (sourceId: string) => `evt-${sourceId}`
+// Memongo names an event by a UUID, not by the id the corpus gave its source.
+// The UUID is derived from the corpus id so a run of the fixture is repeatable.
+export function eventIdOf(sourceId: string): string {
+	const hex = createHash("sha1")
+		.update(`northstar-fixture:${sourceId}`)
+		.digest("hex")
+	return [
+		hex.slice(0, 8),
+		hex.slice(8, 12),
+		`5${hex.slice(13, 16)}`,
+		`${((Number.parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16)}${hex.slice(18, 20)}`,
+		hex.slice(20, 32),
+	].join("-")
+}
+
+// What Memongo stores in front of an event ingested as a user message.
+const ROLE_LABEL = "User: "
 
 function words(text: string): string[] {
 	return (text.toLowerCase().match(/[a-z0-9$%]+/g) ?? []).filter(
@@ -121,6 +138,9 @@ function build(padTo = 0, withContradiction = true) {
 		}
 	}
 	const dates = new Map(world.sources.map((source) => [source.id, source.date]))
+	const sourceOf = new Map(
+		[...bodies.keys()].map((sourceId) => [eventIdOf(sourceId), sourceId]),
+	)
 	const { targetPageSlug, targetClaimId, incoming } = world.contradiction
 	const incomingClaimId = incoming.claims[0]?.id ?? ""
 	const basePages = world.pages.some((page) => page.slug === incoming.slug)
@@ -253,6 +273,7 @@ function build(padTo = 0, withContradiction = true) {
 		record,
 		bodies,
 		dates,
+		sourceOf,
 		targetPageSlug,
 		targetClaimId,
 		incomingClaimId,
@@ -512,9 +533,9 @@ export function createDemoUpstream(
 					"the source could not be confirmed through governed recall",
 				)
 			}
-			const sourceId = parsed.marker.eventId.replace(/^evt-/, "")
-			const text = data.bodies.get(sourceId)
-			if (text === undefined)
+			const sourceId = data.sourceOf.get(parsed.marker.eventId) ?? ""
+			const body = data.bodies.get(sourceId)
+			if (body === undefined)
 				return failure(
 					404,
 					"CITATION_UNRESOLVED",
@@ -529,7 +550,7 @@ export function createDemoUpstream(
 				event: {
 					eventId: parsed.marker.eventId,
 					canonicalId: parsed.marker.eventId,
-					text,
+					text: `${ROLE_LABEL}${body}`,
 					...(timestamp !== undefined ? { timestamp } : {}),
 					scope: FIXTURE_ENV.scope,
 					scopeRef: FIXTURE_ENV.scopeRef,

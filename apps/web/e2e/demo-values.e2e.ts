@@ -13,10 +13,11 @@ import {
 	mapReady,
 	openDemo,
 	settleContradiction,
+	sourcesSettled,
 	squash,
 	stat,
 } from "./demo-helpers"
-import { installDemoProxy, LIVE } from "./demo-proxy"
+import { installDemoProxy, LIVE, SLOW_READ } from "./demo-proxy"
 
 test.describe("values on screen equal the proxy's responses", () => {
 	test("the brain, the sources and the run's own table", async ({ page }) => {
@@ -140,12 +141,14 @@ test.describe("values on screen equal the proxy's responses", () => {
 		).toContainText("missing on the claim")
 		await expect(
 			dialog.locator('article [data-time-kind="business"]').first(),
-		).toBeVisible()
+		).toBeVisible(SLOW_READ)
 		await page.keyboard.press("Escape")
 
 		await goto(page, 6)
 		const row = page.getByTestId("change-row").first()
-		await expect(row.locator('[data-time-kind="ingestion"]')).toBeVisible()
+		await expect(row.locator('[data-time-kind="ingestion"]')).toBeVisible(
+			SLOW_READ,
+		)
 		await expect(
 			row.locator('[data-time-kind="business"][data-missing]'),
 		).toContainText("missing on a revision")
@@ -172,7 +175,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 			expect(titles.has(title), `${question} names no stored page`).toBe(true)
 		}
 		await examples.first().click()
-		await expect(page.getByTestId("ask-hit").first()).toBeVisible()
+		await expect(page.getByTestId("ask-hit").first()).toBeVisible(SLOW_READ)
 		await proxy.flush()
 		const search = proxy.latest("wiki/search", { query: questions[0] ?? "" })
 		const results = bodyOf<{
@@ -215,6 +218,8 @@ test.describe("values on screen equal the proxy's responses", () => {
 			}
 		}
 		const record = overview.contradictions.items[0]
+		await sourcesSettled(page.getByTestId("screen"))
+		await proxy.flush()
 		await expect(page.getByTestId("contradiction-claim")).toHaveText(
 			record?.claims.map((entry) => entry.claim.text) ?? [],
 		)
@@ -272,7 +277,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 			)
 		}
 		await goto(page, 6)
-		await expect(stat(page, "revisions")).not.toHaveText("—")
+		await expect(stat(page, "revisions")).not.toHaveText("—", SLOW_READ)
 		await proxy.flush()
 		const changes = allChanges(proxy)
 		const sum = (pick: (c: (typeof changes)[number]) => number) =>

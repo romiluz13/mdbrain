@@ -12,8 +12,9 @@ import {
 	openDemo,
 	settleContradiction,
 	settled,
+	sourcesSettled,
 } from "./demo-helpers"
-import { installDemoProxy, LIVE } from "./demo-proxy"
+import { installDemoProxy, LIVE, SLOW_READ } from "./demo-proxy"
 
 test("the arrow keys step the chapters from the pager, and walk the rail without selecting", async ({
 	page,
@@ -201,9 +202,7 @@ test("every interactive control on every chapter is at least 44 px", async ({
 	}
 	await openAnyCitation(page, proxy)
 	await expect(page.getByRole("dialog")).toBeVisible()
-	await expect(
-		page.getByRole("dialog").locator('[data-state="loading"]'),
-	).toHaveCount(0)
+	await sourcesSettled(page.getByRole("dialog"))
 	expect(await small(), "the citation dialog").toEqual([])
 })
 
@@ -237,7 +236,7 @@ test("no chapter scrolls sideways, keeps the synthetic label in view, and passes
 	await openAnyCitation(page, proxy)
 	await expect(
 		page.getByRole("dialog").getByTestId("source-text").first(),
-	).toBeVisible()
+	).toBeVisible(SLOW_READ)
 	await expectNoSeriousAccessibilityViolations(page)
 })
 

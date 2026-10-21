@@ -5,6 +5,7 @@ import type { MdbrainWikiClaim } from "@mdbrain/client"
 import type { Layout } from "../../lib/demo-data/graph-layout.js"
 import type { DemoDataUpstream } from "../../lib/demo-data/loaders.js"
 import type { SearchView } from "../../lib/demo-data/loaders-chapters.js"
+import type { SourceReader } from "../../lib/demo-data/source-reader.js"
 import type { DataState } from "../../lib/demo-data/states.js"
 import type { Graph } from "../../lib/demo-data/views.js"
 import type { DemoData } from "./use-demo-data.js"
@@ -26,6 +27,8 @@ export type AskState = {
 
 export type DemoContextValue = {
 	upstream: DemoDataUpstream
+	/** Reads a claim's sources one at a time and remembers them. */
+	sources: SourceReader
 	data: DemoData
 	reload: () => void
 	graph: Graph | null

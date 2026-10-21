@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test"
 import { CHAPTERS } from "../app/demo/chapters"
 import {
 	goto,
+	listPages,
 	mapReady,
 	openAnyCitation,
 	openDemo,
@@ -173,6 +174,107 @@ test.describe("states", () => {
 		await expect(
 			page.getByRole("dialog").getByTestId("source-text").first(),
 		).toBeVisible()
+	})
+
+	test("a citation shows its claim at once and each source as its own read resolves", async ({
+		page,
+	}) => {
+		let slowMarker: string | null = null
+		let release: () => void = () => {}
+		const gate = new Promise<void>((resolve) => {
+			release = resolve
+		})
+		const proxy = await installDemoProxy(page, {
+			override: async (url) => {
+				if (
+					url.pathname === "/api/demo/v1/cite" &&
+					url.searchParams.get("marker") === slowMarker
+				) {
+					await gate
+				}
+				return undefined
+			},
+		})
+		await openDemo(page)
+		await mapReady(page)
+		await proxy.flush()
+		const stored = listPages(proxy).find((candidate) =>
+			candidate.claims.some(
+				(claim) =>
+					claim.evidence.filter((evidence) => evidence.kind === "event")
+						.length >= 3,
+			),
+		)
+		const claim = stored?.claims.find(
+			(candidate) =>
+				candidate.evidence.filter((evidence) => evidence.kind === "event")
+					.length >= 3,
+		)
+		if (!stored || !claim) throw new Error("no claim rests on three sources")
+		const events = claim.evidence
+			.filter((evidence) => evidence.kind === "event")
+			.slice(0, 6)
+		slowMarker = events[0]?.marker ?? null
+		await page.getByLabel("Pick a page").selectOption({ label: stored.title })
+		await page
+			.getByRole("complementary", { name: "Page inspector" })
+			.getByRole("button", { name: /^Open citation for:/ })
+			.nth(stored.claims.indexOf(claim))
+			.click()
+		const dialog = page.getByRole("dialog")
+		await expect(dialog.getByTestId("citation-claim")).toHaveText(claim.text)
+		const slips = dialog.locator("article[data-status]")
+		await expect(slips).toHaveCount(events.length)
+		await expect(dialog.locator('article[data-status="loading"]')).toHaveCount(
+			1,
+		)
+		await expect(dialog.locator('article[data-status="resolved"]')).toHaveCount(
+			events.length - 1,
+		)
+		await expect(
+			dialog.locator('article[data-status="loading"]'),
+		).toContainText(events[0]?.sourceId ?? "")
+		release()
+		await expect(dialog.locator('article[data-status="resolved"]')).toHaveCount(
+			events.length,
+		)
+		await expect(dialog.locator('article[data-status="loading"]')).toHaveCount(
+			0,
+		)
+	})
+
+	test("chapter 5 shows both claims and the stamp while their sources are still being read", async ({
+		page,
+	}) => {
+		let release: () => void = () => {}
+		const gate = new Promise<void>((resolve) => {
+			release = resolve
+		})
+		await installDemoProxy(page, {
+			override: async (url) => {
+				if (url.pathname === "/api/demo/v1/cite") await gate
+				return undefined
+			},
+		})
+		await openDemo(page)
+		await mapReady(page)
+		await goto(
+			page,
+			CHAPTERS.findIndex((entry) => entry.id === "contradiction"),
+		)
+		const screen = page.getByTestId("screen")
+		await expect(screen.getByTestId("contradiction-stamp")).toBeVisible()
+		await expect(screen.getByTestId("contradiction-claim")).toHaveCount(2)
+		await expect(screen.locator('article[data-status="loading"]')).toHaveCount(
+			2,
+		)
+		release()
+		await expect(screen.locator('article[data-status="resolved"]')).toHaveCount(
+			2,
+		)
+		await expect(screen.locator('article[data-status="loading"]')).toHaveCount(
+			0,
+		)
 	})
 
 	test("a source with no business time says it is missing, and keeps ingestion time", async ({

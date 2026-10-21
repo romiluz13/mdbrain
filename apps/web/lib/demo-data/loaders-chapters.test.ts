@@ -8,9 +8,11 @@ import {
 import { json, stubUpstream } from "./test-upstream.js"
 import type { DemoDataUpstream } from "./loaders.js"
 import {
+	claimSourceRefs,
 	loadAgentActivity,
 	loadClaimSources,
 	loadContradictionCase,
+	loadSource,
 	loadWikiSearch,
 } from "./loaders-chapters.js"
 
@@ -149,6 +151,89 @@ describe("loadClaimSources", () => {
 	})
 })
 
+describe("claimSourceRefs", () => {
+	it("names the events a claim rests on without reading any of them", () => {
+		const calls = stubUpstream({})
+		const result = claimSourceRefs(
+			claim("a", "b", "x", ["evt-1", "evt-2", "evt-3"]),
+		)
+		expect(result).toEqual({
+			kind: "ready",
+			data: {
+				refs: ["evt-1", "evt-2", "evt-3"].map((eventId) => ({
+					eventId,
+					marker: eventMarker(eventId),
+				})),
+				eventCount: 3,
+				otherEvidence: 0,
+			},
+		})
+		expect(calls).toEqual([])
+	})
+
+	it("keeps the first six and says how many events there are, and how much other evidence", () => {
+		const ids = Array.from({ length: 9 }, (_, at) => `evt-${at}`)
+		const withFile = {
+			...claim("a", "b", "x", ids),
+			evidence: [
+				...claim("a", "b", "x", ids).evidence,
+				{ kind: "file" as const, sourceId: "doc-1" },
+			],
+		}
+		const result = claimSourceRefs(withFile)
+		if (result.kind !== "ready") throw new Error("not ready")
+		expect(result.data.refs.map((ref) => ref.eventId)).toEqual(ids.slice(0, 6))
+		expect(result.data.eventCount).toBe(9)
+		expect(result.data.otherEvidence).toBe(1)
+	})
+
+	it("reports empty for a claim with no event evidence", () => {
+		expect(claimSourceRefs(claim("a", "b", "x"))).toEqual({ kind: "empty" })
+	})
+
+	it("reports an error for a claim that carries no marker to cite through", () => {
+		const { marker: _marker, ...bare } = claim("a", "b", "x", ["evt-1"])
+		const result = claimSourceRefs(bare)
+		expect(result.kind).toBe("error")
+		if (result.kind === "error") {
+			expect(result.code).toBe("NO_CLAIM_MARKER")
+		}
+	})
+})
+
+describe("loadSource", () => {
+	const owner = claim("a", "b", "The renewal is healthy.", ["evt-1"])
+	const ref = { eventId: "evt-1", marker: eventMarker("evt-1") }
+
+	it("cites one event through the claim's marker", async () => {
+		const calls = stubUpstream({
+			"/v1/cite": () =>
+				json(cited("evt-1", "CRM: healthy", "2026-09-14T15:20:00.000Z")),
+		})
+		expect(await loadSource(direct, owner, ref)).toEqual({
+			eventId: "evt-1",
+			marker: ref.marker,
+			status: "resolved",
+			text: "CRM: healthy",
+			businessTime: "2026-09-14T15:20:00.000Z",
+		})
+		expect(calls).toHaveLength(1)
+		expect(calls[0]?.searchParams.get("citedBy")).toBe(owner.marker)
+	})
+
+	it("marks the source unavailable when the cite fails, and never throws", async () => {
+		stubUpstream({
+			"/v1/cite": () =>
+				json({ error: { code: "CITATION_UNRESOLVED", message: "no" } }, 404),
+		})
+		expect(await loadSource(direct, owner, ref)).toEqual({
+			eventId: "evt-1",
+			marker: ref.marker,
+			status: "unavailable",
+		})
+	})
+})
+
 describe("loadContradictionCase", () => {
 	const healthy = claim(
 		"accounts/halvorsen",
@@ -202,23 +287,11 @@ describe("loadContradictionCase", () => {
 		],
 	}
 
-	it("reads the record from the overview of the page that holds it, with both sources", async () => {
+	it("reads the record from the overview of the page that holds it, with both claims and no source read", async () => {
 		const calls = stubUpstream({
 			"/v1/wiki/lint": () =>
 				json({ pages: 3, total: 3, unresolvedContradictions: [entry] }),
 			"/v1/wiki/overview/accounts%2Fhalvorsen": () => json(overview([record])),
-			"/v1/cite": (url) => {
-				const marker = url.searchParams.get("marker")
-				return marker === eventMarker("evt-1")
-					? json(cited("evt-1", "CRM: healthy", "2026-09-14T15:20:00.000Z"))
-					: json(
-							cited(
-								"evt-2",
-								"Ticket: eroded trust",
-								"2026-09-20T08:00:00.000Z",
-							),
-						)
-			},
 		})
 		const result = await loadContradictionCase(direct)
 		expect(result.kind).toBe("ready")
@@ -230,18 +303,13 @@ describe("loadContradictionCase", () => {
 			"Halvorsen",
 			"Halvorsen risk",
 		])
-		expect(
-			result.data.claims.map((c) =>
-				c.sources.kind === "ready"
-					? c.sources.data.sources[0]?.businessTime
-					: undefined,
-			),
-		).toEqual(["2026-09-14T15:20:00.000Z", "2026-09-20T08:00:00.000Z"])
+		expect(result.data.claims.map((c) => c.claim.text)).toEqual([
+			"The renewal is healthy.",
+			"The renewal is not healthy.",
+		])
 		expect(calls.map((u) => u.pathname)).toEqual([
 			"/v1/wiki/lint",
 			"/v1/wiki/overview/accounts%2Fhalvorsen",
-			"/v1/cite",
-			"/v1/cite",
 		])
 	})
 
@@ -279,42 +347,6 @@ describe("loadContradictionCase", () => {
 		if (result.kind === "incomplete") {
 			expect(result.reason).toBe("CONTRADICTION_NOT_READABLE")
 		}
-	})
-
-	it("keeps a claim whose sources cannot be read visible as an error, not as no sources", async () => {
-		const { marker: _marker, ...unmarked } = claim(
-			"accounts/halvorsen",
-			"healthy",
-			"The renewal is healthy.",
-			["evt-1"],
-		)
-		stubUpstream({
-			"/v1/wiki/lint": () =>
-				json({ pages: 3, total: 3, unresolvedContradictions: [entry] }),
-			"/v1/wiki/overview/accounts%2Fhalvorsen": () =>
-				json(
-					overview([
-						{
-							...record,
-							claims: [
-								{ ...record.claims[0], claim: unmarked },
-								record.claims[1],
-							],
-						},
-					]),
-				),
-			"/v1/cite": () =>
-				json(cited("evt-2", "Ticket", "2026-09-20T08:00:00.000Z")),
-		})
-		const result = await loadContradictionCase(direct)
-		expect(result.kind).toBe("ready")
-		if (result.kind !== "ready") return
-		const [first, second] = result.data.claims
-		expect(first?.sources.kind).toBe("error")
-		if (first?.sources.kind === "error") {
-			expect(first.sources.code).toBe("NO_CLAIM_MARKER")
-		}
-		expect(second?.sources.kind).toBe("ready")
 	})
 })
 
