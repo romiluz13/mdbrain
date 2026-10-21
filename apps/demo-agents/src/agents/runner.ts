@@ -16,6 +16,7 @@ import {
 	type ModelBudget,
 } from "../budget.js"
 import type { RenderedRecord, World } from "../corpus/types.js"
+import type { RunWrites } from "../evidence.js"
 import type { createRunManifests } from "../seeding/manifest.js"
 import { ROLE_LABELS, type AgentCeilings, type AgentRole } from "./config.js"
 import { createStepEventRecorder } from "./events.js"
@@ -105,6 +106,13 @@ export async function runRoleAgents(
 		agentId: input.slot.agentId,
 		scopeRef: input.slot.scopeRef,
 	})
+	// Shared write ledger (330): event ids captured from this run's
+	// mdbrain_write_event receipts, and the refusals that fail it closed.
+	const writes: RunWrites = {
+		eventIdBySource: new Map(),
+		refusals: [],
+		writeRefusals: new Map(),
+	}
 	const phases: RunPhase[] = []
 	const usage: BudgetUsage = { ...ZERO_USAGE }
 	const stepCounts: Record<AgentRole, number> = {
@@ -165,6 +173,9 @@ export async function runRoleAgents(
 					role,
 					agentId: input.slot.agentId,
 					scopeRef: input.slot.scopeRef,
+					events: plan.events,
+					page: plan.page,
+					writes,
 				}),
 				stopWhen: stepCountIs(input.ceilings.steps),
 				maxOutputTokens: AGENT_MAX_OUTPUT_TOKENS,
@@ -197,6 +208,18 @@ export async function runRoleAgents(
 					ok: false,
 					reason: `${ROLE_LABELS[role]} task stopped at the ${input.ceilings.steps} steps ceiling with pinned replay work still in flight`,
 				}
+			}
+			const writeRefusal = Array.from(writes.writeRefusals.values())[0]
+			if (writeRefusal !== undefined) {
+				// Fail closed (330): the API refused a pinned replay write, so
+				// this run's evidence can never land; end it with the API's reason
+				// — the root cause, ahead of any apply-time refusal it caused.
+				return { ok: false, reason: writeRefusal }
+			}
+			if (writes.refusals.length > 0) {
+				// Fail closed (330): a cited source never landed as an event, so
+				// the page apply was refused rather than sent unsourced.
+				return { ok: false, reason: writes.refusals[0] ?? "unknown refusal" }
 			}
 			if (budgetId) {
 				await input.budget.settle(budgetId, taskUsage)

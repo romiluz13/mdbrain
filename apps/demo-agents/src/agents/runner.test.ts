@@ -422,3 +422,124 @@ describe("runRoleAgents", () => {
 		).toHaveLength(3)
 	})
 })
+
+describe("runRoleAgents evidence", () => {
+	function plans() {
+		return buildRolePlans({
+			world: makeDemoWorld(),
+			records: makeDemoRecords(),
+			runId: RUN_ID,
+			scopeRef: SLOT.scopeRef,
+		})
+	}
+
+	function evidenceOf(
+		fake: ReturnType<typeof fakeAgentClients>,
+		claimId: string,
+	) {
+		const page = fake.pages[RISK_SLUG] as
+			| {
+					claims: Array<{
+						id: string
+						evidence?: Array<{ kind: string; sourceId: string; note: string }>
+					}>
+			  }
+			| undefined
+		return page?.claims.find((claim) => claim.id === claimId)?.evidence
+	}
+
+	function renewalKey(): string | undefined {
+		return plans().support.events.find(
+			(event) => event.sourceId === "src-renewal-05",
+		)?.idempotencyKey
+	}
+
+	it("lands the incoming page's claim with event evidence resolved from this run's writes", async () => {
+		const { clients } = await runComplete()
+		const evidence = evidenceOf(clients, "halvorsen-renewal-support-risk")
+		expect(evidence).toEqual([
+			{
+				kind: "event",
+				sourceId: expect.any(String),
+				note: "body of src-renewal-05",
+			},
+		])
+		const receipt = clients.receipts.find(
+			(entry) => entry.input.idempotencyKey === renewalKey(),
+		)
+		expect(evidence?.[0]?.sourceId).toBe(receipt?.eventId)
+	})
+
+	it("ends the run incomplete with the fail-closed reason when a cited source's event never landed", async () => {
+		const built = plans()
+		const turns = happyTurns(built)
+		const supportTurns = [
+			{
+				toolCalls: writeEventTurns(
+					built.support.events.filter(
+						(event) => event.sourceId !== "src-renewal-05",
+					),
+				),
+			},
+			{
+				toolCalls: [
+					{ toolName: "mdbrain_wiki_apply", input: { ...built.support.page } },
+				],
+			},
+			{ text: "support done" },
+		]
+		const { outcome, clients, used, manifests } = await runComplete({
+			modelFor: (role) =>
+				scriptedModel(role === "support" ? supportTurns : turns[role]!),
+		})
+		expect(outcome.state).toBe("incomplete")
+		expect(outcome.failureReason).toMatch(
+			/fail-closed: page risks\/halvorsen-renewal-support-view cites src-renewal-05/,
+		)
+		expect(clients.pages[RISK_SLUG]).toBeUndefined()
+		expect(used).toEqual([])
+		const doc = await manifests.get(RUN_ID)
+		expect(doc?.state).toBe("ready")
+		expect(doc?.agentRun?.state).toBe("incomplete")
+	})
+
+	it("cites the first event id when a replay write is retried as an idempotent duplicate", async () => {
+		const built = plans()
+		const turns = happyTurns(built)
+		const renewal = built.support.events.filter(
+			(event) => event.sourceId === "src-renewal-05",
+		)
+		const retryTurns = [
+			{
+				toolCalls: [
+					...writeEventTurns(renewal),
+					...writeEventTurns(renewal),
+					...writeEventTurns(
+						built.support.events.filter(
+							(event) => event.sourceId !== "src-renewal-05",
+						),
+					),
+				],
+			},
+			{
+				toolCalls: [
+					{ toolName: "mdbrain_wiki_apply", input: { ...built.support.page } },
+				],
+			},
+			{ text: "support done" },
+		]
+		const { outcome, clients } = await runComplete({
+			modelFor: (role) =>
+				scriptedModel(role === "support" ? retryTurns : turns[role]!),
+		})
+		expect(outcome.state).toBe("complete")
+		const receipts = clients.receipts.filter(
+			(entry) => entry.input.idempotencyKey === renewalKey(),
+		)
+		expect(receipts).toHaveLength(2)
+		expect(receipts[1]?.chunkCreated).toBe(false)
+		expect(receipts[1]?.eventId).toBe(receipts[0]?.eventId)
+		const evidence = evidenceOf(clients, "halvorsen-renewal-support-risk")
+		expect(evidence?.[0]?.sourceId).toBe(receipts[0]?.eventId)
+	})
+})

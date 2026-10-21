@@ -1,4 +1,5 @@
 import type { CreateRunManifestInput } from "./manifest.js"
+import { resolveEventEvidence } from "../evidence.js"
 import type { LoadPlan, PlannedPage } from "./plan.js"
 import { isDuplicateSlug, withRetries, type RetryOptions } from "./retries.js"
 
@@ -47,7 +48,7 @@ export interface SeedClient {
 				id: string
 				text: string
 				confidence?: number
-				evidence?: { kind: "event"; sourceId: string; note: string }[]
+				evidence?: { kind: "event"; sourceId: string; note?: string }[]
 			}[]
 			relationships?: {
 				targetPageSlug: string
@@ -257,20 +258,23 @@ export async function seedSlot(
 			scopeRef: options.scopeRef,
 			trustTier,
 			agentId: options.agentId,
-			claims: page.claims.map((claim) => ({
-				id: claim.id,
-				text: claim.text,
-				confidence: claim.confidence,
-				evidence: claim.evidence.map((ev) => {
-					const eventId = eventIdBySourceId.get(ev.sourceId)
-					if (!eventId) {
-						throw new Error(
-							`fail-closed: page ${page.slug} cites ${ev.sourceId}, which has no written event (held back for replay or missing from the plan)`,
-						)
-					}
-					return { kind: "event" as const, sourceId: eventId, note: ev.note }
-				}),
-			})),
+			claims: page.claims.map((claim) => {
+				const outcome = resolveEventEvidence({
+					notes: claim.evidence,
+					eventIdBySource: eventIdBySourceId,
+					missing: (sourceId) =>
+						`fail-closed: page ${page.slug} cites ${sourceId}, which has no written event (held back for replay or missing from the plan)`,
+				})
+				if ("refusal" in outcome) {
+					throw new Error(outcome.refusal)
+				}
+				return {
+					id: claim.id,
+					text: claim.text,
+					confidence: claim.confidence,
+					evidence: outcome,
+				}
+			}),
 			relationships: page.relationships,
 		}
 		try {

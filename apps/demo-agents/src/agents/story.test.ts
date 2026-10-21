@@ -123,3 +123,30 @@ describe("buildRolePlans", () => {
 		)
 	})
 })
+
+describe("buildRolePlans evidence", () => {
+	it("carries the spec's evidence refs on the incoming page's claims, notes excerpted like the seeder", () => {
+		const plans = buildRolePlans(input)
+		const claim = plans.support.page?.claims?.find(
+			(candidate) => candidate.id === "halvorsen-renewal-support-risk",
+		)
+		// The fixture body has no sentence punctuation and the anchor never
+		// appears in it, so the seeder's excerpt builder falls back to the
+		// opening excerpt — the same builder, the same fallback.
+		expect(claim?.evidence).toEqual([
+			{
+				kind: "event",
+				sourceId: "src-renewal-05",
+				note: "body of src-renewal-05",
+			},
+		])
+	})
+
+	it("pins each replay event's business timestamp from the source spec", () => {
+		const plans = buildRolePlans(input)
+		const event = plans.support.events.find(
+			(candidate) => candidate.sourceId === "src-renewal-05",
+		)
+		expect(event?.timestamp).toBe("2026-10-01")
+	})
+})

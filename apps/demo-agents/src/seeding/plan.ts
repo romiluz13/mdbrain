@@ -1,6 +1,6 @@
 import type { PageSpec, RenderedRecord, World } from "../corpus/types.js"
-import { chooseExcerpt } from "./excerpt.js"
 import { eventKey, pageKey } from "./ids.js"
+import { planEvidenceNote } from "../evidence.js"
 
 export type PlannedEvent = {
 	sourceId: string
@@ -148,18 +148,7 @@ export function buildLoadPlan(
 			id: claim.id,
 			text: claim.text,
 			confidence: claim.confidence,
-			evidence: claim.evidence.map((ev) => {
-				const record = records.get(ev.sourceId)
-				if (!record) {
-					throw new Error(
-						`corpus is incomplete: no rendered record for evidence source ${ev.sourceId}`,
-					)
-				}
-				return {
-					sourceId: ev.sourceId,
-					note: chooseExcerpt(record.body, ev.anchor),
-				}
-			}),
+			evidence: claim.evidence.map((ev) => planEvidenceNote(ev, records)),
 		}))
 		evidenceRefsPlanned += claims.reduce(
 			(sum, claim) => sum + claim.evidence.length,

@@ -35,14 +35,27 @@ export type FakeAgentClientsOptions = {
 	/** artificial delay for every writeEvent call. */
 	writeEventDelayMs?: number
 	/** the agentId the support and account keys are pinned to; like the API,
-	 * a read from either role without that agentId is refused with 403. */
+	 * any call from either role without that agentId is refused with 403. */
 	pinnedAgentId?: string
+	/** the exact workspace grant every role key holds; like the API, a call
+	 * whose scopeRef sits outside it is refused with 403. */
+	grantedScopeRef?: string
 }
 
 export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
 	const pages: Record<string, unknown> = options.pages ?? {}
 	const logs: CallLog[] = []
 	const writtenEvents: WrittenEvent[] = []
+	const receipts: Array<{
+		role: AgentRole
+		input: Record<string, unknown>
+		eventId: string
+		chunkCreated: boolean
+	}> = []
+	const receiptsByKey = new Map<
+		string,
+		{ eventId: string; chunkCreated: boolean }
+	>()
 	let seq = 0
 	function note(
 		role: AgentRole,
@@ -51,20 +64,72 @@ export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
 	): void {
 		logs.push({ seq: ++seq, role, method, input })
 	}
+	/** Mirrors authorizePrincipalRequest's order: the pinned agentId first,
+	 * then the exact workspace grant, then the role's capabilities. */
+	function guard(
+		role: AgentRole,
+		method: string,
+		input: Record<string, unknown>,
+	): void {
+		if (
+			options.pinnedAgentId !== undefined &&
+			role !== "product" &&
+			input.agentId !== options.pinnedAgentId
+		) {
+			throw agentIdRequired()
+		}
+		if (
+			options.grantedScopeRef !== undefined &&
+			input.scopeRef !== options.grantedScopeRef
+		) {
+			throw scopeRefOutsideGrant(options.grantedScopeRef)
+		}
+		if (method === "wikiApply" && role === "product") {
+			throw proposeOnly()
+		}
+	}
+
+	/** Mirrors the API's idempotent duplicate: the original receipt comes
+	 * back with chunkCreated false. */
+	function writeReceipt(
+		method: string,
+		role: AgentRole,
+		input: Record<string, unknown>,
+	): { ok: true; eventId: string; chunkCreated: boolean } {
+		const key = `${method}:${String(input.idempotencyKey)}`
+		const stored = receiptsByKey.get(key)
+		if (stored) {
+			receipts.push({
+				role,
+				input,
+				eventId: stored.eventId,
+				chunkCreated: false,
+			})
+			return { ok: true, eventId: stored.eventId, chunkCreated: false }
+		}
+		const receipt = { eventId: `evt-${logs.length}`, chunkCreated: true }
+		receiptsByKey.set(key, receipt)
+		receipts.push({ role, input, ...receipt })
+		return { ok: true, ...receipt }
+	}
+
 	function clientFor(role: AgentRole): MdbrainClient {
 		const self = {
 			writeEvent: async (input: Record<string, unknown>) => {
 				note(role, "writeEvent", input)
+				guard(role, "writeEvent", input)
 				if (options.writeEventDelayMs) await delay(options.writeEventDelayMs)
 				writtenEvents.push({ role, input })
-				return { ok: true, eventId: `evt-${logs.length}`, chunkCreated: true }
+				return writeReceipt("writeEvent", role, input)
 			},
 			add: async (input: Record<string, unknown>) => {
 				note(role, "add", input)
-				return { ok: true, eventId: `evt-${logs.length}`, chunkCreated: true }
+				guard(role, "add", input)
+				return writeReceipt("add", role, input)
 			},
 			wikiApply: async (input: Record<string, unknown>) => {
 				note(role, "wikiApply", input)
+				guard(role, "wikiApply", input)
 				pages[String(input.slug)] = {
 					slug: input.slug,
 					revision: 1,
@@ -75,13 +140,7 @@ export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
 			},
 			wikiGet: async (input: Record<string, unknown>) => {
 				note(role, "wikiGet", input)
-				if (
-					options.pinnedAgentId !== undefined &&
-					role !== "product" &&
-					input.agentId !== options.pinnedAgentId
-				) {
-					throw agentIdRequired()
-				}
+				guard(role, "wikiGet", input)
 				const slug = String(input.slug)
 				if (options.refuseWikiGetFor?.[role]?.includes(slug)) {
 					throw notFound(slug)
@@ -101,6 +160,7 @@ export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
 		},
 		logs,
 		writtenEvents,
+		receipts,
 		pages,
 	}
 }
@@ -112,6 +172,31 @@ function agentIdRequired(): MdbrainClientError {
 			error: {
 				code: "FORBIDDEN",
 				message: "agentId is required for this API key",
+			},
+		}),
+	)
+}
+
+function scopeRefOutsideGrant(grant: string): MdbrainClientError {
+	return new MdbrainClientError(
+		403,
+		JSON.stringify({
+			error: {
+				code: "FORBIDDEN",
+				message: `scopeRef is outside this API key's workspace grant (${grant})`,
+			},
+		}),
+	)
+}
+
+function proposeOnly(): MdbrainClientError {
+	return new MdbrainClientError(
+		403,
+		JSON.stringify({
+			error: {
+				code: "FORBIDDEN",
+				message:
+					"this API key can read and propose, not write: use mdbrain_add",
 			},
 		}),
 	)

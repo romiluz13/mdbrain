@@ -1287,3 +1287,37 @@ describe("wiki MCP tools", () => {
 		expect("isError" in out ? out.isError : undefined).toBe(true)
 	})
 })
+
+describe("mdbrain_write_event timestamp", () => {
+	it("forwards a business timestamp to the client write", async () => {
+		const writeEvent = vi
+			.fn()
+			.mockResolvedValue({ ok: true, eventId: "e1", chunkCreated: true })
+		await handleToolCall(
+			"mdbrain_write_event",
+			{
+				role: "user",
+				body: "renewal risk thread",
+				idempotencyKey: "seed:run-1:event:src-renewal-05",
+				timestamp: "2026-10-01",
+			},
+			{ writeEvent } as never,
+		)
+		expect(writeEvent).toHaveBeenCalledWith(
+			expect.objectContaining({ timestamp: "2026-10-01" }),
+		)
+	})
+
+	it("leaves the timestamp unset when the caller gave none", async () => {
+		const writeEvent = vi
+			.fn()
+			.mockResolvedValue({ ok: true, eventId: "e1", chunkCreated: true })
+		await handleToolCall(
+			"mdbrain_write_event",
+			{ role: "user", body: "renewal risk thread", idempotencyKey: "k1" },
+			{ writeEvent } as never,
+		)
+		const arg = (writeEvent.mock.calls[0] ?? [])[0] as Record<string, unknown>
+		expect(arg.timestamp).toBeUndefined()
+	})
+})

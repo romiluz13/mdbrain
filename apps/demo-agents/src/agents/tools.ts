@@ -2,6 +2,8 @@ import { jsonSchema, tool, type ToolSet } from "ai"
 import type { MdbrainClient } from "@mdbrain/client"
 import { handleToolCall, toolList } from "@mdbrain/mcp"
 import type { AgentRole } from "./config.js"
+import { resolveEventEvidence, type RunWrites } from "../evidence.js"
+import type { PinnedEvent, PinnedPage } from "./story.js"
 
 /** Read tools every role gets: memory search plus the wiki read surface. */
 const SHARED_READ_TOOLS = [
@@ -36,6 +38,14 @@ export function agentTools(input: {
 	role: AgentRole
 	agentId: string
 	scopeRef: string
+	/** Pinned replay events for this role (330): every write receipt is
+	 * captured into the run ledger, keyed by corpus source id. */
+	events?: PinnedEvent[]
+	/** The page this role may apply (330): its claims' evidence refs are
+	 * resolved to this run's event ids before the call reaches the API. */
+	page?: PinnedPage
+	/** The run's shared write ledger (330). */
+	writes?: RunWrites
 }): ToolSet {
 	const names = new Set<string>(agentToolNames(input.role))
 	const tools: ToolSet = {}
@@ -46,8 +56,30 @@ export function agentTools(input: {
 			inputSchema: jsonSchema(
 				def.inputSchema as unknown as Parameters<typeof jsonSchema>[0],
 			),
-			execute: async (args) =>
-				handleToolCall(def.name, identity(args, input), input.client),
+			execute: async (args) => {
+				let callArgs = identity(args, input)
+				if (def.name === "mdbrain_write_event") {
+					callArgs = stampPinnedTimestamp(callArgs, input)
+				}
+				if (def.name === "mdbrain_wiki_apply") {
+					const prepared = resolvePinnedPage(callArgs, input)
+					if (typeof prepared === "string") {
+						input.writes?.refusals.push(prepared)
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify({ error: prepared }) },
+							],
+							isError: true,
+						}
+					}
+					callArgs = prepared
+				}
+				const result = await handleToolCall(def.name, callArgs, input.client)
+				if (def.name === "mdbrain_write_event") {
+					captureReceipt(result, callArgs, input)
+				}
+				return result
+			},
 		})
 	}
 	return tools
@@ -63,4 +95,87 @@ function identity(
 		scope: "workspace",
 		scopeRef: input.scopeRef,
 	}
+}
+
+/** Stamps the pinned business timestamp onto a pinned replay write: the
+ * corpus source's date, so the replayed event carries business time. */
+function stampPinnedTimestamp(
+	args: Record<string, unknown>,
+	input: { events?: PinnedEvent[] },
+): Record<string, unknown> {
+	const pinned = input.events?.find(
+		(event) => event.idempotencyKey === args.idempotencyKey,
+	)
+	return pinned ? { ...args, timestamp: pinned.timestamp } : args
+}
+
+/** Captures a pinned write's receipt into the run ledger: the event id this
+ * run's mdbrain_write_event returned, keyed by corpus source id. */
+function captureReceipt(
+	result: unknown,
+	callArgs: Record<string, unknown>,
+	input: { events?: PinnedEvent[]; writes?: RunWrites },
+): void {
+	if (!input.events || !input.writes) return
+	const text = (
+		result as { content?: Array<{ type: string; text?: string }> }
+	).content?.find((part) => part.type === "text")?.text
+	if (!text) return
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(text)
+	} catch {
+		return
+	}
+	const receipt = parsed as { ok?: unknown; eventId?: unknown; error?: unknown }
+	const pinned = input.events.find(
+		(event) => event.idempotencyKey === callArgs.idempotencyKey,
+	)
+	if (!pinned) return
+	if (receipt.ok === true && typeof receipt.eventId === "string") {
+		input.writes.eventIdBySource.set(pinned.sourceId, receipt.eventId)
+		// A successful retry clears any earlier refusal the same source hit.
+		input.writes.writeRefusals.delete(pinned.sourceId)
+		return
+	}
+	if (receipt.error !== undefined) {
+		// The API refused the pinned write: record its reason so the run
+		// fails closed with what the API actually said.
+		input.writes.writeRefusals.set(
+			pinned.sourceId,
+			`mdbrain_write_event for ${pinned.sourceId} failed: ${JSON.stringify(receipt.error)}`,
+		)
+	}
+}
+
+/** Resolves the pinned page's claim evidence to this run's event ids. A
+ * cited source with no written event refuses the whole call: no API call,
+ * the refusal lands in the ledger, and the run fails closed. */
+function resolvePinnedPage(
+	args: Record<string, unknown>,
+	input: { page?: PinnedPage; writes?: RunWrites },
+): Record<string, unknown> | string {
+	const page = input.page
+	const writes = input.writes
+	if (!page || !writes || !Array.isArray(args.claims)) return args
+	const resolved: Array<Record<string, unknown>> = []
+	for (const claim of args.claims as Array<Record<string, unknown>>) {
+		const pinned = (page.claims ?? []).find(
+			(candidate) => candidate.id === claim.id,
+		)
+		const refs = pinned?.evidence ?? []
+		if (refs.length === 0) {
+			resolved.push(claim)
+			continue
+		}
+		const outcome = resolveEventEvidence({
+			notes: refs.map((ref) => ({ sourceId: ref.sourceId, note: ref.note })),
+			eventIdBySource: writes.eventIdBySource,
+			missing: (sourceId) =>
+				`fail-closed: page ${page.slug} cites ${sourceId}, which has no written event in this run (claim ${pinned?.id ?? claim.id})`,
+		})
+		if ("refusal" in outcome) return outcome.refusal
+		resolved.push({ ...claim, evidence: outcome })
+	}
+	return { ...args, claims: resolved }
 }

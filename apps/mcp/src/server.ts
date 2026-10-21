@@ -196,6 +196,7 @@ export const toolList = [
 				role: { type: "string", enum: ["user", "assistant", "system", "tool"] },
 				body: { type: "string" },
 				idempotencyKey: { type: "string" },
+				timestamp: { type: "string" },
 				requestId: { type: "string" },
 				agentId: { type: "string" },
 				sessionId: { type: "string" },
@@ -1254,6 +1255,8 @@ export async function handleToolCall(
 				body: typeof args.body === "string" ? args.body : "",
 				idempotencyKey:
 					typeof args.idempotencyKey === "string" ? args.idempotencyKey : "",
+				timestamp:
+					typeof args.timestamp === "string" ? args.timestamp : undefined,
 				requestId:
 					typeof args.requestId === "string" ? args.requestId : undefined,
 				agentId: typeof args.agentId === "string" ? args.agentId : undefined,

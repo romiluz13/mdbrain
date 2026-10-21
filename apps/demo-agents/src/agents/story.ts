@@ -1,7 +1,8 @@
 import type { MdbrainClient, MdbrainWikiPromotion } from "@mdbrain/client"
 import { ROLE_LABELS, type AgentRole } from "./config.js"
 import { eventKey } from "../seeding/ids.js"
-import type { RenderedRecord, World } from "../corpus/types.js"
+import type { RenderedRecord, SourceSpec, World } from "../corpus/types.js"
+import { planEvidenceNote } from "../evidence.js"
 
 /** A held-back source the role must replay as a memory event, pinned to
  * the seeded idempotency key and the rendered body (the same evidence
@@ -11,6 +12,8 @@ export type PinnedEvent = {
 	role: "user" | "assistant" | "system" | "tool"
 	body: string
 	idempotencyKey: string
+	/** The corpus source's date: the business time the replayed event carries. */
+	timestamp: string
 }
 
 /** Exact wikiApply payload the support role must land. */
@@ -69,7 +72,7 @@ export function buildRolePlans(input: {
 			throw new Error(`replay source ${source.id} has no storyline`)
 		}
 		events[roleForStoryline(source.storyline)].push(
-			replayEvent(input.records, input.scopeRef, source.id),
+			replayEvent(input.records, input.scopeRef, source),
 		)
 	}
 	const incoming = input.world.contradiction.incoming
@@ -84,6 +87,14 @@ export function buildRolePlans(input: {
 			id: claim.id,
 			text: claim.text,
 			confidence: claim.confidence,
+			// Plan-time refs (330): the corpus source id plus the note built the
+			// way the seeder builds it. The tool adapter swaps the source id for
+			// this run's event id at apply time, so the claim can never reach
+			// the API unsourced.
+			evidence: claim.evidence.map((ref) => ({
+				kind: "event" as const,
+				...planEvidenceNote(ref, input.records),
+			})),
 		})),
 		relationships: incoming.relationships.map((relationship) => ({
 			targetPageSlug: relationship.targetPageSlug,
@@ -95,12 +106,18 @@ export function buildRolePlans(input: {
 		trustTier: "standard",
 	}
 	// Staging (ticket 10): the account role reads the support role's
-	// completed revision and answers with one cross-role memory note.
+	// completed revision and answers with one cross-role memory note. It
+	// lands during the run, after every replayed source, so its business
+	// time is the latest source date in the corpus.
+	const accountNoteAt = input.world.sources
+		.map((source) => source.date)
+		.reduce((latest, date) => (date > latest ? date : latest))
 	events.account.push({
 		sourceId: "account-note",
 		role: "user",
 		body: `Cross-role note after reading ${incoming.slug}: the account team confirms the champion context and folds the renewal risk into the account history.`,
 		idempotencyKey: `agents:${input.runId}:account-note`,
+		timestamp: accountNoteAt,
 	})
 	const proposal: PinnedProposal = {
 		content:
@@ -205,17 +222,18 @@ export function buildRolePlans(input: {
 function replayEvent(
 	records: Map<string, RenderedRecord>,
 	scopeRef: string,
-	sourceId: string,
+	source: Pick<SourceSpec, "id" | "date">,
 ): PinnedEvent {
-	const record = records.get(sourceId)
+	const record = records.get(source.id)
 	if (!record) {
-		throw new Error(`no rendered record for replay source ${sourceId}`)
+		throw new Error(`no rendered record for replay source ${source.id}`)
 	}
 	return {
-		sourceId,
+		sourceId: source.id,
 		role: "user",
 		body: record.body,
-		idempotencyKey: eventKey(scopeRef, sourceId),
+		idempotencyKey: eventKey(scopeRef, source.id),
+		timestamp: source.date,
 	}
 }
 
