@@ -176,13 +176,14 @@ export function RoleCard({
 											{step.name}
 											{step.detail ? ` · ${step.detail}` : ""}
 										</span>
-										<span className={styles.stepStatus}>
-											{" "}
-											{stepStatus(answer)}
+										<span className={styles.stepMeta}>
+											<span className={styles.stepStatus}>
+												{stepStatus(answer)}
+											</span>
+											{answer?.status === "confirmed" ? (
+												<TimeLine kind="business" iso={answer.businessTime} />
+											) : null}
 										</span>
-										{answer?.status === "confirmed" ? (
-											<TimeLine kind="business" iso={answer.businessTime} />
-										) : null}
 									</div>
 								</li>
 							)

@@ -30,7 +30,7 @@ const INCOMPLETE: Record<IncompleteReason, { title: string; body: string }> = {
 	},
 	AGENT_RUN_INCOMPLETE: {
 		title: "The agent run stopped early",
-		body: "The agent run stopped before it finished. What it recorded before it stopped is shown.",
+		body: "Only what the run recorded before it stopped is shown here, and nothing is filled in.",
 	},
 	RUN_FAILED: {
 		title: "This run stopped while it was being filled",

@@ -182,6 +182,7 @@ for (const state of STATES) {
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
 		).toHaveCount(0)
 		await settled(page)
+		await page.evaluate(() => window.scrollTo(0, 0))
 		await page.screenshot({
 			path: `${DIR}/${testInfo.project.name}-state-${state.name}.png`,
 			fullPage: true,

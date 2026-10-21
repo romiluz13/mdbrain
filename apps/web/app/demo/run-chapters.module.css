@@ -320,6 +320,12 @@
 	overflow-wrap: anywhere;
 }
 
+.stepMeta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 12px;
+}
+
 .stepStatus {
 	color: var(--ink-2);
 	overflow-wrap: anywhere;
