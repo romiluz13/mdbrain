@@ -40,6 +40,7 @@ export function BrainChapter() {
 			</div>
 			<div className={styles.workspace}>
 				<GraphStage
+					view3d
 					title="Wiki graph"
 					caption="Each dot is a stored page, colored by its group. Rings mark pages that hold a contradicted claim."
 				/>

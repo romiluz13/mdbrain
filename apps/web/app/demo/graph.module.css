@@ -52,6 +52,118 @@
 	width: min(100%, 420px);
 }
 
+.canvasFill {
+	position: absolute;
+	inset: 0;
+	cursor: crosshair;
+	touch-action: manipulation;
+}
+
+.view {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+}
+
+/* The flat and the 3D map share this box, so neither one's arrival moves
+ * anything: it is the same size before, during and after the 3D map loads. */
+.viewBox {
+	position: relative;
+	width: 100%;
+	height: clamp(340px, calc(100dvh - 340px), 780px);
+}
+
+.stage[data-compact="true"] .viewBox {
+	height: clamp(320px, 52dvh, 480px);
+}
+
+@media (max-width: 700px) {
+	.viewBox,
+	.stage[data-compact="true"] .viewBox {
+		height: auto;
+		aspect-ratio: 1 / 1;
+	}
+}
+
+.flat {
+	position: absolute;
+	inset: 0;
+}
+
+.flat[data-covered="true"] {
+	visibility: hidden;
+}
+
+.sceneLayer {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+}
+
+.sceneLabel {
+	display: inline-block;
+	max-width: 240px;
+	padding: 3px 6px;
+	border-radius: var(--r1);
+	background: rgba(10, 30, 36, 0.9);
+	color: var(--scope-ink);
+	font-size: var(--t12);
+	font-weight: 600;
+	white-space: nowrap;
+	transform: translate(12px, -50%);
+}
+
+.sceneLabel[data-side="left"] {
+	transform: translate(calc(-100% - 12px), -50%);
+}
+
+.viewBar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px 16px;
+	min-height: var(--target);
+}
+
+.viewStatus {
+	flex: 1 1 220px;
+	color: var(--scope-ink-2);
+	font-size: var(--t13);
+}
+
+.viewActions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.viewButton {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: var(--target);
+	min-width: var(--target);
+	padding: 0 14px;
+	border: 1px solid var(--scope-ink-2);
+	border-radius: var(--r1);
+	background: transparent;
+	color: var(--scope-ink);
+	font: inherit;
+	font-size: var(--t13);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.viewButton:hover {
+	background: rgba(246, 248, 245, 0.1);
+}
+
+.viewButton[aria-pressed="true"] {
+	background: rgba(246, 248, 245, 0.16);
+	border-color: var(--scope-ink);
+}
+
 .canvas {
 	position: absolute;
 	inset: 0;

@@ -7,6 +7,7 @@ import { useDemo } from "../demo-context.js"
 import { countOf } from "../../../lib/demo-data/plural.js"
 import styles from "../graph.module.css"
 import { GraphCanvas } from "./graph-canvas.js"
+import { GraphView } from "./graph-view.js"
 import { StatePanel } from "./state-panel.js"
 
 type Props = {
@@ -17,18 +18,25 @@ type Props = {
 	compact?: boolean
 	/** Stays in view beside a long list when the page has two columns. */
 	sticky?: boolean
+	/** Offers the 3D map where the device can carry it. The flat map is always
+	 * there first, and stays as the fallback. */
+	view3d?: boolean
+	/** The pair of pages the 3D camera frames; null keeps the whole brain in view. */
+	frame?: readonly [string, string] | null
 }
 
 const NONE: ReadonlySet<string> = new Set()
 
-/** The graph stage every map chapter shares. Ticket 13 swaps the body of this
- * component for the 3D renderer; the props are the seam. */
+/** The graph stage every map chapter shares. Chapters that ask for `view3d`
+ * get the 3D map over the flat one; the rest keep the flat map as it was. */
 export function GraphStage({
 	title,
 	highlight = NONE,
 	caption,
 	compact,
 	sticky,
+	view3d,
+	frame,
 }: Props) {
 	const { data, graph, layout, pinned, pin, reload } = useDemo()
 	const ready = graph !== null && layout !== null
@@ -49,14 +57,26 @@ export function GraphStage({
 				) : null}
 			</header>
 			{ready ? (
-				<GraphCanvas
-					graph={graph}
-					layout={layout}
-					highlight={highlight}
-					pinned={pinned}
-					onPin={pin}
-					label={`Map of ${countOf(graph.nodes.length, "stored page")} in ${countOf(graph.groups.length, "group")}, ${countOf(graph.edges.length, "link")}. Use the page picker to read a page.`}
-				/>
+				view3d ? (
+					<GraphView
+						graph={graph}
+						layout={layout}
+						highlight={highlight}
+						pinned={pinned}
+						onPin={pin}
+						label={mapLabel(graph)}
+						frame={frame}
+					/>
+				) : (
+					<GraphCanvas
+						graph={graph}
+						layout={layout}
+						highlight={highlight}
+						pinned={pinned}
+						onPin={pin}
+						label={mapLabel(graph)}
+					/>
+				)
 			) : (
 				<StageState
 					state={data.map}
@@ -69,6 +89,9 @@ export function GraphStage({
 		</section>
 	)
 }
+
+const mapLabel = (graph: Graph) =>
+	`Map of ${countOf(graph.nodes.length, "stored page")} in ${countOf(graph.groups.length, "group")}, ${countOf(graph.edges.length, "link")}. Use the page picker to read a page.`
 
 function StageState({
 	state,

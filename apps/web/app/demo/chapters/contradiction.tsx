@@ -45,6 +45,14 @@ export function ContradictionChapter() {
 		() => new Set(found?.claims.map((claim) => claim.pageSlug) ?? []),
 		[found],
 	)
+	// The camera frames the two pages from the beat the case is recorded on, and
+	// goes back as the reader steps back.
+	const framed = useMemo(() => {
+		const [first, second] = [...highlight]
+		return first !== undefined && second !== undefined && beat >= lastBeat
+			? ([first, second] as const)
+			: null
+	}, [highlight, beat, lastBeat])
 	return (
 		<>
 			<StatePanel
@@ -153,8 +161,10 @@ export function ContradictionChapter() {
 				)}
 			</StatePanel>
 			<GraphStage
+				view3d
 				title={found ? "Where the two pages sit" : "The pages in this brain"}
 				highlight={highlight}
+				frame={framed}
 				compact
 			/>
 		</>

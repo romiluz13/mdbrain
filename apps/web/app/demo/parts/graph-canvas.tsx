@@ -13,6 +13,8 @@ type Props = {
 	pinned: string | null
 	onPin: (slug: string) => void
 	label: string
+	/** Fills the box it sits in instead of sizing itself. */
+	fill?: boolean
 }
 
 const SIGNAL = "#e5502b"
@@ -46,6 +48,7 @@ export function GraphCanvas({
 	pinned,
 	onPin,
 	label,
+	fill,
 }: Props) {
 	const wrapRef = useRef<HTMLDivElement>(null)
 	const staticRef = useRef<HTMLCanvasElement>(null)
@@ -275,7 +278,7 @@ export function GraphCanvas({
 		// biome-ignore lint/a11y/useKeyWithClickEvents: pinning by click is the pointer path; the page picker beside the map is the keyboard path
 		<div
 			ref={wrapRef}
-			className={styles.canvasWrap}
+			className={fill ? styles.canvasFill : styles.canvasWrap}
 			role="img"
 			aria-label={label}
 			onPointerMove={(event) => {
