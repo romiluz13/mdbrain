@@ -21,9 +21,12 @@ The proxy forwards one fixed list of reads and refuses everything else (other me
 | `MDBRAIN_DEMO_API_BASE_URL` | The Mdbrain API to read from |
 | `MDBRAIN_DEMO_READ_KEY` | A read-capable key the proxy sends upstream |
 | `MDBRAIN_DEMO_SCOPE_REF` | The pinned run's scope reference |
+| `MDBRAIN_DEMO_AGENT_ID` | The agent the pinned run's events were written under, `demo-run-<slot>` for a seeded slot |
 | `MDBRAIN_DEMO_SCOPE` | The scope, default `workspace` |
 
-Without the first three the route answers `503 PROXY_NOT_CONFIGURED`.
+Without the first four the route answers `503 PROXY_NOT_CONFIGURED`. Both identifiers must match `[A-Za-z0-9_-]{1,128}`.
+
+An event citation confirms its source through recall, which searches as the request's agent and falls back to `main` when none is sent. Every demo event lives under the run's own agent, so without `MDBRAIN_DEMO_AGENT_ID` no event citation resolves (`404 CITATION_UNRESOLVED`). The proxy sends the agent on the `cite` read only: no other read uses it, so sending it elsewhere would only widen what the key's grant must allow. A caller-set `agentId` is still refused.
 
 ## Tests
 

@@ -10,6 +10,7 @@ const env: DemoProxyEnv = {
 	readKey: "test-read-key-123",
 	scope: "workspace",
 	scopeRef: "demo-run-2",
+	agentId: "demo-run-2",
 }
 
 type UpstreamCall = { url: URL; method: string; headers: Headers; body: string }

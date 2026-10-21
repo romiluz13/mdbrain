@@ -24,6 +24,7 @@ const proxyEnv: DemoProxyEnv = {
 	readKey: "test-read-key-123",
 	scope: "workspace",
 	scopeRef: "demo-run-2",
+	agentId: "demo-run-2",
 }
 
 // The loader reads against the demo route prefix, exactly as production

@@ -6,6 +6,7 @@ const env: DemoProxyEnv = {
 	readKey: "test-read-key-123",
 	scope: "workspace",
 	scopeRef: "demo-run-2",
+	agentId: "demo-run-2",
 }
 
 function request(pathAndQuery: string, method = "GET"): Request {
@@ -475,18 +476,20 @@ describe("key protection", () => {
 })
 
 describe("readDemoProxyEnv", () => {
-	it("reads the three server-only variables", () => {
+	it("reads the server-only variables", () => {
 		expect(
 			readDemoProxyEnv({
 				MDBRAIN_DEMO_API_BASE_URL: "http://127.0.0.1:3857",
 				MDBRAIN_DEMO_READ_KEY: "k",
 				MDBRAIN_DEMO_SCOPE_REF: "demo-run-1",
+				MDBRAIN_DEMO_AGENT_ID: "demo-run-1",
 			}),
 		).toEqual({
 			apiBaseUrl: "http://127.0.0.1:3857",
 			readKey: "k",
 			scope: "workspace",
 			scopeRef: "demo-run-1",
+			agentId: "demo-run-1",
 		})
 	})
 
@@ -527,6 +530,7 @@ describe("readDemoProxyEnv", () => {
 				MDBRAIN_DEMO_API_BASE_URL: "http://x",
 				MDBRAIN_DEMO_READ_KEY: "k",
 				MDBRAIN_DEMO_SCOPE_REF: "demo-run-1",
+				MDBRAIN_DEMO_AGENT_ID: "demo-run-1",
 				MDBRAIN_DEMO_SCOPE: "other",
 			})?.scope,
 		).toBe("other")

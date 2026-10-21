@@ -22,6 +22,9 @@ export interface DemoProxyEnv {
 	readKey: string
 	scope: string
 	scopeRef: string
+	/** The agent the pinned run's events were written under. Event citations
+	 * confirm their source through recall, which searches as this agent. */
+	agentId: string
 }
 
 /** The demo read operations this proxy forwards, with the upstream route and
@@ -97,7 +100,8 @@ export function readDemoProxyEnv(
 	const readKey = env.MDBRAIN_DEMO_READ_KEY ?? ""
 	const scopeRef = (env.MDBRAIN_DEMO_SCOPE_REF ?? "").trim()
 	const scope = (env.MDBRAIN_DEMO_SCOPE ?? "").trim() || "workspace"
-	if (!apiBaseUrl || !readKey || !scopeRef) {
+	const agentId = (env.MDBRAIN_DEMO_AGENT_ID ?? "").trim()
+	if (!apiBaseUrl || !readKey || !scopeRef || !agentId) {
 		return null
 	}
 	let base: URL
@@ -109,7 +113,11 @@ export function readDemoProxyEnv(
 	if (base.protocol !== "http:" && base.protocol !== "https:") {
 		return null
 	}
-	if (!SCOPE_REF_PATTERN.test(scopeRef) || !SCOPE_REF_PATTERN.test(scope)) {
+	if (
+		!SCOPE_REF_PATTERN.test(scopeRef) ||
+		!SCOPE_REF_PATTERN.test(scope) ||
+		!SCOPE_REF_PATTERN.test(agentId)
+	) {
 		return null
 	}
 	return {
@@ -117,6 +125,7 @@ export function readDemoProxyEnv(
 		readKey,
 		scope,
 		scopeRef,
+		agentId,
 	}
 }
 
@@ -518,6 +527,12 @@ export async function handleDemoRead(
 	} else {
 		upstreamUrl.searchParams.set("scope", env.scope)
 		upstreamUrl.searchParams.set("scopeRef", env.scopeRef)
+		// Only the citation read uses it: the other wiki reads hand it to a
+		// handle lookup that ignores it, so sending it there would only widen
+		// what the key's grant has to allow.
+		if (matched.operation === "cite") {
+			upstreamUrl.searchParams.set("agentId", env.agentId)
+		}
 		for (const [key, value] of forwarded) {
 			upstreamUrl.searchParams.set(key, value)
 		}

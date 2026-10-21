@@ -184,3 +184,47 @@ describe("demo upstream fixture", () => {
 		expect(wrongRun.status).toBe(403)
 	})
 })
+
+describe("event citations in the fixture", () => {
+	const upstream = createDemoUpstream()
+	const sourceId = [...upstream.data.bodies.keys()][0]
+	const marker = `[[event:evt-${sourceId}]]`
+	const citedBy = "[[wiki:company/northstar-systems#northstar-sla@r1]]"
+
+	const cite = (agentId: string | null) => {
+		const url = new URL("http://upstream.test/v1/cite")
+		url.searchParams.set("scope", FIXTURE_ENV.scope)
+		url.searchParams.set("scopeRef", FIXTURE_ENV.scopeRef)
+		url.searchParams.set("marker", marker)
+		url.searchParams.set("citedBy", citedBy)
+		if (agentId !== null) url.searchParams.set("agentId", agentId)
+		return upstream.fetch(url, {
+			headers: { authorization: `Bearer ${FIXTURE_ENV.readKey}` },
+		})
+	}
+
+	it("resolve for the run's own agent", async () => {
+		const response = await cite(FIXTURE_ENV.agentId)
+		expect(response.status).toBe(200)
+		expect(await response.json()).toMatchObject({
+			status: "resolved",
+			kind: "event",
+		})
+	})
+
+	it("stay unresolved without an agent, as the real API answers for the default agent", async () => {
+		const response = await cite(null)
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_UNRESOLVED" },
+		})
+	})
+
+	it("stay unresolved for another agent", async () => {
+		const response = await cite("main")
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_UNRESOLVED" },
+		})
+	})
+})

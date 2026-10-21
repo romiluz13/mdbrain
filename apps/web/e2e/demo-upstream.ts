@@ -14,6 +14,7 @@ export const FIXTURE_ENV: DemoProxyEnv = {
 	readKey: "e2e-read-key",
 	scope: "workspace",
 	scopeRef: "demo-run-e2e",
+	agentId: "demo-run-e2e",
 }
 
 export const FIXTURE_FIRST_INGESTION = "2026-10-20T09:00:00.000Z"
@@ -442,6 +443,16 @@ export function createDemoUpstream(options: { padTo?: number } = {}) {
 					400,
 					"INVALID_MARKER",
 					"the marker or citedBy is not a citation marker",
+				)
+			}
+			// The real API confirms an event through recall as the request's agent
+			// (the default "main" when none is sent); the run's events live under
+			// the run's own agent, so any other agent finds nothing.
+			if (url.searchParams.get("agentId") !== FIXTURE_ENV.agentId) {
+				return failure(
+					404,
+					"CITATION_UNRESOLVED",
+					"the source could not be confirmed through governed recall",
 				)
 			}
 			const sourceId = parsed.marker.eventId.replace(/^evt-/, "")
