@@ -126,6 +126,18 @@ test.describe("states", () => {
 					screen.locator('[data-state="loading"]'),
 					`${chapter.id} is still loading under ${stateMode}`,
 				).toHaveCount(0)
+				if (chapter.id === "ask") {
+					await expect(
+						screen.getByText(
+							"Example questions appear once the pages are read.",
+						),
+						`ask says why it has no examples under ${stateMode}`,
+					).toBeVisible()
+					await expect(
+						screen.getByRole("list", { name: "Example questions" }),
+						`ask offers no invented examples under ${stateMode}`,
+					).toHaveCount(0)
+				}
 			}
 		}
 	})
