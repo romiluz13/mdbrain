@@ -3,7 +3,14 @@
 // states through the fixture route, so they do not run against a live stack.
 import { expect, test } from "@playwright/test"
 import { CHAPTERS } from "../app/demo/chapters"
-import { goto, mapReady, openDemo, stat } from "./demo-helpers"
+import {
+	goto,
+	mapReady,
+	openAnyCitation,
+	openDemo,
+	settleContradiction,
+	stat,
+} from "./demo-helpers"
 import { installDemoProxy, LIVE } from "./demo-proxy"
 
 test.describe("states", () => {
@@ -140,6 +147,32 @@ test.describe("states", () => {
 				}
 			}
 		}
+	})
+
+	test("a run with no contradiction recorded yet says so on chapter 5, and does not read as an error", async ({
+		page,
+	}) => {
+		const proxy = await installDemoProxy(page, { contradiction: "none" })
+		await openDemo(page)
+		await mapReady(page)
+		await expect(stat(page, "contradictions")).toHaveText("0")
+		const chapter = CHAPTERS.findIndex((entry) => entry.id === "contradiction")
+		await goto(page, chapter)
+		const screen = page.getByTestId("screen")
+		const honest = screen.locator('[data-state="empty"]')
+		await expect(honest).toBeVisible()
+		await expect(honest).toContainText("Not recorded in this run yet")
+		await expect(honest).toContainText(/none is recorded in this run yet/i)
+		await expect(honest).toContainText(/agents write/i)
+		await expect(screen.locator('[data-state="error"]')).toHaveCount(0)
+		await expect(screen.getByRole("alert")).toHaveCount(0)
+		await expect(screen.getByTestId("contradiction-stamp")).toHaveCount(0)
+		await expect(screen.getByTestId("contradiction-claim")).toHaveCount(0)
+		expect(await settleContradiction(page, proxy)).toBe("none")
+		await openAnyCitation(page, proxy)
+		await expect(
+			page.getByRole("dialog").getByTestId("source-text").first(),
+		).toBeVisible()
 	})
 
 	test("a source with no business time says it is missing, and keeps ingestion time", async ({

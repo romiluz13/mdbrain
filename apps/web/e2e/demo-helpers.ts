@@ -1,7 +1,11 @@
 import AxeBuilder from "@axe-core/playwright"
 import { expect, type Locator, type Page } from "@playwright/test"
-import type { MdbrainWikiClaim, MdbrainWikiPageView } from "@mdbrain/client"
-import { CHAPTERS } from "../app/demo/chapters"
+import type {
+	MdbrainWikiChange,
+	MdbrainWikiClaim,
+	MdbrainWikiPageView,
+} from "@mdbrain/client"
+import { CHAPTERS, chapterIndex } from "../app/demo/chapters"
 import { formatUtc } from "../lib/demo-data/views.js"
 import type { installDemoProxy } from "./demo-proxy"
 
@@ -73,6 +77,25 @@ export function listPages(proxy: DemoProxy): MdbrainWikiPageView[] {
 	return [...bySkip.entries()]
 		.sort((a, b) => Number(a[0]) - Number(b[0]))
 		.flatMap((entry) => entry[1])
+}
+
+/** Every revision the changes feed served, across all of its pages. The feed
+ * is paginated (100 a page live), so the latest response alone is only its
+ * last page. */
+export function allChanges(proxy: DemoProxy): MdbrainWikiChange[] {
+	const byRevision = new Map<string, MdbrainWikiChange>()
+	for (const entry of proxy.responses) {
+		if (
+			entry.url.pathname === "/api/demo/v1/wiki/changes" &&
+			entry.status === 200
+		) {
+			for (const change of (entry.body as { changes: MdbrainWikiChange[] })
+				.changes) {
+				byRevision.set(`${change.pageSlug}@${change.revision}`, change)
+			}
+		}
+	}
+	return [...byRevision.values()]
 }
 
 export function listTotal(proxy: DemoProxy): number {
@@ -183,6 +206,58 @@ export async function expectNoSeriousAccessibilityViolations(
 			nodes: violation.nodes.map((node) => node.target),
 		})),
 	).toEqual([])
+}
+
+const NONE_YET = /none is recorded in this run yet/i
+
+/** Waits for chapter 5 to settle and says which case the run is. The proxy's
+ * own lint answer decides: a run with no unresolved contradiction (a seeded
+ * slot before its agent run) must show the honest not-yet state and nothing
+ * that reads as an error; one with a record must show the stamp. Anything
+ * else, an error panel included, fails here rather than skipping. */
+export async function settleContradiction(
+	page: Page,
+	proxy: DemoProxy,
+): Promise<"recorded" | "none"> {
+	const screen = page.getByTestId("screen")
+	const stamp = screen.getByTestId("contradiction-stamp")
+	const honest = screen.getByText(NONE_YET)
+	await expect(stamp.or(honest)).toBeVisible()
+	await proxy.flush()
+	const lint = bodyOf<{ unresolvedContradictions: unknown[] }>(
+		proxy.latest("wiki/lint"),
+		"lint",
+	)
+	if (lint.unresolvedContradictions.length > 0) {
+		await expect(stamp).toBeVisible()
+		return "recorded"
+	}
+	await expect(honest).toBeVisible()
+	await expect(stamp).toHaveCount(0)
+	await expect(screen.locator('[data-state="error"]')).toHaveCount(0)
+	await expect(screen.getByRole("alert")).toHaveCount(0)
+	return "none"
+}
+
+/** Opens a citation dialog from where this run has one: chapter 5's first
+ * claim when a contradiction is recorded, else the first revision on chapter 7. */
+export async function openAnyCitation(
+	page: Page,
+	proxy: DemoProxy,
+): Promise<void> {
+	await goto(page, chapterIndex("contradiction"))
+	if ((await settleContradiction(page, proxy)) === "recorded") {
+		await page
+			.getByRole("button", { name: "Open citation for claim one" })
+			.click()
+		return
+	}
+	await goto(page, chapterIndex("changes"))
+	await page
+		.getByTestId("change-row")
+		.getByRole("button", { name: /^Open citation for:/ })
+		.first()
+		.click()
 }
 
 /** Opens a chapter from the rail by its title. */

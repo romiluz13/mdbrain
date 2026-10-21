@@ -23,7 +23,8 @@ export function ContradictionChapter() {
 			<StatePanel
 				state={data.contradiction}
 				what="the recorded contradiction"
-				emptyNote="No contradiction is recorded in this run."
+				emptyTitle="Not recorded in this run yet"
+				emptyNote="None is recorded in this run yet. Agents write the contradiction live, as they read the sources, so this chapter fills in during an agent run. Nothing is shown here in its place."
 				onRetry={reload}
 			>
 				{(record) => (

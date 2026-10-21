@@ -3,7 +3,13 @@
 // Set DEMO_E2E_LIVE=1 to shoot a live stack instead of the fixture.
 import { expect, test } from "@playwright/test"
 import { CHAPTERS } from "../app/demo/chapters"
-import { goto, mapReady, openDemo, settled } from "./demo-helpers"
+import {
+	goto,
+	mapReady,
+	openDemo,
+	settleContradiction,
+	settled,
+} from "./demo-helpers"
 import { installDemoProxy } from "./demo-proxy"
 
 const DIR = process.env.DEMO_SHOTS_DIR
@@ -12,7 +18,7 @@ test.skip(!DIR, "set DEMO_SHOTS_DIR to take the screenshots")
 
 for (const [index, chapter] of CHAPTERS.entries()) {
 	test(`shot ${index + 1} ${chapter.id}`, async ({ page }, testInfo) => {
-		await installDemoProxy(page)
+		const proxy = await installDemoProxy(page)
 		await openDemo(page)
 		await mapReady(page)
 		if (index > 0) {
@@ -37,7 +43,7 @@ for (const [index, chapter] of CHAPTERS.entries()) {
 				"matches",
 			)
 		} else if (chapter.id === "contradiction") {
-			await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
+			await settleContradiction(page, proxy)
 		}
 		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
 		const canvas = page.locator('canvas[data-layer="static"]').first()

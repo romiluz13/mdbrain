@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import {
+	loadContradictions,
 	loadWikiChanges,
 	loadWikiMap,
 	type DemoDataUpstream,
@@ -226,5 +227,73 @@ describe("event citations in the fixture", () => {
 		expect(await response.json()).toMatchObject({
 			error: { code: "CITATION_UNRESOLVED" },
 		})
+	})
+})
+
+describe("live shapes in the fixture", () => {
+	const since = "2026-10-20T08:59:59.000Z"
+
+	function throughOptions(options: Parameters<typeof createDemoUpstream>[0]) {
+		const upstream = createDemoUpstream(options)
+		vi.stubGlobal(
+			"fetch",
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const raw =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.href
+							: input.url
+				return handleDemoRead(
+					new Request(raw, init),
+					FIXTURE_ENV,
+					upstream.fetch,
+				)
+			},
+		)
+		return upstream
+	}
+
+	it("spans the changes feed over more than one page, as the live feed does", async () => {
+		throughOptions({})
+		const first = await fetch(
+			`http://demo.local/api/demo/v1/wiki/changes?since=${since}`,
+		)
+		const page = (await first.json()) as {
+			changes: unknown[]
+			hasMore: boolean
+			nextCursor?: string
+		}
+		expect(page.hasMore).toBe(true)
+		expect(typeof page.nextCursor).toBe("string")
+		const all = await loadWikiChanges(browserUpstream, since)
+		if (all.kind !== "ready") throw new Error("the feed did not read")
+		expect(all.data.complete).toBe(true)
+		expect(all.data.changes.length).toBeGreaterThan(page.changes.length)
+	})
+
+	it("refuses a cursor read whose since differs from the cursor's window", async () => {
+		throughOptions({})
+		const first = (await (
+			await fetch(`http://demo.local/api/demo/v1/wiki/changes?since=${since}`)
+		).json()) as { nextCursor: string }
+		const moved = await fetch(
+			`http://demo.local/api/demo/v1/wiki/changes?since=2026-10-20T09:30:00.000Z&cursor=${first.nextCursor}`,
+		)
+		expect(moved.status).toBe(502)
+	})
+
+	it("can hold no contradiction, as a seeded slot does before its agent run", async () => {
+		throughOptions({ contradiction: "none" })
+		const lint = await loadContradictions(browserUpstream)
+		expect(lint.kind).toBe("empty")
+		const chapter = await loadContradictionCase(browserUpstream)
+		expect(chapter.kind).toBe("empty")
+		const map = await loadWikiMap(browserUpstream)
+		if (map.kind !== "ready") throw new Error("the map did not read")
+		expect(map.data.unresolvedContradictionCount).toBe(0)
+		expect(
+			map.data.pages.flatMap((stored) => stored.claims).map((c) => c.status),
+		).not.toContain("contradicted")
 	})
 })

@@ -3,6 +3,7 @@
 import { expect, test } from "@playwright/test"
 import { formatUtc } from "../lib/demo-data/views"
 import {
+	allChanges,
 	bodyOf,
 	claimsOf,
 	eventSourceIds,
@@ -11,6 +12,7 @@ import {
 	listTotal,
 	mapReady,
 	openDemo,
+	settleContradiction,
 	squash,
 	stat,
 } from "./demo-helpers"
@@ -194,8 +196,10 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await openDemo(page)
 		await mapReady(page)
 		await goto(page, 4)
-		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
-		await proxy.flush()
+		if ((await settleContradiction(page, proxy)) === "none") {
+			await expect(page.getByTestId("contradiction-claim")).toHaveCount(0)
+			return
+		}
 		const holder = bodyOf<{
 			unresolvedContradictions: Array<{
 				pageSlug: string
@@ -270,19 +274,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await goto(page, 6)
 		await expect(stat(page, "revisions")).not.toHaveText("—")
 		await proxy.flush()
-		const changes = bodyOf<{
-			changes: Array<{
-				pageSlug: string
-				revision: number
-				createdAt: string
-				claims: {
-					added: unknown[]
-					changed: unknown[]
-					removed: unknown[]
-					counts: { added: number; changed: number; removed: number }
-				} | null
-			}>
-		}>(proxy.latest("wiki/changes"), "changes").changes
+		const changes = allChanges(proxy)
 		const sum = (pick: (c: (typeof changes)[number]) => number) =>
 			String(changes.reduce((n, c) => n + pick(c), 0))
 		await expect(stat(page, "revisions")).toHaveText(String(changes.length))

@@ -32,6 +32,9 @@ type Props<T> = {
 	what: string
 	onRetry?: () => void
 	emptyNote?: string
+	/** Replaces "Nothing stored yet" where an empty read is a timing fact, not
+	 * an absence: a record that is written later. */
+	emptyTitle?: string
 	children?: (data: T) => ReactNode
 }
 
@@ -40,6 +43,7 @@ export function StatePanel<T>({
 	what,
 	onRetry,
 	emptyNote,
+	emptyTitle,
 	children,
 }: Props<T>) {
 	switch (state.kind) {
@@ -53,7 +57,9 @@ export function StatePanel<T>({
 		case "empty":
 			return (
 				<div className={styles.state} data-state="empty">
-					<p className={styles.stateTitle}>Nothing stored yet</p>
+					<p className={styles.stateTitle}>
+						{emptyTitle ?? "Nothing stored yet"}
+					</p>
 					<p>{emptyNote ?? `No ${what} are stored in this run yet.`}</p>
 				</div>
 			)

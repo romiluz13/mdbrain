@@ -8,7 +8,9 @@ import {
 	expectNoSeriousAccessibilityViolations,
 	goto,
 	mapReady,
+	openAnyCitation,
 	openDemo,
+	settleContradiction,
 	settled,
 } from "./demo-helpers"
 import { installDemoProxy, LIVE } from "./demo-proxy"
@@ -83,9 +85,9 @@ test.describe("reduced motion", () => {
 		page,
 	}) => {
 		const motion = await watchMotion(page)
-		await installDemoProxy(page)
+		const proxy = await installDemoProxy(page)
 		await page.goto("/demo#contradiction")
-		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
+		const outcome = await settleContradiction(page, proxy)
 		await expect(page.locator("[data-motion]").first()).toHaveAttribute(
 			"data-motion",
 			"reduced",
@@ -95,7 +97,9 @@ test.describe("reduced motion", () => {
 				() => matchMedia("(prefers-reduced-motion: reduce)").matches,
 			),
 		).toBe(true)
-		for (const id of ["screen", "contradiction-stamp"]) {
+		for (const id of outcome === "recorded"
+			? ["screen", "contradiction-stamp"]
+			: ["screen"]) {
 			expect(
 				await page
 					.getByTestId(id)
@@ -154,7 +158,7 @@ test("the run's number table names each value on the phone, where the header row
 test("every interactive control on every chapter is at least 44 px", async ({
 	page,
 }) => {
-	await installDemoProxy(page)
+	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
 	const small = async () =>
@@ -195,10 +199,7 @@ test("every interactive control on every chapter is at least 44 px", async ({
 		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
 		expect(await small(), `chapter ${chapter.title}`).toEqual([])
 	}
-	await goto(page, 4)
-	await page
-		.getByRole("button", { name: "Open citation for claim one" })
-		.click()
+	await openAnyCitation(page, proxy)
 	await expect(page.getByRole("dialog")).toBeVisible()
 	await expect(
 		page.getByRole("dialog").locator('[data-state="loading"]'),
@@ -209,7 +210,7 @@ test("every interactive control on every chapter is at least 44 px", async ({
 test("no chapter scrolls sideways, keeps the synthetic label in view, and passes axe", async ({
 	page,
 }) => {
-	await installDemoProxy(page)
+	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
 	for (const [index, chapter] of CHAPTERS.entries()) {
@@ -233,10 +234,7 @@ test("no chapter scrolls sideways, keeps the synthetic label in view, and passes
 		await page.evaluate(() => window.scrollTo(0, 0))
 		await expectNoSeriousAccessibilityViolations(page)
 	}
-	await goto(page, 4)
-	await page
-		.getByRole("button", { name: "Open citation for claim one" })
-		.click()
+	await openAnyCitation(page, proxy)
 	await expect(
 		page.getByRole("dialog").getByTestId("source-text").first(),
 	).toBeVisible()

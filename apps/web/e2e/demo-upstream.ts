@@ -22,6 +22,31 @@ const FIXTURE_UNTIL = "2026-10-20T10:00:00.000Z"
 const DETECTED_AT = "2026-10-20T09:43:00.000Z"
 const PAGE_STEP_MS = 20_000
 const REVISION_STEP_MS = 5 * 60_000
+// The live feed pages at 100 revisions and the seeded run holds 109, so its
+// feed spans two pages. The fixture's revisions are fewer; a smaller page keeps
+// the same shape.
+const CHANGES_PAGE_SIZE = 40
+
+type ChangesCursor = { since: string; after: number }
+
+// Opaque to the page, as the real cursor is: it carries the window and the
+// position after the last entry returned.
+const encodeCursor = (cursor: ChangesCursor): string =>
+	Buffer.from(JSON.stringify(cursor)).toString("base64url")
+
+function decodeCursor(raw: string | null): ChangesCursor | null {
+	if (raw === null) {
+		return null
+	}
+	try {
+		const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"))
+		return typeof parsed?.since === "string" && Number.isInteger(parsed.after)
+			? { since: parsed.since, after: parsed.after }
+			: null
+	} catch {
+		return null
+	}
+}
 
 /** What each revision after the first did to the page's claims: how many it
  * added, changed and removed. The corpus has one revision per page; these later
@@ -81,7 +106,7 @@ function words(text: string): string[] {
 
 type Json = Record<string, unknown>
 
-function build(padTo = 0) {
+function build(padTo = 0, withContradiction = true) {
 	const dir = corpusDir()
 	const world = JSON.parse(
 		readFileSync(join(dir, "world.json"), "utf8"),
@@ -124,7 +149,9 @@ function build(padTo = 0) {
 			],
 		})
 	}
-	const contradicted = new Set([targetClaimId, incomingClaimId])
+	const contradicted = new Set(
+		withContradiction ? [targetClaimId, incomingClaimId] : [],
+	)
 
 	const plans = new Map<string, RevisionPlan>()
 	const pages = worldPages.map((page, position) => {
@@ -243,8 +270,16 @@ const failure = (status: number, code: string, message: string) =>
 	reply({ error: { code, message } }, status)
 
 /** The API behind the proxy: `fetch` takes the proxy's upstream request. */
-export function createDemoUpstream(options: { padTo?: number } = {}) {
-	const data = build(options.padTo)
+export function createDemoUpstream(
+	options: {
+		padTo?: number
+		/** "none" models a seeded slot before its agent run: the lint read lists
+		 * nothing and no claim is contradicted. */
+		contradiction?: "recorded" | "none"
+	} = {},
+) {
+	const recorded = options.contradiction !== "none"
+	const data = build(options.padTo, recorded)
 	const { pages, bySlug } = data
 
 	const search = (query: string, max: number) => {
@@ -325,26 +360,35 @@ export function createDemoUpstream(options: { padTo?: number } = {}) {
 			return reply({
 				pages: pages.length,
 				total: pages.length,
-				unresolvedContradictions: holder
-					? [
-							{
-								pageSlug: holder.slug,
-								pageTitle: holder.title,
-								contradiction: {
-									id: data.record.id,
-									claimIds: [data.targetClaimId, data.incomingClaimId],
-									detectedAt: data.record.detectedAt,
-									resolution: data.record.resolution,
-									note: data.record.note,
+				unresolvedContradictions:
+					holder && recorded
+						? [
+								{
+									pageSlug: holder.slug,
+									pageTitle: holder.title,
+									contradiction: {
+										id: data.record.id,
+										claimIds: [data.targetClaimId, data.incomingClaimId],
+										detectedAt: data.record.detectedAt,
+										resolution: data.record.resolution,
+										note: data.record.note,
+									},
 								},
-							},
-						]
-					: [],
+							]
+						: [],
 			})
 		}
 		if (path === "/v1/wiki/changes") {
-			const since = url.searchParams.get("since") ?? FIXTURE_FIRST_INGESTION
-			const changes = pages
+			const cursor = decodeCursor(url.searchParams.get("cursor"))
+			if (url.searchParams.has("cursor") && !cursor) {
+				return failure(400, "VALIDATION_ERROR", "the cursor is not valid")
+			}
+			const sinceParam = url.searchParams.get("since")
+			if (cursor && sinceParam !== null && sinceParam !== cursor.since) {
+				return failure(400, "VALIDATION_ERROR", "since differs from the cursor")
+			}
+			const since = cursor?.since ?? sinceParam ?? FIXTURE_FIRST_INGESTION
+			const feed = pages
 				.flatMap((page) => {
 					const plan = data.plans.get(page.slug) ?? []
 					const head = { pageSlug: page.slug, title: page.title }
@@ -402,11 +446,22 @@ export function createDemoUpstream(options: { padTo?: number } = {}) {
 					return [created, ...updates]
 				})
 				.filter((change) => Date.parse(change.createdAt) >= Date.parse(since))
+				.sort(
+					(a, b) =>
+						Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
+						a.pageSlug.localeCompare(b.pageSlug) ||
+						a.revision - b.revision,
+				)
+			const start = cursor?.after ?? 0
+			const end = start + CHANGES_PAGE_SIZE
 			return reply({
 				window: { since, until: FIXTURE_UNTIL, settled: true },
-				limits: { limit: 100, maxClaims: 50 },
-				changes,
-				hasMore: false,
+				limits: { limit: CHANGES_PAGE_SIZE, maxClaims: 50 },
+				changes: feed.slice(start, end),
+				hasMore: end < feed.length,
+				...(end < feed.length
+					? { nextCursor: encodeCursor({ since, after: end }) }
+					: {}),
 			})
 		}
 		if (path.startsWith("/v1/wiki/overview/")) {
@@ -416,7 +471,7 @@ export function createDemoUpstream(options: { padTo?: number } = {}) {
 			return reply({
 				page,
 				contradictions: {
-					items: slug === data.targetPageSlug ? [data.record] : [],
+					items: slug === data.targetPageSlug && recorded ? [data.record] : [],
 					hasMore: false,
 				},
 				backlinks: { items: [], hasMore: false },

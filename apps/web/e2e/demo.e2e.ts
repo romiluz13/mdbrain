@@ -11,10 +11,11 @@ import {
 	listPages,
 	mapReady,
 	openDemo,
+	settleContradiction,
 	tabTo,
 	type DemoProxy,
 } from "./demo-helpers"
-import { installDemoProxy } from "./demo-proxy"
+import { installDemoProxy, LIVE } from "./demo-proxy"
 
 type Act = (target: Locator) => Promise<void>
 
@@ -142,16 +143,18 @@ async function journey(
 	await expect(page.locator('[data-state="error"]')).toHaveCount(0)
 
 	// 5 A contradiction caught: both claims, both sources, the recorded stamp.
+	// A run before its agent run records none, and says so honestly instead.
 	await nextChapter(page, act, 3)
-	await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
-	await expect(page.getByTestId("contradiction-claim")).toHaveCount(2)
-	await citeAndReturn(
-		page,
-		proxy,
-		act,
-		page.getByRole("button", { name: "Open citation for claim one" }),
-		how,
-	)
+	if ((await settleContradiction(page, proxy)) === "recorded") {
+		await expect(page.getByTestId("contradiction-claim")).toHaveCount(2)
+		await citeAndReturn(
+			page,
+			proxy,
+			act,
+			page.getByRole("button", { name: "Open citation for claim one" }),
+			how,
+		)
+	}
 
 	// 6 Governed growth.
 	await nextChapter(page, act, 4)
@@ -203,6 +206,15 @@ test.describe("journey", () => {
 		expect(listPages(proxy).length).toBeGreaterThan(0)
 	})
 
+	test("completes on a run with no contradiction recorded yet, with chapter 5 honest about it", async ({
+		page,
+		isMobile,
+	}) => {
+		test.skip(LIVE || isMobile, "the empty run is forced through the fixture")
+		const proxy = await installDemoProxy(page, { contradiction: "none" })
+		await journey(page, proxy, withKeyboard(page), "escape")
+	})
+
 	test("completes by touch on the phone, citations returning focus", async ({
 		page,
 		isMobile,
@@ -227,7 +239,7 @@ test("the browser never carries the read key or the principal", async ({
 	await openDemo(page)
 	await mapReady(page)
 	await page.getByRole("button", { name: chapterTitle(4) }).click()
-	await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
+	await settleContradiction(page, proxy)
 	expect(proxy.responses.length).toBeGreaterThan(3)
 	for (const entry of proxy.responses) {
 		expect(entry.requestHeaders.authorization).toBeUndefined()

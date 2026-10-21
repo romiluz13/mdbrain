@@ -25,6 +25,9 @@ export type ProxyOptions = {
 	rewrite?: (url: URL, body: unknown) => unknown
 	/** Pad the fixture with linked copies up to this many pages (stress runs). */
 	padTo?: number
+	/** "none" serves a run with no contradiction recorded yet, as a seeded slot is
+	 * before its agent run. */
+	contradiction?: "recorded" | "none"
 	/** Model the phone's link for a performance run: each read waits `latencyMs`,
 	 * then its gzipped body takes its turn on one shared downlink. The fixture
 	 * is fulfilled inside the browser, so the CDP network throttle never sees
@@ -60,7 +63,10 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 	const transfer = { raw: 0, wire: 0 }
 	let linkFreeAt = 0
 	if (!LIVE) {
-		const upstream = createDemoUpstream({ padTo: options.padTo })
+		const upstream = createDemoUpstream({
+			padTo: options.padTo,
+			contradiction: options.contradiction,
+		})
 		await page.route("**/api/demo/v1/**", async (route) => {
 			const request = route.request()
 			const url = new URL(request.url())
