@@ -17,12 +17,14 @@ const ENV: DemoProxyEnv = {
 	agentId: "demo-run-9",
 }
 const URI = "mongodb+srv://ctl-user:ctl-secret@cluster0.example.net/"
-const RUN: DemoRunEnv = { controlUri: URI, runId: "demo-run-9" }
+// The manifest's own id, which is not the scope reference or the agent id.
+const RUN_ID = "live-check-b-2026-10-20T11-29-54.742Z"
+const RUN: DemoRunEnv = { controlUri: URI, runId: RUN_ID }
 
 function manifest(overrides: Record<string, unknown> = {}) {
 	return {
-		_id: "demo-run-9",
-		runId: "demo-run-9",
+		_id: RUN_ID,
+		runId: RUN_ID,
 		slotIndex: 9,
 		scopeRef: "demo-run-9",
 		agentId: "demo-run-9",
@@ -79,13 +81,27 @@ async function bodyOf(response: Response) {
 describe("readDemoRunEnv", () => {
 	it("needs both the control URI and the run id", () => {
 		expect(readDemoRunEnv({ MDBRAIN_DEMO_CONTROL_URI: URI })).toBeNull()
-		expect(readDemoRunEnv({ MDBRAIN_DEMO_RUN_ID: "demo-run-9" })).toBeNull()
+		expect(readDemoRunEnv({ MDBRAIN_DEMO_RUN_ID: RUN_ID })).toBeNull()
 		expect(
 			readDemoRunEnv({
 				MDBRAIN_DEMO_CONTROL_URI: URI,
-				MDBRAIN_DEMO_RUN_ID: "demo-run-9",
+				MDBRAIN_DEMO_RUN_ID: RUN_ID,
 			}),
 		).toEqual(RUN)
+	})
+
+	it("takes a run id as the seeding driver writes it, with dots and colons", () => {
+		for (const runId of [
+			"live-check-b-2026-10-20T11-29-54.742Z",
+			"seed-2026-10-20T11:29:54.742Z",
+		]) {
+			expect(
+				readDemoRunEnv({
+					MDBRAIN_DEMO_CONTROL_URI: URI,
+					MDBRAIN_DEMO_RUN_ID: runId,
+				}),
+			).toEqual({ controlUri: URI, runId })
+		}
 	})
 
 	it("refuses a URI that is not a MongoDB connection string and a run id that is not an id", () => {
@@ -116,7 +132,7 @@ describe("GET /api/demo/v1/run", () => {
 		)
 		expect(response.status).toBe(200)
 		expect(read).toHaveBeenCalledOnce()
-		expect(read).toHaveBeenCalledWith("demo-run-9")
+		expect(read).toHaveBeenCalledWith(RUN_ID)
 		const body = await bodyOf(response)
 		expect(body.eventsPlanned).toBe(2)
 		expect(body.arrivals).toEqual([
@@ -124,7 +140,13 @@ describe("GET /api/demo/v1/run", () => {
 			{ sourceId: "src-2", eventId: "evt-b" },
 		])
 		const text = JSON.stringify(body)
-		for (const private_ of ["demo-run-9", URI, "ctl-secret", "a".repeat(64)]) {
+		for (const private_ of [
+			"demo-run-9",
+			RUN_ID,
+			URI,
+			"ctl-secret",
+			"a".repeat(64),
+		]) {
 			expect(text).not.toContain(private_)
 		}
 		expect(noUpstream).not.toHaveBeenCalled()

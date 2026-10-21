@@ -39,9 +39,11 @@ export type RunFixtureOptions = {
 
 type Data = ReturnType<typeof createDemoUpstream>["data"]
 
+// A run is named by the seeding driver, not by its scope, so the fixture's id
+// differs from its scope reference too.
 export const FIXTURE_RUN: DemoRunEnv = {
 	controlUri: "mongodb://control.fixture.test/",
-	runId: FIXTURE_ENV.scopeRef,
+	runId: "fixture-run-2026-10-20T08-55-00.000Z",
 }
 
 /** The proposal the staged story leaves pending. */

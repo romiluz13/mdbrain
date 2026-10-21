@@ -28,9 +28,9 @@ The proxy forwards one fixed list of reads and refuses everything else (other me
 | `MDBRAIN_DEMO_AGENT_ID` | The agent the pinned run's events were written under, `demo-run-<slot>` for a seeded slot |
 | `MDBRAIN_DEMO_SCOPE` | The scope, default `workspace` |
 | `MDBRAIN_DEMO_CONTROL_URI` | The demo control database's connection string, for the run read only (see below) |
-| `MDBRAIN_DEMO_RUN_ID` | The pinned run's id, the `_id` of its stored record |
+| `MDBRAIN_DEMO_RUN_ID` | The pinned run's id: the `_id` of its stored record, as the seeding driver named it (for example `live-check-b-2026-10-20T11-29-54.742Z`). It is not the scope reference or the agent id |
 
-Without the first four the route answers `503 PROXY_NOT_CONFIGURED`. Both identifiers must match `[A-Za-z0-9_-]{1,128}`. The last two are optional: without either, the run read answers `503 RUN_NOT_CONFIGURED` and nothing else changes.
+Without the first four the route answers `503 PROXY_NOT_CONFIGURED`. The scope reference and the agent id must match `[A-Za-z0-9_-]{1,128}`; the run id may also hold `.` and `:`. The last two are optional: without either, the run read answers `503 RUN_NOT_CONFIGURED` and nothing else changes.
 
 An event citation (`GET /v1/cite` with an `[[event:ID]]` marker) resolves the event by its id in the pinned scope, as the request's agent, whether or not a stored claim cites it. Every demo event lives under the run's own agent, so without `MDBRAIN_DEMO_AGENT_ID` no event citation resolves (`404 CITATION_UNRESOLVED`). The browser may add `citedBy`, a stored claim's marker; the claim must then list the event, or the cite is unresolved. The proxy sends the agent on the `cite` read only: no other read uses it, so sending it elsewhere would only widen what the key's grant must allow. A caller-set `agentId` is still refused.
 

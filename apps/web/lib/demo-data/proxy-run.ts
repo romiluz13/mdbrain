@@ -11,6 +11,8 @@ import { projectRunRecord, type RunProjection } from "./run-record.js"
 export interface DemoRunEnv {
 	/** The control database's connection string. It stays on the server. */
 	controlUri: string
+	/** The `_id` of the run's stored record: the seeding driver's own run id,
+	 * not the scope reference or the agent id. */
 	runId: string
 }
 
@@ -24,7 +26,8 @@ export interface RunReadDeps {
 
 export const RUN_PATH = "/api/demo/v1/run"
 
-const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+// The driver names a run with a timestamp, so dots and colons are allowed.
+const RUN_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 const MONGO_URI_PATTERN = /^mongodb(\+srv)?:\/\/\S+$/
 
 /** Reads the run read's server-only env. Null when either value is missing or
@@ -35,7 +38,7 @@ export function readDemoRunEnv(
 ): DemoRunEnv | null {
 	const controlUri = (env.MDBRAIN_DEMO_CONTROL_URI ?? "").trim()
 	const runId = (env.MDBRAIN_DEMO_RUN_ID ?? "").trim()
-	if (!MONGO_URI_PATTERN.test(controlUri) || !ID_PATTERN.test(runId)) {
+	if (!MONGO_URI_PATTERN.test(controlUri) || !RUN_ID_PATTERN.test(runId)) {
 		return null
 	}
 	return { controlUri, runId }
