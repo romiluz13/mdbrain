@@ -1,7 +1,6 @@
 // Confirms the run's events one at a time and remembers what it learned. A
-// confirmation can be a governed recall that takes seconds, so a screen asks
-// for each on its own, a few at once, and an event answered once is not asked
-// again while the page is open.
+// screen asks for each on its own, a few at once, and an event answered once,
+// confirmed or not, is not asked again while the page is open.
 
 import {
 	confirmEvent,

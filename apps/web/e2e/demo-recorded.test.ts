@@ -282,24 +282,14 @@ describe("createRecordedUpstream", () => {
 describe("createRecordedRun", () => {
 	const url = (path: string) => new URL(`http://127.0.0.1:3040/api/demo${path}`)
 	const recording = toRecording(
-		[
-			seen("/v1/run", { state: "used", arrivals: [] }),
-			seen("/v1/run/step?n=2", { n: 2, confirmed: true }),
-		],
+		[seen("/v1/run", { state: "used", arrivals: [] })],
 		[],
 	)
 	const replay = createRecordedRun(recording)
 
-	it("serves the run's record and a recorded step as recorded", async () => {
+	it("serves the run's record as recorded", async () => {
 		const record = replay(url("/v1/run"))
 		expect(await record?.json()).toEqual({ state: "used", arrivals: [] })
-		const step = replay(url("/v1/run/step?n=2"))
-		expect(await step?.json()).toEqual({ n: 2, confirmed: true })
-	})
-
-	it("says a step is not recorded rather than inventing it", async () => {
-		const missing = replay(url("/v1/run/step?n=9"))
-		expect(missing?.status).toBe(404)
 	})
 
 	it("replays a recording from before the run read as a server with no run configured", async () => {

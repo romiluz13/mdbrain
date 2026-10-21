@@ -15,6 +15,7 @@ import {
 	unexplainedBrowserErrors,
 } from "./demo-helpers"
 import { GENERATED, SLOW_LIST, SLOW_READ } from "./demo-proxy"
+import { PENDING_PROPOSAL } from "./demo-run"
 
 export type Act = (target: Locator) => Promise<void>
 
@@ -223,7 +224,10 @@ export async function journey(
 		}),
 	).toBeVisible()
 	await proxy.flush()
-	const refused = refusedReads(proxy)
+	// A pending proposal is not a page until a person approves it, so chapter 4
+	// reads its absence and 404 is the answer it expects.
+	const proposalAbsent = `404 WIKI_NOT_FOUND /api/demo/v1/wiki/${encodeURIComponent(PENDING_PROPOSAL.slug)}`
+	const refused = refusedReads(proxy).filter((read) => read !== proposalAbsent)
 	if (refused.length > 0) {
 		console.log(`[demo-e2e] reads the proxy refused:\n${refused.join("\n")}`)
 	}

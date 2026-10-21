@@ -58,15 +58,13 @@ function AgentStory({
 		}
 	}, [upstream, run])
 
-	// A step is confirmed through governed recall, so a role's steps are asked
-	// for when its disclosure opens, not all at once on load.
+	// A role's steps are confirmed when its disclosure opens: nobody has asked
+	// to see them before.
 	const wanted = useMemo(
 		() =>
 			stories
 				.filter((story) => open.has(story.role))
-				.flatMap((story) =>
-					story.steps.map((step) => ({ kind: "step" as const, n: step.n })),
-				),
+				.flatMap((story) => story.steps.map(({ eventId }) => ({ eventId }))),
 		[stories, open],
 	)
 	const reads = useEventReads(wanted)

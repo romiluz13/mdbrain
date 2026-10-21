@@ -108,6 +108,15 @@ test.describe("states", () => {
 				total: 0,
 				unresolvedContradictions: [],
 			},
+			// A seeded run whose agents have not started and which wrote nothing.
+			"/api/demo/v1/run": {
+				state: "ready",
+				createdAt: "2026-10-20T08:55:00.000Z",
+				eventsPlanned: 0,
+				pagesPlanned: 0,
+				arrivals: [],
+				pagesWritten: [],
+			},
 		}
 		let mode: "down" | "empty" = "down"
 		await installDemoProxy(page, {
@@ -129,7 +138,10 @@ test.describe("states", () => {
 			for (const [index, chapter] of CHAPTERS.entries()) {
 				await goto(page, index)
 				const screen = page.getByTestId("screen")
-				const want = index === agents ? "incomplete" : expected
+				// With the run's record unreadable the agents are an error like any
+				// other; with it empty they are not yet in the run.
+				const want =
+					index === agents && stateMode === "empty" ? "incomplete" : expected
 				await expect(
 					screen.locator(`[data-state="${want}"]`).first(),
 					`${chapter.id} under ${stateMode}`,
@@ -290,10 +302,10 @@ test.describe("states", () => {
 		)
 	})
 
-	test("a source recall cannot confirm says so on chapter 3 and in its citation, and a busy recall says to try again", async ({
+	test("a source the API cannot confirm says so on chapter 3 and in its citation, and a failed read says to try again", async ({
 		page,
 	}) => {
-		let refuse: "unconfirmed" | "busy" = "unconfirmed"
+		let refuse: "unconfirmed" | "failed" = "unconfirmed"
 		const proxy = await installDemoProxy(page, {
 			override: (url) =>
 				url.pathname === "/api/demo/v1/cite"
@@ -301,13 +313,12 @@ test.describe("states", () => {
 						? proxyError(
 								404,
 								"CITATION_UNRESOLVED",
-								"The source could not be confirmed through governed recall.",
+								"The source could not be confirmed in this run.",
 							)
 						: proxyError(
-								503,
-								"CITATION_RECALL_DEGRADED",
-								"Recall is busy, so the source could not be checked yet. Try again shortly.",
-								5,
+								502,
+								"UPSTREAM_ERROR",
+								"The upstream could not answer this read.",
 							)
 					: undefined,
 		})
@@ -322,19 +333,10 @@ test.describe("states", () => {
 		const unconfirmed = page.locator(
 			'[data-testid="source-row"][data-status="unconfirmed"]',
 		)
-		const notConfirmable = page.locator(
-			'[data-testid="source-row"][data-status="not-confirmable"]',
-		)
-		const asked = await unconfirmed.count()
-		expect(asked).toBeGreaterThan(0)
-		await expect(rows).toHaveCount(asked + (await notConfirmable.count()))
+		// Every shown row was asked about by its id, so every one is refused.
+		await expect(unconfirmed).toHaveCount(await rows.count())
 		await expect(unconfirmed.getByTestId("source-label")).toHaveText(
-			Array(asked).fill("Recall could not confirm this source"),
-		)
-		// A source no stored claim cites is not asked about, so recall's refusal
-		// does not reach it: it keeps saying why it cannot be confirmed.
-		await expect(notConfirmable.getByTestId("source-label")).toHaveText(
-			Array(await notConfirmable.count()).fill("Recorded by the run"),
+			Array(await rows.count()).fill("This source could not be confirmed"),
 		)
 		await expect(page.getByTestId("source-id")).toHaveCount(await rows.count())
 		await page
@@ -342,12 +344,20 @@ test.describe("states", () => {
 			.first()
 			.click()
 		const dialog = page.getByRole("dialog")
-		await expect(
-			dialog.locator('article[data-status="unavailable"]'),
-		).toHaveCount(1)
-		await expect(dialog).toContainText(
-			"Governed recall could not confirm this source, so its text is not shown.",
+		const slips = dialog.locator("article[data-status]")
+		await expect(slips.first()).toBeVisible()
+		await expect(dialog.locator('article[data-status="loading"]')).toHaveCount(
+			0,
 		)
+		await expect(dialog.locator('article[data-status="resolved"]')).toHaveCount(
+			0,
+		)
+		await expect(
+			slips.filter({
+				hasText:
+					"The API could not confirm this source, so its text is not shown.",
+			}),
+		).toHaveCount(await slips.count())
 		await expect(dialog).not.toContainText("could not be read right now")
 		await proxy.flush()
 		expect(
@@ -357,7 +367,7 @@ test.describe("states", () => {
 		).toBe(true)
 
 		await page.keyboard.press("Escape")
-		refuse = "busy"
+		refuse = "failed"
 		await goto(page, 0)
 		await goto(page, 2)
 		await page

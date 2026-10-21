@@ -17,6 +17,20 @@ afterEach(() => {
 })
 
 describe("loadRunRecord", () => {
+	it.each([
+		["an empty object", {}],
+		["no arrivals list", { ...runRecord(), arrivals: undefined }],
+		["a state it does not know", { ...runRecord(), state: "exploded" }],
+		["no plan count", { ...runRecord(), eventsPlanned: undefined }],
+	])("shows an error, not a crash, when the answer is %s", async (_, body) => {
+		stubUpstream({ [RUN]: () => json(body) })
+		const result = await loadRunRecord(proxy)
+		expect(result).toMatchObject({
+			kind: "error",
+			code: "RUN_RECORD_MALFORMED",
+		})
+	})
+
 	it("reads the run through the proxy's one fixed path, with no parameters", async () => {
 		const calls = stubUpstream({ [RUN]: () => json(runRecord()) })
 		const result = await loadRunRecord(proxy)

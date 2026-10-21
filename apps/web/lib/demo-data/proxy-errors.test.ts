@@ -81,12 +81,7 @@ describe("an upstream error the page can act on", () => {
 		[
 			"CITATION_UNRESOLVED",
 			404,
-			"The source could not be confirmed through governed recall.",
-		],
-		[
-			"CITATION_RECALL_DEGRADED",
-			503,
-			"Recall is busy, so the source could not be checked yet. Try again shortly.",
+			"The source could not be confirmed in this run.",
 		],
 		[
 			"SEARCH_UNAVAILABLE",
@@ -115,42 +110,6 @@ describe("an upstream error the page can act on", () => {
 			expect(result.text).not.toContain(leaked)
 		}
 	})
-
-	it("keeps retryAfterMs for a throttled citation only, bounded", async () => {
-		const degraded = (retryAfterMs: unknown) =>
-			read(
-				upstream(503, {
-					error: {
-						code: "CITATION_RECALL_DEGRADED",
-						message: "recall was throttled",
-						retryable: true,
-						retryAfterMs,
-					},
-				}),
-			)
-		expect((await degraded(1500)).json).toMatchObject({
-			error: { code: "CITATION_RECALL_DEGRADED", retryAfterMs: 1500 },
-		})
-		expect((await degraded(900_000_000)).json).toMatchObject({
-			error: { retryAfterMs: 600_000 },
-		})
-		for (const bad of ["soon", -5, null, Number.NaN, undefined]) {
-			const result = await degraded(bad)
-			expect(result.json, String(bad)).toEqual({
-				error: {
-					code: "CITATION_RECALL_DEGRADED",
-					message:
-						"Recall is busy, so the source could not be checked yet. Try again shortly.",
-				},
-			})
-		}
-		const other = await read(
-			upstream(404, {
-				error: { code: "WIKI_NOT_FOUND", message: "x", retryAfterMs: 1500 },
-			}),
-		)
-		expect(JSON.stringify(other.json)).not.toContain("retryAfterMs")
-	})
 })
 
 describe("any other upstream failure", () => {
@@ -167,6 +126,8 @@ describe("any other upstream failure", () => {
 		[403, "FORBIDDEN", "the key cannot read scope workspace/demo-run-8"],
 		[400, "VALIDATION_ERROR", "scope and scopeRef query params are required"],
 		[502, "UPSTREAM_ERROR", "the API is down"],
+		[500, "CITATION_LOOKUP_FAILED", "event read failed for tenant acme"],
+		[503, "CITATION_RECALL_DEGRADED", "recall was throttled for tenant acme"],
 	])("%i %s becomes the generic envelope", async (status, code, message) => {
 		const result = await read(upstream(status, { error: { code, message } }))
 		expect(result.status).toBe(502)

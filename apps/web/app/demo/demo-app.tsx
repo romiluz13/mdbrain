@@ -98,14 +98,10 @@ export function DemoApp() {
 	)
 	const layout = useLayout(baseGraph)
 	const sources = useMemo(() => createSourceReader(DEMO_UPSTREAM), [])
-	const events = useMemo(
-		() => createEventReader({ upstream: DEMO_UPSTREAM, sources }),
-		[sources],
-	)
+	const events = useMemo(() => createEventReader({ sources }), [sources])
 
-	// A cite is a governed recall that takes seconds, so the recorded
-	// contradiction's own sources are read as soon as it is known, a few at a
-	// time, and chapter 5 finds them waiting.
+	// The recorded contradiction's own sources are read as soon as it is
+	// known, a few at a time, and chapter 5 finds them waiting.
 	useEffect(() => {
 		if (data.contradiction.kind !== "ready") {
 			return

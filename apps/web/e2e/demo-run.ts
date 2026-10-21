@@ -1,8 +1,9 @@
 // The run the fixture serves: a stored manifest, in the shape the demo control
-// database holds it, and the governed recall that confirms an agent step. The
-// /demo e2e reads it through the real proxy handler, so the projection, the
-// pinned-scope refusal and the step confirmation rule run for real; only the
-// database and the API behind them are stand-ins.
+// database holds it, and the events its agent steps wrote, which the fixture
+// API cites by id. The /demo e2e reads it through the real proxy handler, so
+// the projection and the pinned-scope refusal run for real; only the database
+// and the API behind them are stand-ins.
+import { parseCitationMarker } from "@mdbrain/client"
 import type {
 	DemoRunEnv,
 	RunManifestSource,
@@ -30,7 +31,7 @@ export type RunVariant =
 
 export type RunFixtureOptions = {
 	variant?: RunVariant
-	/** Step numbers whose event governed recall does not return. */
+	/** Step numbers whose event the API cannot resolve by id. */
 	missedSteps?: number[]
 	/** How many source files the run's record lists. */
 	arrivals?: number
@@ -203,10 +204,14 @@ export function createRunFixture(data: Data, options: RunFixtureOptions = {}) {
 			headers: { "content-type": "application/json" },
 		})
 
-	/** Puts governed recall's step search in front of the fixture API. A missed
-	 * step is answered with an unrelated event only, so only the exact-id rule
-	 * keeps it from being confirmed. */
-	const withRecall = (upstream: typeof fetch): typeof fetch =>
+	const stepAt = new Map(
+		plan.map((step, at) => [stepEventId(at + 1), { n: at + 1, step }]),
+	)
+
+	/** Puts the agent steps' events in front of the fixture API's cite by id,
+	 * which knows only the corpus. A missed step is answered as an event the
+	 * API cannot resolve in the run's scope. */
+	const withStepEvents = (upstream: typeof fetch): typeof fetch =>
 		(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(
 				typeof input === "string"
@@ -215,9 +220,18 @@ export function createRunFixture(data: Data, options: RunFixtureOptions = {}) {
 						? input.href
 						: input.url,
 			)
+			const parsed = parseCitationMarker(url.searchParams.get("marker") ?? "")
+			const wanted =
+				url.pathname === "/v1/cite" &&
+				(init?.method ?? "GET").toUpperCase() === "GET" &&
+				parsed.ok &&
+				parsed.marker.kind === "event"
+					? stepAt.get(parsed.marker.eventId)
+					: undefined
 			if (
-				url.pathname !== "/v1/search" ||
-				(init?.method ?? "GET").toUpperCase() !== "POST"
+				wanted === undefined ||
+				!parsed.ok ||
+				parsed.marker.kind !== "event"
 			) {
 				return upstream(input, init)
 			}
@@ -226,50 +240,45 @@ export function createRunFixture(data: Data, options: RunFixtureOptions = {}) {
 				`Bearer ${FIXTURE_ENV.readKey}`
 			) {
 				return reply(
-					{ error: { code: "UNAUTHORIZED", message: "a key is required" } },
+					{
+						error: { code: "UNAUTHORIZED", message: "a read key is required" },
+					},
 					401,
 				)
 			}
-			const sent = JSON.parse(String(init?.body ?? "{}")) as Record<
-				string,
-				unknown
-			>
+			// No stored claim lists a step's event, so citing it through one, or as
+			// another agent, finds nothing.
 			if (
-				sent.scope !== FIXTURE_ENV.scope ||
-				sent.scopeRef !== FIXTURE_ENV.scopeRef ||
-				sent.agentId !== FIXTURE_ENV.agentId
+				missed.has(wanted.n) ||
+				url.searchParams.has("citedBy") ||
+				url.searchParams.get("agentId") !== FIXTURE_ENV.agentId
 			) {
 				return reply(
 					{
 						error: {
-							code: "FORBIDDEN_SCOPE",
-							message: "the key cannot read that scope",
+							code: "CITATION_UNRESOLVED",
+							message: "the source could not be confirmed in this scope",
 						},
 					},
-					403,
+					404,
 				)
 			}
-			const at = plan.findIndex((step) => opening(runId, step) === sent.query)
-			const hit = (eventId: string, text: string) => ({
-				canonicalId: `event:${eventId}`,
-				snippet: text,
-				timestamp: "2026-10-20T09:36:00.000Z",
-				scope: FIXTURE_ENV.scope,
-				scopeRef: FIXTURE_ENV.scopeRef,
+			return reply({
+				status: "resolved",
+				kind: "event",
+				marker: url.searchParams.get("marker"),
+				event: {
+					eventId: parsed.marker.eventId,
+					canonicalId: parsed.marker.eventId,
+					text: bodyOf(runId, wanted.step),
+					timestamp: new Date(
+						Date.parse(STARTED_AT) + wanted.n * 30_000,
+					).toISOString(),
+					scope: FIXTURE_ENV.scope,
+					scopeRef: FIXTURE_ENV.scopeRef,
+				},
 			})
-			const decoy = hit(
-				eventIdOf("fixture-decoy"),
-				"[other] Support Lead — write page",
-			)
-			const results =
-				at === -1 || missed.has(at + 1)
-					? [decoy]
-					: [
-							decoy,
-							hit(stepEventId(at + 1), bodyOf(runId, plan[at] as StepPlan)),
-						]
-			return reply({ results })
 		}) as typeof fetch
 
-	return { deps, withRecall, manifest, plan, arrivals }
+	return { deps, withStepEvents, manifest, plan, arrivals }
 }

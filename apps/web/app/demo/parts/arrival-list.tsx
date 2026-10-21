@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import {
 	ARRIVALS_PAGE,
 	arrivalRows,
-	arrivalSubject,
 	summarizeArrivals,
 } from "../../../lib/demo-data/arrivals.js"
 import {
@@ -26,9 +25,6 @@ import { TimeLine } from "./time-line.js"
 
 type Status = EventConfirmation["status"] | "loading"
 
-const NOT_CONFIRMABLE =
-	"Recorded by the run, not confirmable here: no stored claim cites it"
-
 /** What a row leads with. A confirmed source leads with a label taken from the
  * stored source itself; the others say plainly why there is none. */
 function rowTitle(status: Status, answer: EventConfirmation | undefined) {
@@ -40,11 +36,9 @@ function rowTitle(status: Status, answer: EventConfirmation | undefined) {
 			return sourceLabel(splitRoleLabel(text).body) ?? "Stored without text"
 		}
 		case "unconfirmed":
-			return "Recall could not confirm this source"
+			return "This source could not be confirmed"
 		case "unavailable":
 			return "This source could not be read right now"
-		case "not-confirmable":
-			return "Recorded by the run"
 	}
 }
 
@@ -63,7 +57,10 @@ export function ArrivalList({
 	)
 	const [shown, setShown] = useState(ARRIVALS_PAGE)
 	const visible = useMemo(() => rows.slice(0, shown), [rows, shown])
-	const subjects = useMemo(() => visible.map(arrivalSubject), [visible])
+	const subjects = useMemo(
+		() => visible.map(({ eventId }) => ({ eventId })),
+		[visible],
+	)
 	const reads = useEventReads(subjects)
 	const listRef = useRef<HTMLOListElement>(null)
 	const focusAt = useRef<number | null>(null)
@@ -98,19 +95,17 @@ export function ArrivalList({
 			<div className={styles.arrivalSummary} data-testid="arrivals-summary">
 				<p className={chapter.note}>
 					The run's record lists {summary.arrived} of {summary.planned} planned
-					source files, in the order they arrived. Stored claims cite{" "}
-					{summary.confirmable} of them, so this page can confirm{" "}
-					{summary.confirmable}; the other {summary.notConfirmable} are recorded
-					by the run and not confirmable here.
+					source files, in the order they arrived. Each one shown is confirmed
+					by its id through the API; stored claims cite {summary.cited} of them.
 					{summary.citedOutsideRecord > 0
 						? ` ${countOf(summary.citedOutsideRecord, "stored source event")} cited by claims ${summary.citedOutsideRecord === 1 ? "is" : "are"} not in this record.`
 						: ""}
 				</p>
 				<p className={chapter.note} data-testid="arrivals-tally">
 					Showing {visible.length} of {summary.arrived}. {tally.confirmed ?? 0}{" "}
-					confirmed, {tally["not-confirmable"] ?? 0} not confirmable here
+					confirmed
 					{(tally.unconfirmed ?? 0) > 0
-						? `, ${tally.unconfirmed} not returned by recall`
+						? `, ${tally.unconfirmed} not confirmed`
 						: ""}
 					{(tally.unavailable ?? 0) > 0
 						? `, ${tally.unavailable} could not be read`
@@ -139,18 +134,14 @@ export function ArrivalList({
 						>
 							<span className={styles.position}>{row.position}</span>
 							<div className={chapter.sourceWhat}>
-								<span
-									className={styles.label}
-									data-quiet={status === "not-confirmable" ? "true" : undefined}
-									data-testid="source-label"
-								>
+								<span className={styles.label} data-testid="source-label">
 									{rowTitle(status, answer)}
 								</span>
 								<span className={chapter.sourceMeta}>
 									<span>
-										{status === "not-confirmable"
-											? NOT_CONFIRMABLE
-											: `Cited on ${row.citedBy?.pageTitle ?? "a stored page"}`}
+										{row.citedBy
+											? `Cited on ${row.citedBy.pageTitle}`
+											: "No stored claim cites it"}
 									</span>
 									{status === "confirmed" && answer?.status === "confirmed" ? (
 										<TimeLine kind="business" iso={answer.businessTime} />

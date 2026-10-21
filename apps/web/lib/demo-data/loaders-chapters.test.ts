@@ -247,15 +247,47 @@ describe("loadSource", () => {
 		expect(calls[0]?.searchParams.get("citedBy")).toBe(owner.marker)
 	})
 
+	it("cites one event by its id alone when no stored claim is named", async () => {
+		const calls = stubUpstream({
+			"/v1/cite": () =>
+				json(cited("evt-1", "CRM: healthy", "2026-09-14T15:20:00.000Z")),
+		})
+		expect(await loadSource(direct, undefined, ref)).toEqual({
+			eventId: "evt-1",
+			marker: ref.marker,
+			status: "resolved",
+			text: "CRM: healthy",
+			businessTime: "2026-09-14T15:20:00.000Z",
+		})
+		expect(calls).toHaveLength(1)
+		expect(calls[0]?.searchParams.get("marker")).toBe(ref.marker)
+		expect(calls[0]?.searchParams.has("citedBy")).toBe(false)
+	})
+
+	it("says a source cited by id and not found is unconfirmed", async () => {
+		stubUpstream({
+			"/v1/cite": () =>
+				json(
+					{ error: { code: "CITATION_UNRESOLVED", message: "not here" } },
+					404,
+				),
+		})
+		expect(await loadSource(direct, undefined, ref)).toEqual({
+			eventId: "evt-1",
+			marker: ref.marker,
+			status: "unavailable",
+			reason: "unconfirmed",
+		})
+	})
+
 	it("marks the source unavailable when the cite fails, and never throws", async () => {
 		stubUpstream({
 			"/v1/cite": () =>
 				json(
 					{
-						error: { code: "CITATION_RECALL_DEGRADED", message: "no" },
-						retryAfterMs: 5,
+						error: { code: "CITATION_LOOKUP_FAILED", message: "no" },
 					},
-					503,
+					502,
 				),
 		})
 		expect(await loadSource(direct, owner, ref)).toEqual({

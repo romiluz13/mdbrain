@@ -42,7 +42,7 @@ export function SourceSlip({
 			{source.status === "unavailable" ? (
 				<p className={styles.note}>
 					{source.reason === "unconfirmed"
-						? "Governed recall could not confirm this source, so its text is not shown."
+						? "The API could not confirm this source, so its text is not shown."
 						: "This source could not be read right now."}
 				</p>
 			) : source.text === undefined || source.text === "" ? (

@@ -170,6 +170,17 @@ test("the map stays in view beside a long list on a wide screen", async ({
 		await expect(stage).toBeVisible()
 		const before = await stage.boundingBox()
 		expect(before?.y ?? Number.NaN).toBeGreaterThan(0)
+		// A list shows before its rows have all filled in, and a wheel on a page
+		// that is still short scrolls only to its end.
+		await expect
+			.poll(
+				() =>
+					page.evaluate(
+						() => document.documentElement.scrollHeight - window.innerHeight,
+					),
+				{ timeout: 5_000 },
+			)
+			.toBeGreaterThan(800)
 		await page.mouse.wheel(0, 700)
 		await expect
 			.poll(() => page.evaluate(() => window.scrollY), { timeout: 5_000 })

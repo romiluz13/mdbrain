@@ -1,5 +1,5 @@
-// The fixture's run is a stand-in for the control record and for governed
-// recall, so it gets its own check: through the real proxy handler it must
+// The fixture's run is a stand-in for the control record and for the API's
+// cite by id, so it gets its own check: through the real proxy handler it must
 // serve the shapes the page reads, in every state chapter 4 shows.
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { arrivalRows, ARRIVALS_PAGE } from "../lib/demo-data/arrivals.js"
@@ -25,7 +25,7 @@ function served(options: RunFixtureOptions = {}) {
 		handleDemoRead(
 			new Request(`http://demo.local/api/demo/v1/${path}`),
 			FIXTURE_ENV,
-			run.withRecall(upstream.fetch),
+			run.withStepEvents(upstream.fetch),
 			run.deps,
 		)
 	return { read, run, upstream }
@@ -111,23 +111,49 @@ describe("the fixture's run record", () => {
 	})
 })
 
-describe("the fixture's step recall", () => {
-	it("confirms a step by its event id and strips the run id from its text", async () => {
-		const response = await served().read("run/step?n=2")
+describe("the fixture's cite by id", () => {
+	// The proxy sets the agent; the browser names the marker alone.
+	const citeOf = (eventId: string) =>
+		`cite?marker=${encodeURIComponent(`[[event:${eventId}]]`)}`
+
+	it("resolves a step's event with no citing claim, and its text names the role and the step", async () => {
+		const { read } = served()
+		const [first] = (await (await read("run")).json()).agentRun.steps
+		const response = await read(citeOf(first.eventId))
+		expect(response.status).toBe(200)
 		expect(await response.json()).toMatchObject({
-			n: 2,
-			confirmed: true,
-			text: expect.stringMatching(/^Support Lead — write page/),
+			status: "resolved",
+			event: {
+				eventId: first.eventId,
+				text: expect.stringContaining("Support Lead — read the brain"),
+			},
 		})
 	})
 
-	it("does not confirm a step whose event recall does not return, though it returns another", async () => {
-		const response = await served({ missedSteps: [3] }).read("run/step?n=3")
-		expect(await response.json()).toEqual({ n: 3, confirmed: false })
+	it("resolves a source file the run wrote with no citing claim", async () => {
+		const { read, run } = served()
+		const response = await read(citeOf(run.arrivals[0]?.eventId ?? ""))
+		expect(response.status).toBe(200)
 	})
 
-	it("has no such step in a run whose steps were not indexed", async () => {
-		const response = await served({ variant: "no-steps" }).read("run/step?n=1")
+	it("cannot resolve a step whose event is missed", async () => {
+		const { read } = served({ missedSteps: [3] })
+		const steps = (await (await read("run")).json()).agentRun.steps
+		const response = await read(citeOf(steps[2].eventId))
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_UNRESOLVED" },
+		})
+	})
+
+	it("cannot resolve an event for another agent", async () => {
+		const { run } = served()
+		const { upstream } = served()
+		const eventId = run.arrivals[0]?.eventId ?? ""
+		const response = await upstream.fetch(
+			`http://upstream.test/v1/cite?marker=${encodeURIComponent(`[[event:${eventId}]]`)}&scope=${FIXTURE_ENV.scope}&scopeRef=${FIXTURE_ENV.scopeRef}&agentId=main`,
+			{ headers: { authorization: `Bearer ${FIXTURE_ENV.readKey}` } },
+		)
 		expect(response.status).toBe(404)
 	})
 })

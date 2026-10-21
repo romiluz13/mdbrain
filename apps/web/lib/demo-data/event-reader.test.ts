@@ -8,12 +8,14 @@ import { createEventReader, readEventsInLanes } from "./event-reader.js"
 import { LANES } from "./source-reader.js"
 
 const deps = {} as ConfirmDeps
-const step = (n: number): EventSubject => ({ kind: "step", n })
+const step = (n: number): EventSubject => ({ eventId: `evt-${n}` })
+const numberOf = (subject: EventSubject): number =>
+	Number(subject.eventId.replace("evt-", ""))
 
 function counting(answer: (n: number) => EventConfirmation) {
 	const asked: number[] = []
 	const confirm = async (_: ConfirmDeps, subject: EventSubject) => {
-		const n = subject.kind === "step" ? subject.n : 0
+		const n = numberOf(subject)
 		asked.push(n)
 		return answer(n)
 	}
@@ -31,7 +33,6 @@ describe("createEventReader", () => {
 	it.each<EventConfirmation>([
 		{ status: "confirmed", text: "a step" },
 		{ status: "unconfirmed" },
-		{ status: "not-confirmable" },
 	])("remembers an answer ($status), so it is not asked again", async (answer) => {
 		const { asked, confirm } = counting(() => answer)
 		const reader = createEventReader(deps, confirm)
@@ -63,7 +64,7 @@ describe("readEventsInLanes", () => {
 		let peak = 0
 		const started: number[] = []
 		const reader = createEventReader(deps, async (_, subject) => {
-			started.push(subject.kind === "step" ? subject.n : 0)
+			started.push(numberOf(subject))
 			inFlight += 1
 			peak = Math.max(peak, inFlight)
 			await new Promise((resolve) => setTimeout(resolve, 5))
@@ -74,7 +75,7 @@ describe("readEventsInLanes", () => {
 		await readEventsInLanes(
 			reader,
 			Array.from({ length: 10 }, (_, at) => step(at + 1)),
-			(subject) => heard.push(subject.kind === "step" ? subject.n : 0),
+			(subject) => heard.push(numberOf(subject)),
 		)
 		expect(peak).toBe(LANES)
 		expect(started.slice(0, LANES)).toEqual([1, 2, 3, 4])
@@ -91,7 +92,7 @@ describe("readEventsInLanes", () => {
 		const done = readEventsInLanes(
 			reader,
 			Array.from({ length: 12 }, (_, at) => step(at + 1)),
-			(subject) => heard.push(subject.kind === "step" ? subject.n : 0),
+			(subject) => heard.push(numberOf(subject)),
 			() => live,
 		)
 		live = false

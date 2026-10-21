@@ -18,8 +18,8 @@ import { StatTile } from "../parts/stat-tile.js"
 import { TimeLine } from "../parts/time-line.js"
 import { useSourceReads } from "../use-source-reads.js"
 
-// Without the run's record the list is the sources stored claims cite. Each row
-// is a read through governed recall, so that list stays short.
+// Without the run's record the list is the sources stored claims cite, each
+// a cite through its claim, so that list stays short.
 const SHOWN = 8
 
 /** What a row leads with: a label taken from the stored source itself. */
@@ -29,7 +29,7 @@ function sourceTitle(read: SourceView | undefined): string {
 	}
 	if (read.status === "unavailable") {
 		return read.reason === "unconfirmed"
-			? "Recall could not confirm this source"
+			? "This source could not be confirmed"
 			: "This source could not be read right now"
 	}
 	return (
@@ -46,6 +46,7 @@ export function SourcesChapter() {
 			: data.run.kind === "incomplete"
 				? (data.run.data ?? null)
 				: null
+	const noneArrived = data.run.kind === "ready" && record?.arrivals.length === 0
 	// The stored-claims list stands in only once the run's record has settled
 	// without one, so a loading record does not start reads it will not show.
 	const withoutRecord = record === null && data.run.kind !== "loading"
@@ -97,9 +98,10 @@ export function SourcesChapter() {
 			<section className={styles.panel} aria-labelledby="run-sources">
 				<h2 id="run-sources">Source files in arrival order</h2>
 				<StatePanel
-					state={data.run}
+					state={noneArrived ? { kind: "empty" } : data.run}
 					what="the run's record"
 					onRetry={reload}
+					emptyTitle="No source files yet"
 					emptyNote="The run's record lists no source files yet."
 				>
 					{(run) =>

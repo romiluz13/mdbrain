@@ -12,17 +12,23 @@ import {
 } from "./loaders-chapters.js"
 
 export interface SourceReader {
-	/** Reads one source of a claim, or joins the read already under way. */
-	read(claim: MdbrainWikiClaim, ref: SourceRef): Promise<SourceView>
+	/** Reads one source, through the claim that cites it or, with none, by its
+	 * id, or joins the read already under way. */
+	read(claim: MdbrainWikiClaim | undefined, ref: SourceRef): Promise<SourceView>
 	/** What has already been read, so a screen can paint it without a flash of
 	 * loading. */
-	peek(claim: MdbrainWikiClaim, ref: SourceRef): SourceView | undefined
+	peek(
+		claim: MdbrainWikiClaim | undefined,
+		ref: SourceRef,
+	): SourceView | undefined
 }
 
 // A cite is keyed by the claim that cites and the event cited: the same event
-// cited through two claims is two reads.
-export const sourceKey = (claim: MdbrainWikiClaim, ref: SourceRef): string =>
-	`${claim.marker ?? claim.id}\u0000${ref.marker}`
+// cited through two claims, or by id, is separate reads.
+export const sourceKey = (
+	claim: MdbrainWikiClaim | undefined,
+	ref: SourceRef,
+): string => `${claim ? (claim.marker ?? claim.id) : ""}\u0000${ref.marker}`
 
 export function createSourceReader(upstream: DemoDataUpstream): SourceReader {
 	const reading = new Map<string, Promise<SourceView>>()

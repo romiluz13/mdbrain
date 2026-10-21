@@ -1,14 +1,12 @@
 // The sources chapter in the order the run wrote them. The run's record names
-// every arrival; the stored claims decide which of them this page can confirm,
-// because the API confirms an event only through a claim that cites it.
+// every arrival and the page confirms each by id; the stored claims only say
+// which arrivals some claim cites, so the row can open that claim's sources.
 
-import { eventRef } from "./loaders-chapters.js"
-import type { EventSubject } from "./confirm-event.js"
 import type { RunRecord } from "./run-record.js"
 import type { SourceIndexEntry } from "./views.js"
 
 /** How many arrivals show at first, and each time the visitor asks for more:
- * every shown one that can be confirmed is a governed recall. */
+ * every shown one is a cite. */
 export const ARRIVALS_PAGE = 10
 
 export type ArrivalRow = {
@@ -18,18 +16,16 @@ export type ArrivalRow = {
 	sourceId: string
 	/** The id the API returned when the run wrote the event. */
 	eventId: string
-	/** The stored claim that cites the event, which a confirmation goes
-	 * through. Absent when no stored claim cites it. */
+	/** A stored claim that cites the event, which "Open source" goes through.
+	 * Absent when no stored claim cites it. */
 	citedBy?: SourceIndexEntry
 }
 
 export type ArrivalSummary = {
 	arrived: number
 	planned: number
-	/** Arrivals some stored claim cites: the ones this page can confirm. */
-	confirmable: number
-	/** Arrivals the record holds that no stored claim cites. */
-	notConfirmable: number
+	/** Arrivals some stored claim cites. */
+	cited: number
 	/** Source events the stored claims cite that the record does not list. */
 	citedOutsideRecord: number
 }
@@ -62,27 +58,12 @@ export function summarizeArrivals(
 ): ArrivalSummary {
 	const citing = indexById(index)
 	const arrived = new Set(record.arrivals.map((arrival) => arrival.eventId))
-	const confirmable = record.arrivals.filter((arrival) =>
-		citing.has(arrival.eventId),
-	).length
 	return {
 		arrived: record.arrivals.length,
 		planned: record.eventsPlanned,
-		confirmable,
-		notConfirmable: record.arrivals.length - confirmable,
+		cited: record.arrivals.filter((arrival) => citing.has(arrival.eventId))
+			.length,
 		citedOutsideRecord: index.filter((entry) => !arrived.has(entry.eventId))
 			.length,
-	}
-}
-
-/** What to confirm for one row. */
-export function arrivalSubject(row: ArrivalRow): EventSubject {
-	const ref = row.citedBy ? eventRef(row.citedBy.claim, row.eventId) : undefined
-	return {
-		kind: "arrival",
-		eventId: row.eventId,
-		...(row.citedBy !== undefined && ref !== undefined
-			? { via: { claim: row.citedBy.claim, ref } }
-			: {}),
 	}
 }

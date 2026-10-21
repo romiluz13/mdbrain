@@ -63,9 +63,8 @@ export const DEMO_READ_OPERATIONS: ReadonlyArray<{
 	{
 		operation: "run-record",
 		upstream: "findOne, control database",
-		chapter: "sources",
+		chapter: "sources and agents",
 	},
-	{ operation: "run-step", upstream: "POST /v1/search", chapter: "agents" },
 	// The one POST: a fixed-shape governed read. The caller sends a GET with a
 	// bounded question; the proxy builds the whole upstream body itself.
 	{
@@ -149,7 +148,6 @@ export async function handleDemoRead(
 			request,
 			env,
 			run ?? { run: null, manifest: async () => null },
-			fetchImpl,
 		)
 	}
 	// Route on the raw path, the way the API's router does: literal slashes

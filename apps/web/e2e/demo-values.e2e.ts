@@ -133,15 +133,6 @@ test.describe("values on screen equal the proxy's responses", () => {
 				order.indexOf("source-id"),
 			)
 			const status = await row.getAttribute("data-status")
-			if (status === "not-confirmable") {
-				// No stored claim cites it, so nothing was asked and nothing is shown.
-				expect(label).toBe("Recorded by the run")
-				expect(stored.has(eventId)).toBe(false)
-				await expect(row).toContainText(
-					"not confirmable here: no stored claim cites it",
-				)
-				continue
-			}
 			const text = stored.get(eventId)
 			if (text === undefined) {
 				// A source the proxy refused is a row that still names it.

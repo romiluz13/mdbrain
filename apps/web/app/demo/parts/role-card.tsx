@@ -1,9 +1,6 @@
 "use client"
 
-import {
-	subjectKey,
-	type EventConfirmation,
-} from "../../../lib/demo-data/confirm-event.js"
+import type { EventConfirmation } from "../../../lib/demo-data/confirm-event.js"
 import type {
 	AgentRunChecks,
 	PageCheck,
@@ -115,11 +112,9 @@ function stepStatus(answer: EventConfirmation | undefined) {
 		case "confirmed":
 			return "Confirmed in memory"
 		case "unconfirmed":
-			return "Recall did not return this event"
+			return "Could not be confirmed in this run"
 		case "unavailable":
 			return "Could not be read right now"
-		case "not-confirmable":
-			return "Not confirmable here"
 	}
 }
 
@@ -168,7 +163,7 @@ export function RoleCard({
 					<summary>{countOf(story.steps.length, "step")} recorded</summary>
 					<ol className={styles.stepList}>
 						{story.steps.map((step) => {
-							const answer = reads[subjectKey({ kind: "step", n: step.n })]
+							const answer = reads[step.eventId]
 							return (
 								<li
 									key={step.n}

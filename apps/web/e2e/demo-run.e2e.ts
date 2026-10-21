@@ -14,7 +14,7 @@ type Run = {
 	agentRun?: {
 		reusedPage?: { slug: string }
 		pendingProposal?: { slug: string }
-		steps?: Array<{ n: number; role: string }>
+		steps?: Array<{ n: number; role: string; eventId: string }>
 	}
 }
 
@@ -28,7 +28,7 @@ async function open(page: Page, options: ProxyOptions, chapter: number) {
 }
 
 test.describe("chapter 3: sources in arrival order", () => {
-	test("shows the record's counts apart from what stored claims cite, first ten rows in the record's order", async ({
+	test("shows the record's counts, and the first ten rows in the record's order, each confirmed by its id", async ({
 		page,
 	}) => {
 		const proxy = await open(page, {}, 2)
@@ -43,33 +43,29 @@ test.describe("chapter 3: sources in arrival order", () => {
 		await expect(page.getByTestId("source-event-id")).toHaveText(
 			run.arrivals.slice(0, 10).map((arrival) => arrival.eventId),
 		)
-		const notConfirmable = page.locator(
-			'[data-testid="source-row"][data-status="not-confirmable"]',
-		)
-		expect(await notConfirmable.count()).toBeGreaterThan(0)
-		await expect(notConfirmable.first().getByTestId("source-label")).toHaveText(
-			"Recorded by the run",
-		)
+		await expect(
+			page.locator('[data-testid="source-row"][data-status="confirmed"]'),
+		).toHaveCount(10)
+		// A source no stored claim cites is confirmed all the same.
+		const uncited = page
+			.getByTestId("source-row")
+			.filter({ hasText: "No stored claim cites it" })
+		expect(await uncited.count()).toBeGreaterThan(0)
+		await expect(uncited.first()).toHaveAttribute("data-status", "confirmed")
+		await expect(
+			uncited.first().getByRole("button", { name: /^Open source / }),
+		).toHaveCount(0)
 	})
 
-	test("keeps the confirmed count apart from the sources it cannot confirm", async ({
-		page,
-	}) => {
+	test("tallies the rows it has confirmed", async ({ page }) => {
 		await open(page, {}, 2)
 		const tally = page.getByTestId("arrivals-tally")
 		await expect(
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
 		).toHaveCount(0)
-		const confirmed = await page
-			.locator('[data-testid="source-row"][data-status="confirmed"]')
-			.count()
-		const notConfirmable = await page
-			.locator('[data-testid="source-row"][data-status="not-confirmable"]')
-			.count()
-		await expect(tally).toContainText(`Showing 10 of`)
-		await expect(tally).toContainText(
-			`${confirmed} confirmed, ${notConfirmable} not confirmable here`,
-		)
+		await expect(tally).toContainText("Showing 10 of")
+		await expect(tally).toContainText("10 confirmed.")
+		await expect(tally).not.toContainText("not confirmed")
 	})
 
 	test("cites only the rows it shows, and shows ten more on request with focus on the first new row", async ({
@@ -81,13 +77,16 @@ test.describe("chapter 3: sources in arrival order", () => {
 		).toHaveCount(0)
 		await proxy.flush()
 		const run = proxy.latest("run")?.body as Run
+		// A cite by id names no citing claim; the warm-up of chapter 5's sources
+		// does.
 		const cites = () =>
 			proxy.responses.filter(
-				(entry) => entry.url.pathname === "/api/demo/v1/cite",
+				(entry) =>
+					entry.url.pathname === "/api/demo/v1/cite" &&
+					!entry.url.searchParams.has("citedBy"),
 			)
-		const afterFirstPage = cites().length
-		expect(afterFirstPage).toBeLessThanOrEqual(10)
-		expect(afterFirstPage).toBeLessThan(run.arrivals.length)
+		expect(cites()).toHaveLength(10)
+		expect(cites().length).toBeLessThan(run.arrivals.length)
 		await page.getByRole("button", { name: "Show ten more" }).click()
 		await expect(page.getByTestId("source-row")).toHaveCount(20)
 		await expect(page.locator('[data-position="11"]')).toBeFocused()
@@ -95,7 +94,7 @@ test.describe("chapter 3: sources in arrival order", () => {
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
 		).toHaveCount(0)
 		await proxy.flush()
-		expect(cites().length).toBeLessThanOrEqual(20)
+		expect(cites()).toHaveLength(20)
 		while (
 			await page.getByRole("button", { name: "Show ten more" }).isVisible()
 		) {
@@ -196,15 +195,25 @@ test.describe("chapter 4: agents at work", () => {
 		)
 	})
 
-	test("confirms a role's steps through recall only when its steps are opened", async ({
+	test("confirms a role's steps by their event ids only when its steps are opened", async ({
 		page,
 	}) => {
 		const proxy = await open(page, {}, 3)
-		const steps = () =>
+		await proxy.flush()
+		const run = proxy.latest("run")?.body as Run
+		const stepEvents = new Map(
+			(run.agentRun?.steps ?? []).map((step) => [
+				`[[event:${step.eventId}]]`,
+				step,
+			]),
+		)
+		const stepCites = () =>
 			proxy.responses.filter(
-				(entry) => entry.url.pathname === "/api/demo/v1/run/step",
+				(entry) =>
+					entry.url.pathname === "/api/demo/v1/cite" &&
+					stepEvents.has(entry.url.searchParams.get("marker") ?? ""),
 			)
-		expect(steps()).toHaveLength(0)
+		expect(stepCites()).toHaveLength(0)
 		const support = page.locator(
 			'[data-testid="agent-role"][data-role="support"]',
 		)
@@ -213,17 +222,19 @@ test.describe("chapter 4: agents at work", () => {
 			support.locator('[data-testid="agent-step"][data-status="confirmed"]'),
 		).toHaveCount(3)
 		await proxy.flush()
-		const run = proxy.latest("run")?.body as Run
-		const supportSteps = (run.agentRun?.steps ?? [])
-			.filter((step) => step.role === "support")
-			.map((step) => String(step.n))
-		expect(steps().map((entry) => entry.url.searchParams.get("n"))).toEqual(
-			expect.arrayContaining(supportSteps),
-		)
-		expect(steps()).toHaveLength(supportSteps.length)
+		const supportMarkers = [...stepEvents]
+			.filter(([, step]) => step.role === "support")
+			.map(([marker]) => marker)
+		expect(
+			stepCites().map((entry) => entry.url.searchParams.get("marker")),
+		).toEqual(expect.arrayContaining(supportMarkers))
+		expect(stepCites()).toHaveLength(supportMarkers.length)
+		expect(
+			stepCites().every((entry) => !entry.url.searchParams.has("citedBy")),
+		).toBe(true)
 	})
 
-	test("says recall did not return a step it could not confirm", async ({
+	test("says a step it could not confirm was not confirmed in this run", async ({
 		page,
 	}) => {
 		await open(page, { run: { missedSteps: [2] } }, 3)
@@ -233,7 +244,7 @@ test.describe("chapter 4: agents at work", () => {
 		await support.locator("summary").click()
 		await expect(
 			support.locator('[data-testid="agent-step"][data-status="unconfirmed"]'),
-		).toHaveText(/Recall did not return this event/)
+		).toHaveText(/Could not be confirmed in this run/)
 		await expect(
 			support.locator('[data-testid="agent-step"][data-status="confirmed"]'),
 		).toHaveCount(2)

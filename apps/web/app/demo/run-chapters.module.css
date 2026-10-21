@@ -47,19 +47,9 @@
 	overflow-wrap: anywhere;
 }
 
-.arrivalList li[data-status="not-confirmable"] .label {
-	color: var(--ink-2);
-	font-weight: 400;
-}
-
 .label {
 	font-weight: 600;
 	overflow-wrap: anywhere;
-}
-
-.label[data-quiet="true"] {
-	color: var(--ink-2);
-	font-weight: 400;
 }
 
 .tag {

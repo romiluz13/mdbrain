@@ -309,9 +309,8 @@ export function createRecordedUpstream(recording: Recording): typeof fetch {
 }
 
 const RUN_READ = "/v1/run"
-const RUN_STEP_READ = "/v1/run/step"
 
-/** The run reads of a recording, as the page asked them. The run's record is
+/** The run read of a recording, as the page asked it. The run's record is
  * the proxy's own answer, not an upstream read, so a replay serves it as
  * recorded instead of running it through the proxy again. A recording made
  * before the run read existed has none, and replays as a server with no run
@@ -334,20 +333,6 @@ export function createRecordedRun(
 							code: "RUN_NOT_CONFIGURED",
 							message:
 								"The pinned run's record is not configured on this server.",
-						},
-					})
-		}
-		if (url.pathname === `${PROXY_PREFIX}${RUN_STEP_READ}`) {
-			const n = url.searchParams.get("n")
-			const read = recording.reads.find(
-				(entry) => entry.path === RUN_STEP_READ && entry.query.n === n,
-			)
-			return read
-				? answer(read.status, read.body)
-				: answer(404, {
-						error: {
-							code: "NOT_RECORDED",
-							message: `no recorded step ${n}`,
 						},
 					})
 		}

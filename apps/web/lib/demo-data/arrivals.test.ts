@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest"
-import {
-	ARRIVALS_PAGE,
-	arrivalRows,
-	arrivalSubject,
-	summarizeArrivals,
-} from "./arrivals.js"
+import { ARRIVALS_PAGE, arrivalRows, summarizeArrivals } from "./arrivals.js"
 import { claimView, runRecord } from "./test-upstream.js"
 import type { SourceIndexEntry } from "./views.js"
 
@@ -49,46 +44,21 @@ describe("arrivalRows", () => {
 })
 
 describe("summarizeArrivals", () => {
-	it("counts what the record holds apart from what a stored claim lets this page confirm", () => {
+	it("counts what the record holds apart from what a stored claim cites", () => {
 		const index = [cited("evt-a", ["evt-x"]), cited("evt-x"), cited("evt-c")]
 		expect(summarizeArrivals(runRecord(), index)).toEqual({
 			arrived: 3,
 			planned: 4,
-			confirmable: 2,
-			notConfirmable: 1,
+			cited: 2,
 			citedOutsideRecord: 1,
 		})
 	})
 
-	it("counts every arrival as not confirmable when no stored claim cites any", () => {
+	it("counts no arrival as cited when no stored claim cites any", () => {
 		expect(summarizeArrivals(runRecord(), [])).toMatchObject({
-			confirmable: 0,
-			notConfirmable: 3,
+			cited: 0,
 			citedOutsideRecord: 0,
 		})
-	})
-})
-
-describe("arrivalSubject", () => {
-	it("asks through the citing claim when a stored claim cites the arrival", () => {
-		const [row] = arrivalRows(runRecord(), [cited("evt-b")])
-		if (row === undefined) {
-			throw new Error("expected a row")
-		}
-		const subject = arrivalSubject(row)
-		expect(subject).toMatchObject({ kind: "arrival", eventId: "evt-b" })
-		expect(subject.kind === "arrival" ? subject.via?.ref.eventId : "").toBe(
-			"evt-b",
-		)
-	})
-
-	it("has no way to ask when no stored claim cites the arrival", () => {
-		const [row] = arrivalRows(runRecord(), [])
-		if (row === undefined) {
-			throw new Error("expected a row")
-		}
-		const subject = arrivalSubject(row)
-		expect(subject.kind === "arrival" ? subject.via : "step").toBeUndefined()
 	})
 })
 

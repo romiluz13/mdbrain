@@ -104,7 +104,7 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 			recording !== null
 				? createRecordedUpstream(recording)
 				: run && generated
-					? run.withRecall(generated.fetch)
+					? run.withStepEvents(generated.fetch)
 					: fetch
 		await page.route("**/api/demo/v1/**", async (route) => {
 			const request = route.request()

@@ -33,15 +33,6 @@ export type AgentStep = {
 	eventId: string
 }
 
-/** The answer to one step's confirmation: recall found the step's event, or it
- * did not. A miss is an answer, not a failure. */
-export type StepConfirmation = {
-	n: number
-	confirmed: boolean
-	text?: string
-	businessTime?: string
-}
-
 export type AgentRunUsage = {
 	uncachedInput: number
 	cacheRead: number
@@ -87,8 +78,13 @@ export type RunProjection =
 	| { ok: true; record: RunRecord }
 	| { ok: false; code: RunRecordRefusal }
 
-const RUN_STATES: readonly string[] = ["seeding", "ready", "used", "failed"]
-const AGENT_RUN_STATES: readonly string[] = [
+export const RUN_STATES: readonly string[] = [
+	"seeding",
+	"ready",
+	"used",
+	"failed",
+]
+export const AGENT_RUN_STATES: readonly string[] = [
 	"running",
 	"complete",
 	"incomplete",
