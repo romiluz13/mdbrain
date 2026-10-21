@@ -184,3 +184,11 @@ export async function expectNoSeriousAccessibilityViolations(
 		})),
 	).toEqual([])
 }
+
+/** Opens a chapter from the rail by its title. */
+export const goto = (page: Page, index: number) =>
+	page.getByRole("button", { name: chapterTitle(index), exact: true }).click()
+
+/** A counter tile by its `data-stat` name. */
+export const stat = (page: Page, name: string) =>
+	page.locator(`[data-stat="${name}"]`)
