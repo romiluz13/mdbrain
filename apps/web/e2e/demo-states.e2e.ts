@@ -174,6 +174,11 @@ test.describe("states", () => {
 		await expect(screen.getByTestId("contradiction-stamp")).toHaveCount(0)
 		await expect(screen.getByTestId("contradiction-claim")).toHaveCount(0)
 		await expect(screen.getByTestId("beat-stepper")).toHaveCount(0)
+		// What the chapter says before the state says there is none must not
+		// assert the thing the state denies.
+		const chapterText = (await page.locator("main#chapter").textContent()) ?? ""
+		expect(chapterText).not.toMatch(/two pages disagree\./i)
+		expect(chapterText).not.toContain("Where the two pages sit")
 		expect(await settleContradiction(page, proxy)).toBe("none")
 		await openAnyCitation(page, proxy)
 		await expect(

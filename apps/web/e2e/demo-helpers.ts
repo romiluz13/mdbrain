@@ -222,14 +222,20 @@ export async function expectSourcesMatchEvidence(
 	scope: Locator,
 	claim: StoredClaim,
 ): Promise<void> {
-	const events = claim.evidence.filter((entry) => entry.kind === "event")
+	const events = claim.evidence.filter(
+		(entry, at, all) =>
+			entry.kind === "event" &&
+			all.findIndex(
+				(other) => other.kind === "event" && other.sourceId === entry.sourceId,
+			) === at,
+	)
 	if (events.length === 0) {
 		const honest = scope.locator('[data-state="empty"]')
 		await expect(honest).toBeVisible(SLOW_READ)
 		await expect(honest).toContainText(
 			claim.evidence.length === 0
 				? /stored with no evidence/i
-				: /not a source event/i,
+				: /not (a source event|source events)/i,
 		)
 		await expect(scope.locator("article[data-status]")).toHaveCount(0)
 		await expect(scope.locator('[data-state="loading"]')).toHaveCount(0)

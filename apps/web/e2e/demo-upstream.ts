@@ -542,6 +542,32 @@ export function createDemoUpstream(
 					"the source could not be confirmed through governed recall",
 				)
 			}
+			// The real route reads the citing claim first, and only a claim that
+			// cites the event can have it confirmed.
+			const eventId = parsed.marker.eventId
+			const citing = parseCitationMarker(citedBy)
+			const citingMarker = citing.ok ? citing.marker : undefined
+			const owner =
+				citingMarker?.kind === "wiki"
+					? bySlug
+							.get(citingMarker.slug)
+							?.claims.find((claim) => claim.id === citingMarker.claimId)
+					: undefined
+			if (!owner) {
+				return failure(404, "CITATION_NOT_FOUND", "citation not found")
+			}
+			if (
+				!owner.evidence.some(
+					(evidence) =>
+						evidence.kind === "event" && evidence.sourceId === eventId,
+				)
+			) {
+				return failure(
+					404,
+					"CITATION_UNRESOLVED",
+					"the source could not be confirmed through governed recall",
+				)
+			}
 			const sourceId = data.sourceOf.get(parsed.marker.eventId) ?? ""
 			const body = data.bodies.get(sourceId)
 			if (body === undefined)

@@ -213,9 +213,10 @@ test("chapter 5's claim cards are as tall as their own content, not stretched to
 	await openDemo(page)
 	await mapReady(page)
 	await goto(page, 4)
-	if ((await settleContradiction(page, proxy)) === "none") {
-		return
-	}
+	test.skip(
+		(await settleContradiction(page, proxy)) === "none",
+		"this run records no contradiction yet, so chapter 5 has no claim cards",
+	)
 	await showBeat(page, 2)
 	await sourcesSettled(page.getByTestId("screen"))
 	const stretched = await page.evaluate(() => {

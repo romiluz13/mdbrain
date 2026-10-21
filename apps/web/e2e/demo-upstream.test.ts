@@ -11,11 +11,11 @@ import {
 	type DemoDataUpstream,
 } from "../lib/demo-data/loaders.js"
 import {
-	loadClaimSources,
 	loadContradictionCase,
 	loadWikiSearch,
 } from "../lib/demo-data/loaders-chapters.js"
 import { handleDemoRead } from "../lib/demo-data/proxy.js"
+import { loadClaimSources } from "../lib/demo-data/test-upstream.js"
 import { governanceMix, summarizeChanges } from "../lib/demo-data/views.js"
 import {
 	corpusDir,
@@ -194,21 +194,60 @@ describe("demo upstream fixture", () => {
 
 describe("event citations in the fixture", () => {
 	const upstream = createDemoUpstream()
-	const sourceId = [...upstream.data.bodies.keys()][0]
-	const marker = `[[event:${eventIdOf(String(sourceId))}]]`
-	const citedBy = "[[wiki:company/northstar-systems#northstar-sla@r1]]"
+	const claims = upstream.data.pages.flatMap((page) => page.claims)
+	const citing = claims.find((claim) =>
+		claim.evidence.some((evidence) => evidence.kind === "event"),
+	)
+	const cited = citing?.evidence.find((evidence) => evidence.kind === "event")
+	if (!citing?.marker || !cited) throw new Error("no claim cites an event")
+	const marker = `[[event:${cited.sourceId}]]`
+	const strangerEvent = claims
+		.flatMap((claim) => claim.evidence)
+		.find(
+			(evidence) =>
+				evidence.kind === "event" &&
+				!citing.evidence.some((own) => own.sourceId === evidence.sourceId),
+		)
+	if (!strangerEvent) throw new Error("no event the claim does not cite")
 
-	const cite = (agentId: string | null) => {
+	const cite = (
+		agentId: string | null,
+		asked = marker,
+		citedBy = citing.marker,
+	) => {
 		const url = new URL("http://upstream.test/v1/cite")
 		url.searchParams.set("scope", FIXTURE_ENV.scope)
 		url.searchParams.set("scopeRef", FIXTURE_ENV.scopeRef)
-		url.searchParams.set("marker", marker)
-		url.searchParams.set("citedBy", citedBy)
+		url.searchParams.set("marker", asked)
+		url.searchParams.set("citedBy", String(citedBy))
 		if (agentId !== null) url.searchParams.set("agentId", agentId)
 		return upstream.fetch(url, {
 			headers: { authorization: `Bearer ${FIXTURE_ENV.readKey}` },
 		})
 	}
+
+	it("stay unresolved for an event the citing claim does not cite", async () => {
+		const response = await cite(
+			FIXTURE_ENV.agentId,
+			`[[event:${strangerEvent.sourceId}]]`,
+		)
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_UNRESOLVED" },
+		})
+	})
+
+	it("are not found when the citing claim is not stored", async () => {
+		const response = await cite(
+			FIXTURE_ENV.agentId,
+			marker,
+			"[[wiki:company/northstar-systems#no-such-claim@r1]]",
+		)
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_NOT_FOUND" },
+		})
+	})
 
 	it("resolve for the run's own agent", async () => {
 		const response = await cite(FIXTURE_ENV.agentId)

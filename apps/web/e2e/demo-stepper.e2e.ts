@@ -15,21 +15,24 @@ import { installDemoProxy } from "./demo-proxy"
 const NEXT = /^Next beat/
 const PREVIOUS = /Previous beat$/
 
-async function openWalk(page: Page): Promise<boolean> {
+// A run with no contradiction recorded has no walk to test; the states spec
+// holds its honest state. Say skipped, not passed.
+async function openWalk(page: Page): Promise<void> {
 	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
 	await goto(page, 4)
-	return (await settleContradiction(page, proxy)) === "recorded"
+	test.skip(
+		(await settleContradiction(page, proxy)) !== "recorded",
+		"this run records no contradiction yet, so chapter 5 has no walk-through",
+	)
 }
 
 test("chapter 5 starts on its first claim and reveals the second claim, then the stamp", async ({
 	page,
 	isMobile,
 }) => {
-	if (!(await openWalk(page))) {
-		return
-	}
+	await openWalk(page)
 	const stepper = page.getByTestId("beat-stepper")
 	const claims = page.getByTestId("contradiction-claim")
 	const stamp = page.getByTestId("contradiction-stamp")
@@ -70,9 +73,7 @@ test("chapter 5 starts on its first claim and reveals the second claim, then the
 })
 
 test("the end beats cannot be stepped past, and say so", async ({ page }) => {
-	if (!(await openWalk(page))) {
-		return
-	}
+	await openWalk(page)
 	const stepper = page.getByTestId("beat-stepper")
 	const previous = stepper.getByRole("button", { name: PREVIOUS })
 	const next = stepper.getByRole("button", { name: NEXT })
@@ -91,9 +92,7 @@ test("the end beats cannot be stepped past, and say so", async ({ page }) => {
 test("the arrow keys step the beats from the stepper while focus stays on it", async ({
 	page,
 }) => {
-	if (!(await openWalk(page))) {
-		return
-	}
+	await openWalk(page)
 	const stepper = page.getByTestId("beat-stepper")
 	const next = stepper.getByRole("button", { name: NEXT })
 	await next.focus()
@@ -118,9 +117,7 @@ test("the arrow keys step the beats from the stepper while focus stays on it", a
 
 test("touch steps the beats", async ({ page, isMobile }) => {
 	test.skip(!isMobile, "a tap is the phone's input")
-	if (!(await openWalk(page))) {
-		return
-	}
+	await openWalk(page)
 	const stepper = page.getByTestId("beat-stepper")
 	await stepper.getByRole("button", { name: NEXT }).tap()
 	await expect(stepper).toHaveAttribute("data-beat", "1")
@@ -132,9 +129,7 @@ test("touch steps the beats", async ({ page, isMobile }) => {
 
 test.describe("motion", () => {
 	test("a beat eases in when motion is allowed", async ({ page }) => {
-		if (!(await openWalk(page))) {
-			return
-		}
+		await openWalk(page)
 		const started = await page.evaluate(async () => {
 			document
 				.querySelector<HTMLButtonElement>(
@@ -145,9 +140,11 @@ test.describe("motion", () => {
 			await new Promise((resolve) => requestAnimationFrame(resolve))
 			return document
 				.getAnimations()
-				.map((animation) => (animation as CSSAnimation).animationName)
+				.flatMap((animation) =>
+					animation instanceof CSSAnimation ? [animation.animationName] : [],
+				)
 		})
-		expect(started.length).toBeGreaterThan(0)
+		expect(started.some((name) => name.includes("beat-in"))).toBe(true)
 	})
 
 	test.describe("with reduced motion", () => {
@@ -156,9 +153,7 @@ test.describe("motion", () => {
 		test("a beat appears at once: nothing animates, and the stamp is not delayed", async ({
 			page,
 		}) => {
-			if (!(await openWalk(page))) {
-				return
-			}
+			await openWalk(page)
 			await showBeat(page, 1)
 			await showBeat(page, 2)
 			await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
@@ -173,9 +168,7 @@ test.describe("motion", () => {
 })
 
 test("the stepper's own controls are at least 44 px", async ({ page }) => {
-	if (!(await openWalk(page))) {
-		return
-	}
+	await openWalk(page)
 	for (const beat of [0, 1, 2]) {
 		await showBeat(page, beat)
 		for (const name of [NEXT, PREVIOUS]) {
@@ -194,9 +187,7 @@ test("on a phone the chapter is one screen per beat, not one long page", async (
 	isMobile,
 }) => {
 	test.skip(!isMobile, "page length matters on the phone")
-	if (!(await openWalk(page))) {
-		return
-	}
+	await openWalk(page)
 	const height = () =>
 		page.evaluate(() => Math.round(document.documentElement.scrollHeight))
 	const heights: number[] = []

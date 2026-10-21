@@ -1,6 +1,6 @@
 // Records the proxy's answers to the reads /demo makes, for the e2e to replay.
-// The lead runs it against a live slot through .orchestrator/demo/tasks/329/
-// record-fixture.ts, which sets the proxy env, so the run never prints a key:
+// Run it against a live slot with the proxy env set, so the run never prints a
+// key:
 //
 //   DEMO_E2E_LIVE=1 DEMO_RECORD_TO=/some/recording.json \
 //     bunx playwright test e2e/demo-record.e2e.ts --project=desktop-chromium
@@ -13,7 +13,7 @@
 import { expect, test } from "@playwright/test"
 import { listPages, mapReady, openDemo, sourcesSettled } from "./demo-helpers"
 import { journey, withKeyboard } from "./demo-journey"
-import { installDemoProxy } from "./demo-proxy"
+import { installDemoProxy, LIVE } from "./demo-proxy"
 import {
 	forbiddenFromEnv,
 	identityFromEnv,
@@ -24,6 +24,10 @@ import {
 const OUT = process.env.DEMO_RECORD_TO
 
 test.skip(!OUT, "set DEMO_RECORD_TO to record")
+test.skip(
+	!LIVE,
+	"records a live stack; the generated fixture is not a recording",
+)
 
 test("records the reads the journey and the value checks make", async ({
 	page,
@@ -38,9 +42,7 @@ test("records the reads the journey and the value checks make", async ({
 	await mapReady(page)
 	await proxy.flush()
 	const stored = listPages(proxy).find((candidate) =>
-		candidate.claims.some((claim) =>
-			claim.evidence.some((evidence) => evidence.kind === "event"),
-		),
+		candidate.claims[0]?.evidence.some((evidence) => evidence.kind === "event"),
 	)
 	expect(stored, "a stored page with a cited source").toBeDefined()
 	if (!stored) return
@@ -54,11 +56,12 @@ test("records the reads the journey and the value checks make", async ({
 	await page.keyboard.press("Escape")
 
 	await proxy.flush()
-	const recording = toRecording(
-		proxy.responses,
-		forbiddenFromEnv(),
-		identityFromEnv(),
-	)
+	const forbidden = forbiddenFromEnv()
+	expect(
+		forbidden.length,
+		"the proxy env is set, so the key and the origin are known and refused",
+	).toBeGreaterThan(0)
+	const recording = toRecording(proxy.responses, forbidden, identityFromEnv())
 	writeRecording(OUT, recording)
 	console.log(`[demo-record] ${recording.reads.length} reads recorded`)
 })

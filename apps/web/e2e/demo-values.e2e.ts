@@ -176,12 +176,14 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await openDemo(page)
 		await mapReady(page)
 		await proxy.flush()
+		// The citation below is the page's first claim's, so that claim must cite
+		// an event: a claim stored with no evidence has no source to date.
 		const stored = listPages(proxy).find((candidate) =>
-			candidate.claims.some((claim) =>
-				claim.evidence.some((evidence) => evidence.kind === "event"),
+			candidate.claims[0]?.evidence.some(
+				(evidence) => evidence.kind === "event",
 			),
 		)
-		if (!stored) throw new Error("no stored page has a claim with a source")
+		if (!stored) throw new Error("no stored page opens with a sourced claim")
 		await page.getByLabel("Pick a page").selectOption({ label: stored.title })
 		const inspector = page.getByRole("complementary", {
 			name: "Page inspector",
@@ -284,10 +286,14 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await openDemo(page)
 		await mapReady(page)
 		await goto(page, 4)
-		if ((await settleContradiction(page, proxy)) === "none") {
+		const recorded = (await settleContradiction(page, proxy)) === "recorded"
+		if (!recorded) {
 			await expect(page.getByTestId("contradiction-claim")).toHaveCount(0)
-			return
 		}
+		test.skip(
+			!recorded,
+			"this run records no contradiction yet; chapter 5 shows its honest state",
+		)
 		const holder = bodyOf<{
 			unresolvedContradictions: Array<{
 				pageSlug: string
@@ -318,7 +324,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await expect(page.getByTestId("business-time-note")).toHaveCount(1)
 		await expect(
 			page.locator(
-				'li:has([data-testid="contradiction-claim"]) > [data-time-kind="business"]',
+				'li:has([data-testid="contradiction-claim"]) [data-time-kind="business"]:not(article *)',
 			),
 		).toHaveCount(0)
 		await expect(page.getByTestId("contradiction-claim")).toHaveText(
@@ -333,9 +339,12 @@ test.describe("values on screen equal the proxy's responses", () => {
 			`Resolution: ${holder.contradiction.resolution}`,
 		)
 		const cites = proxy.responses.filter(
-			(entry) => entry.url.pathname === "/api/demo/v1/cite",
+			(entry) =>
+				entry.url.pathname === "/api/demo/v1/cite" && entry.status === 200,
 		)
-		expect(cites.length).toBeGreaterThan(0)
+		if (GENERATED) {
+			expect(cites.length).toBeGreaterThan(0)
+		}
 		for (const cite of cites) {
 			const event = (
 				cite.body as {

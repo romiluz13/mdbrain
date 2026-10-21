@@ -82,6 +82,45 @@ describe("toRecording", () => {
 		})
 	})
 
+	it("empties the access lists and names of who proposed or may read a page", () => {
+		const recording = toRecording(
+			[
+				seen("/v1/wiki/page-a", {
+					permissions: {
+						allowedSubjects: ["alice@example.com"],
+						allowedGroups: ["finance-leads"],
+						allowedRoles: ["controller"],
+					},
+					proposer: {
+						subjectId: "user-4417",
+						displayName: "Dana Whitcombe",
+						agentId: "agent-x",
+					},
+					claims: [
+						{ text: "A claim.", author: "dana.w", email: "d@example.com" },
+					],
+				}),
+			],
+			[],
+		)
+		const text = JSON.stringify(recording)
+		for (const leaked of [
+			"alice@example.com",
+			"finance-leads",
+			"controller",
+			"user-4417",
+			"Dana Whitcombe",
+			"dana.w",
+			"d@example.com",
+		]) {
+			expect(text, leaked).not.toContain(leaked)
+		}
+		expect(text).toContain("A claim.")
+		expect(recording.reads[0]?.body).toMatchObject({
+			permissions: { allowedSubjects: [], allowedGroups: [], allowedRoles: [] },
+		})
+	})
+
 	it("refuses to record an answer that holds the read key or an origin, without printing it", () => {
 		const key = "sekret-read-key-0123456789"
 		const origin = "http://127.0.0.1:3857"

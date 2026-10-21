@@ -38,6 +38,18 @@ const IDENTITY_KEYS = new Set([
 	"principal",
 	"principalId",
 	"userId",
+	"proposer",
+	"subjectId",
+	"displayName",
+	"author",
+	"email",
+])
+// Who may read a page: the demo reads none of it, and the lists name people,
+// groups and roles. They are recorded empty.
+const ACCESS_LISTS = new Set([
+	"allowedSubjects",
+	"allowedGroups",
+	"allowedRoles",
 ])
 const SCRUBBED = "[recorded]"
 // The text of an authorization header, whatever the token.
@@ -121,7 +133,11 @@ function scrub(value: unknown, identity: Set<string>): unknown {
 		return Object.fromEntries(
 			Object.entries(value).map(([key, item]) => [
 				key,
-				IDENTITY_KEYS.has(key) ? SCRUBBED : scrub(item, identity),
+				ACCESS_LISTS.has(key)
+					? []
+					: IDENTITY_KEYS.has(key)
+						? SCRUBBED
+						: scrub(item, identity),
 			]),
 		)
 	}
