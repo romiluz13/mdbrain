@@ -288,14 +288,3 @@ export async function loadWikiSearch(
 		return errorState(error, upstream.readKey)
 	}
 }
-
-/** The agents-at-work chapter. No stored read carries agent activity yet
- * (ticket 10 is not merged), so this reports "not yet in this run" instead
- * of presenting the seeder's writer ids as agents at work. */
-export function loadAgentActivity(): DataState<never> {
-	return {
-		kind: "incomplete",
-		reason: "AGENT_ACTIVITY_NOT_EXPOSED",
-		state: null,
-	}
-}

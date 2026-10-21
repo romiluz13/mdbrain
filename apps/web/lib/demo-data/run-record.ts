@@ -33,6 +33,15 @@ export type AgentStep = {
 	eventId: string
 }
 
+/** The answer to one step's confirmation: recall found the step's event, or it
+ * did not. A miss is an answer, not a failure. */
+export type StepConfirmation = {
+	n: number
+	confirmed: boolean
+	text?: string
+	businessTime?: string
+}
+
 export type AgentRunUsage = {
 	uncachedInput: number
 	cacheRead: number

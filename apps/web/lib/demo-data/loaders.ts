@@ -4,10 +4,8 @@
 // returns fixture data, and business time (event timestamps) is kept apart
 // from ingestion time (server-stamped page times).
 //
-// Two reads have no API route today (D19): the run source-event list and the
-// run manifest. The run loader is shaped manifest -> ordered event ids ->
-// cite each; until a manifest route exists it reports
-// RUN_MANIFEST_NOT_EXPOSED instead of inventing data.
+// The run's own record has no API route (D19); the proxy serves it from the
+// run's control record, and ./loaders-run.ts reads it.
 //
 // Production path: the /demo page runs these loaders in the browser against
 // the same-origin /api/demo route, whose handler (handleDemoRead in
@@ -35,9 +33,7 @@ import {
 import { readsFor, type DemoReads } from "./reads.js"
 import { mapWithStatus, type DataState } from "./states.js"
 
-/** Where the loaders read from. `getRunManifest` and `pinnedPage` are the
- * seams for the reads that have no API route yet (D19); the live check and
- * the future manifest wiring inject them. */
+/** Where the loaders read from. */
 export interface DemoDataUpstream {
 	/** The API base the client reads: the direct API in tests, or the
 	 * same-origin /api/demo route in production and the live check. */
@@ -48,26 +44,6 @@ export interface DemoDataUpstream {
 	 * and scopeRef itself and refuses caller-set ones. */
 	scope?: string
 	scopeRef?: string
-	getRunManifest?: () => Promise<RunManifestView | null>
-	pinnedPage?: PinnedPageRef
-}
-
-/** The run manifest as the demo driver writes it. There is no API route for
- * it today; this is the shape a future route would serve. */
-export interface RunManifestView {
-	runId: string
-	slotIndex?: number
-	scopeRef?: string
-	agentId?: string
-	state: string
-	eventsWritten?: string[]
-}
-
-/** A wiki page pinned as the citing context for run events. */
-export interface PinnedPageRef {
-	slug: string
-	revision: number
-	claims: ReadonlyArray<{ id: string }>
 }
 
 export function errorState(error: unknown, secret: string): DataState<never> {

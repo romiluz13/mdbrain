@@ -133,15 +133,20 @@ export function RunChapter() {
 			</section>
 			<section className={styles.panel} aria-labelledby="run-id-heading">
 				<h2 id="run-id-heading">Which run is this?</h2>
-				<StatePanel
-					state={data.sources}
-					what="the run manifest"
-					onRetry={reload}
-				/>
+				<StatePanel state={data.run} what="the run's record" onRetry={reload}>
+					{(record) => (
+						<p className={styles.note} data-testid="run-record-summary">
+							The run's record lists {record.arrivals.length} of{" "}
+							{record.eventsPlanned} planned source files and{" "}
+							{record.pagesWritten.length} of {record.pagesPlanned} planned
+							pages. The server reads it from the run's control record.
+						</p>
+					)}
+				</StatePanel>
 				<p className={styles.note}>
-					The proxy pins one seeded run on the server, so the run id and its
-					scope never reach this page. The page can only show what it read,
-					which is why each number above names the read behind it.
+					The proxy pins one seeded run on the server, so the run id, its scope
+					and the control database never reach this page. The page can only show
+					what it read, which is why each number above names the read behind it.
 				</p>
 			</section>
 		</>

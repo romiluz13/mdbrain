@@ -8,9 +8,9 @@ import type {
 import styles from "../demo.module.css"
 
 const INCOMPLETE: Record<IncompleteReason, { title: string; body: string }> = {
-	RUN_MANIFEST_NOT_EXPOSED: {
-		title: "Not yet in this run",
-		body: "The read API has no run manifest route yet, so this screen cannot show the run's own record: which source files arrived, and in what order. It shows what is stored instead.",
+	RUN_NOT_CONFIGURED: {
+		title: "Run not configured",
+		body: "This server has no pinned run's record, so the run's own account is not shown: which source files arrived, in what order, and what its agents did. What is stored is still shown.",
 	},
 	RUN_NOT_READY: {
 		title: "This run is not finished",
@@ -20,9 +20,21 @@ const INCOMPLETE: Record<IncompleteReason, { title: string; body: string }> = {
 		title: "Recorded, but not readable here",
 		body: "The detector recorded a contradiction, but this read-only key cannot read both of its claims, so the case is not shown. It is counted, not hidden.",
 	},
-	AGENT_ACTIVITY_NOT_EXPOSED: {
+	AGENT_RUN_NOT_STARTED: {
 		title: "Not yet in this run",
-		body: "No agent activity is stored in this run, and the read API has no route for it yet. Nothing is invented here.",
+		body: "This run's record has no agent run yet, so there is nothing to show about what its agents did. Nothing is invented here.",
+	},
+	AGENT_RUN_RUNNING: {
+		title: "The agents are at work",
+		body: "The agent run has started and has not finished. What it has recorded so far is shown.",
+	},
+	AGENT_RUN_INCOMPLETE: {
+		title: "The agent run stopped early",
+		body: "The agent run stopped before it finished. What it recorded before it stopped is shown.",
+	},
+	RUN_FAILED: {
+		title: "This run stopped while it was being filled",
+		body: "The run's record says seeding stopped before the run was ready. What arrived before it stopped is shown.",
 	},
 }
 

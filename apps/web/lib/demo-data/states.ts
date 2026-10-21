@@ -3,9 +3,12 @@
 // fixture data, so the /demo page can render each case honestly.
 
 export type IncompleteReason =
+	| "RUN_NOT_CONFIGURED"
 	| "RUN_NOT_READY"
-	| "RUN_MANIFEST_NOT_EXPOSED"
-	| "AGENT_ACTIVITY_NOT_EXPOSED"
+	| "RUN_FAILED"
+	| "AGENT_RUN_NOT_STARTED"
+	| "AGENT_RUN_RUNNING"
+	| "AGENT_RUN_INCOMPLETE"
 	| "CONTRADICTION_NOT_READABLE"
 
 export type DataState<T> =

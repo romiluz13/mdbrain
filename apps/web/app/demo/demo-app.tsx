@@ -10,6 +10,7 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react"
+import { createEventReader } from "../../lib/demo-data/event-reader.js"
 import { claimSourceRefs } from "../../lib/demo-data/loaders-chapters.js"
 import {
 	createSourceReader,
@@ -97,6 +98,10 @@ export function DemoApp() {
 	)
 	const layout = useLayout(baseGraph)
 	const sources = useMemo(() => createSourceReader(DEMO_UPSTREAM), [])
+	const events = useMemo(
+		() => createEventReader({ upstream: DEMO_UPSTREAM, sources }),
+		[sources],
+	)
 
 	// A cite is a governed recall that takes seconds, so the recorded
 	// contradiction's own sources are read as soon as it is known, a few at a
@@ -190,6 +195,7 @@ export function DemoApp() {
 		() => ({
 			upstream: DEMO_UPSTREAM,
 			sources,
+			events,
 			data,
 			reload,
 			graph,
@@ -201,7 +207,7 @@ export function DemoApp() {
 			setAsk,
 			goTo: (id) => goToIndex(chapterIndex(id)),
 		}),
-		[data, sources, reload, graph, layout, pinned, ask, goToIndex],
+		[data, sources, events, reload, graph, layout, pinned, ask, goToIndex],
 	)
 
 	const citationRef = useRef(citation)
@@ -226,37 +232,39 @@ export function DemoApp() {
 				<a className={styles.skip} href="#chapter">
 					Skip to the chapter
 				</a>
-				<aside className={styles.rail}>
-					<div className={styles.brand}>
-						<Link href="/" className={styles.brandName}>
-							mdbrain
-						</Link>
-						<span className={styles.brandSub}>Control room</span>
+				<aside className={styles.rail} data-testid="rail">
+					<div className={styles.railInner}>
+						<div className={styles.brand}>
+							<Link href="/" className={styles.brandName}>
+								mdbrain
+							</Link>
+							<span className={styles.brandSub}>Control room</span>
+						</div>
+						<nav
+							ref={navRef}
+							aria-label="Chapters"
+							className={styles.chapterNav}
+							onKeyDown={walkRail}
+						>
+							<ol>
+								{CHAPTERS.map((entry, position) => (
+									<li key={entry.id} data-chapter={position}>
+										<button
+											type="button"
+											className={styles.chapterButton}
+											aria-current={position === index ? "step" : undefined}
+											onClick={() => goToIndex(position)}
+										>
+											<span className={styles.chapterNumber} aria-hidden="true">
+												{position + 1}
+											</span>
+											<span>{entry.title}</span>
+										</button>
+									</li>
+								))}
+							</ol>
+						</nav>
 					</div>
-					<nav
-						ref={navRef}
-						aria-label="Chapters"
-						className={styles.chapterNav}
-						onKeyDown={walkRail}
-					>
-						<ol>
-							{CHAPTERS.map((entry, position) => (
-								<li key={entry.id} data-chapter={position}>
-									<button
-										type="button"
-										className={styles.chapterButton}
-										aria-current={position === index ? "step" : undefined}
-										onClick={() => goToIndex(position)}
-									>
-										<span className={styles.chapterNumber} aria-hidden="true">
-											{position + 1}
-										</span>
-										<span>{entry.title}</span>
-									</button>
-								</li>
-							))}
-						</ol>
-					</nav>
 				</aside>
 				<p className={styles.syntheticBar} data-testid="synthetic-label">
 					<span className={styles.syntheticTag}>Synthetic company</span>

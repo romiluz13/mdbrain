@@ -6,6 +6,7 @@ import {
 	loadSource,
 	type SourceView,
 } from "./loaders-chapters.js"
+import type { RunRecord } from "./run-record.js"
 import { type DataState, mapWithStatus } from "./states.js"
 
 /** Shared test helper: a JSON Response with a content type. */
@@ -118,4 +119,24 @@ export async function loadClaimSources(
 		{ data: { sources, otherEvidence: named.data.otherEvidence } },
 		upstream.readKey,
 	)
+}
+
+/** Shared test helper: a pinned run's public record, finished, with the three
+ * arrivals a short run would hold. */
+export function runRecord(overrides: Partial<RunRecord> = {}): RunRecord {
+	return {
+		state: "used",
+		createdAt: "2026-10-20T09:35:00.000Z",
+		readyAt: "2026-10-20T09:50:00.000Z",
+		usedAt: "2026-10-20T10:00:00.000Z",
+		eventsPlanned: 4,
+		pagesPlanned: 3,
+		arrivals: [
+			{ sourceId: "src-b", eventId: "evt-b" },
+			{ sourceId: "src-a", eventId: "evt-a" },
+			{ sourceId: "src-c", eventId: "evt-c" },
+		],
+		pagesWritten: ["accounts/halvorsen-freight-group"],
+		...overrides,
+	}
 }

@@ -10,7 +10,6 @@ import type { DemoDataUpstream } from "./loaders.js"
 import {
 	claimSourceRefs,
 	eventRef,
-	loadAgentActivity,
 	loadContradictionCase,
 	loadSource,
 	loadWikiSearch,
@@ -487,15 +486,5 @@ describe("loadWikiSearch", () => {
 		const result = await loadWikiSearch(direct, "   ")
 		expect(result.kind).toBe("empty")
 		expect(calls).toHaveLength(0)
-	})
-})
-
-describe("loadAgentActivity", () => {
-	it("reads as not yet in this run, never as an error and never as invented activity", () => {
-		expect(loadAgentActivity()).toEqual({
-			kind: "incomplete",
-			reason: "AGENT_ACTIVITY_NOT_EXPOSED",
-			state: null,
-		})
 	})
 })

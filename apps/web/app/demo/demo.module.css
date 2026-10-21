@@ -115,14 +115,20 @@
 	min-width: 0;
 }
 
+/* The rail's own box is the grid cell, so its background runs the page's whole
+   height; only the contents stay put while the chapter scrolls. */
 @media (min-width: 1000px) {
 	.rail {
+		border-bottom: 0;
+		border-right: 1px solid var(--line);
+		padding: 0;
+	}
+
+	.railInner {
 		position: sticky;
 		top: 0;
 		height: 100dvh;
 		overflow-y: auto;
-		border-bottom: 0;
-		border-right: 1px solid var(--line);
 		padding: 24px 16px;
 	}
 }

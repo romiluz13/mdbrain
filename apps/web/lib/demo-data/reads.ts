@@ -22,6 +22,7 @@ import {
 	type MdbrainWikiPageView,
 } from "@mdbrain/client"
 import type { DemoDataUpstream } from "./loaders.js"
+import type { RunRecord, StepConfirmation } from "./run-record.js"
 
 /** The wiki search envelope: SDK `wikiSearch` types it as unknown. */
 export type WikiSearchEnvelope = {
@@ -60,6 +61,17 @@ export interface DemoReads {
 		citedBy: string
 		agentId?: string
 	}): Promise<MdbrainCitationResponse>
+	/** The pinned run's record, which only the demo proxy serves. */
+	run(): Promise<RunRecord>
+	/** Whether governed recall finds one recorded step's event, named by its
+	 * number alone. */
+	runStep(n: number): Promise<StepConfirmation>
+}
+
+/** The run record is a control-database read the API has no route for, so a
+ * direct API upstream has nothing to ask. */
+async function runOnlyOnTheProxy(): Promise<never> {
+	throw new Error("the pinned run's record is only served by the demo proxy")
 }
 
 /** Reads through @mdbrain/client with the caller-owned principal: direct
@@ -93,6 +105,8 @@ function clientReads(upstream: DemoDataUpstream): DemoReads {
 			})) as WikiSearchEnvelope,
 		// agentId rides along for direct reads; the proxy reader drops it.
 		cite: (input) => client.cite({ ...input, ...principal }),
+		run: runOnlyOnTheProxy,
+		runStep: runOnlyOnTheProxy,
 	}
 }
 
@@ -158,6 +172,8 @@ function proxyReads(upstream: DemoDataUpstream): DemoReads {
 			get<MdbrainCitationResponse>(
 				`/v1/cite${query({ marker: input.marker, citedBy: input.citedBy })}`,
 			),
+		run: () => get<RunRecord>("/v1/run"),
+		runStep: (n) => get<StepConfirmation>(`/v1/run/step${query({ n })}`),
 	}
 }
 
