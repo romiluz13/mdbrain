@@ -171,19 +171,15 @@ test("the map stays in view beside a long list on a wide screen", async ({
 		const before = await stage.boundingBox()
 		expect(before?.y ?? Number.NaN).toBeGreaterThan(0)
 		// A list shows before its rows have all filled in, and a wheel on a page
-		// that is still short scrolls only to its end.
+		// that is still shorter scrolls only to that page's end, so wheel again.
 		await expect
 			.poll(
-				() =>
-					page.evaluate(
-						() => document.documentElement.scrollHeight - window.innerHeight,
-					),
-				{ timeout: 5_000 },
+				async () => {
+					await page.mouse.wheel(0, 700)
+					return page.evaluate(() => window.scrollY)
+				},
+				{ timeout: 10_000 },
 			)
-			.toBeGreaterThan(800)
-		await page.mouse.wheel(0, 700)
-		await expect
-			.poll(() => page.evaluate(() => window.scrollY), { timeout: 5_000 })
 			.toBeGreaterThan(500)
 		const after = await stage.boundingBox()
 		const height = page.viewportSize()?.height ?? 0
