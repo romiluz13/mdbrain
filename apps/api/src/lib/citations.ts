@@ -315,7 +315,12 @@ export class CitationRecallError extends Error {
 	}
 }
 
-// How much of the citing evidence's excerpt is sent as the recall query.
+// How much of the citing evidence's excerpt is sent as the recall query. The
+// opening goes first: Memongo routes a long, document-shaped query toward
+// structured facts that can crowd the raw event out of the results, while a
+// short one finds it (24 of 40 live cites resolved with 1000 characters,
+// 37 of 40 with 80). The full excerpt is the fallback.
+const RECALL_OPENING_CHARS = 80
 const RECALL_QUERY_CHARS = 1000
 const RECALL_MAX_RESULTS = 10
 
@@ -353,42 +358,51 @@ export async function resolveEventMarker(
 		.find((excerpt) => excerpt !== "")
 	if (!note) return { outcome: "unresolved" }
 
-	let response: unknown
-	try {
-		response = await recall({
-			query: note.slice(0, RECALL_QUERY_CHARS),
-			agentId: request.agentId,
-			maxResults: RECALL_MAX_RESULTS,
-			scope: request.scope,
-			scopeRef: request.scopeRef,
-		})
-	} catch (error) {
-		throw new CitationRecallError(error)
-	}
-	const results =
-		isRecord(response) && Array.isArray(response.results)
-			? response.results
-			: []
 	const canonicalId = `event:${marker.eventId}`
-	const hit = results.find(
-		(result): result is Record<string, unknown> =>
-			isRecord(result) &&
-			result.canonicalId === canonicalId &&
-			(result.scope === undefined || result.scope === request.scope) &&
-			(result.scopeRef === undefined || result.scopeRef === request.scopeRef),
-	)
-	if (!hit) {
+	const queries = [
+		...new Set([
+			note.slice(0, RECALL_OPENING_CHARS),
+			note.slice(0, RECALL_QUERY_CHARS),
+		]),
+	]
+	let hit: Record<string, unknown> | undefined
+	for (const query of queries) {
+		let response: unknown
+		try {
+			response = await recall({
+				query,
+				agentId: request.agentId,
+				maxResults: RECALL_MAX_RESULTS,
+				scope: request.scope,
+				scopeRef: request.scopeRef,
+			})
+		} catch (error) {
+			throw new CitationRecallError(error)
+		}
+		const results =
+			isRecord(response) && Array.isArray(response.results)
+				? response.results
+				: []
+		hit = results.find(
+			(result): result is Record<string, unknown> =>
+				isRecord(result) &&
+				result.canonicalId === canonicalId &&
+				(result.scope === undefined || result.scope === request.scope) &&
+				(result.scopeRef === undefined || result.scopeRef === request.scopeRef),
+		)
+		if (hit) break
 		const degradation = isRecord(response) ? response.degradation : undefined
-		return isRecord(degradation) && degradation.kind === "throttled"
-			? {
-					outcome: "degraded",
-					retryAfterMs:
-						typeof degradation.retryAfterMs === "number"
-							? degradation.retryAfterMs
-							: undefined,
-				}
-			: { outcome: "unresolved" }
+		if (isRecord(degradation) && degradation.kind === "throttled") {
+			return {
+				outcome: "degraded",
+				retryAfterMs:
+					typeof degradation.retryAfterMs === "number"
+						? degradation.retryAfterMs
+						: undefined,
+			}
+		}
 	}
+	if (!hit) return { outcome: "unresolved" }
 	const text =
 		typeof hit.text === "string"
 			? hit.text

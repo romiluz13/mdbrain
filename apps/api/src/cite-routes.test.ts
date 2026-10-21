@@ -491,6 +491,61 @@ describe("GET /v1/cite for an event marker", () => {
 		expect(body.event?.text).toBe(`User: ${NOTE}`)
 	})
 
+	describe("with an excerpt longer than the opening recall query", () => {
+		const LONG =
+			"Ticket: NS-4294: rate-limit errors at Lowfield Logistics. Requester: Yara Lind, Fleet Manager. The dispatch board has shown rate-limit errors on every refresh since the carrier API change on Monday."
+		const longCiting = marker("accounts/lowfield", "rate-limits", 1)
+
+		beforeEach(() => {
+			revisions.push(
+				revision(
+					"ws-1",
+					1,
+					[
+						claim("rate-limits", "Lowfield hits rate limits.", [
+							{ kind: "event", sourceId: "evt-1", note: LONG },
+						]),
+					],
+					{},
+					"accounts/lowfield",
+				),
+			)
+		})
+
+		it("first recalls with the excerpt's opening, and stops there when it finds the event", async () => {
+			const res = await cite("[[event:evt-1]]", { citedBy: longCiting })
+
+			expect(res.status).toBe(200)
+			expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledTimes(1)
+			expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledWith(
+				expect.objectContaining({ query: LONG.slice(0, 80) }),
+			)
+		})
+
+		it("falls back to the full excerpt when the opening misses", async () => {
+			bridge.mdbrainBridgeSearch
+				.mockResolvedValueOnce({ results: [] })
+				.mockResolvedValueOnce({ results: [recalled()] })
+
+			const res = await cite("[[event:evt-1]]", { citedBy: longCiting })
+
+			expect(res.status).toBe(200)
+			expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledTimes(2)
+			expect(bridge.mdbrainBridgeSearch).toHaveBeenLastCalledWith(
+				expect.objectContaining({ query: LONG }),
+			)
+		})
+
+		it("stays unresolved when neither query finds the event", async () => {
+			bridge.mdbrainBridgeSearch.mockResolvedValue({ results: [] })
+
+			const res = await cite("[[event:evt-1]]", { citedBy: longCiting })
+
+			expect(res.status).toBe(404)
+			expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledTimes(2)
+		})
+	})
+
 	it("leaves a deleted source unresolved", async () => {
 		bridge.mdbrainBridgeSearch.mockResolvedValue({ results: [] })
 
