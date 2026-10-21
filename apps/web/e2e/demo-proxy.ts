@@ -31,14 +31,15 @@ export const REPLAY = process.env.DEMO_REPLAY
  * a test may assert what the generator plants. */
 export const GENERATED = !LIVE && REPLAY === undefined
 
-/** How long a test waits for a read that is slow on the live stack: an event
- * cite is a Memongo recall of 5 to 7 s, and the first page list is large. The
- * fixture answers at once, so it keeps Playwright's default wait. */
+/** How long a test waits for a read that is slow on the live stack. Set when an
+ * event cite was a Memongo recall of 5 to 7 s; not measured again since cite
+ * resolves by id. The fixture answers at once, so it keeps Playwright's default
+ * wait. */
 export const SLOW_READ = LIVE ? { timeout: 30_000 } : {}
 
 /** How long a test waits for a list of sources to finish: a screen reads them
- * four at a time, so eight take two rounds of cites, and a busy recall makes a
- * cite slower or refuses it. */
+ * four at a time. Set for the recall-era cite and not measured again since cite
+ * resolves by id. */
 export const SLOW_LIST = LIVE ? { timeout: 90_000 } : {}
 
 export type ProxyOptions = {

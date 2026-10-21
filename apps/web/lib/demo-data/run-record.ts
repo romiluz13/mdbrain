@@ -181,7 +181,7 @@ function agentRunOf(value: unknown): AgentRunRecord | undefined {
 		...(proposalSlug && proposalTitle
 			? { pendingProposal: { title: proposalTitle, slug: proposalSlug } }
 			: {}),
-		...(steps !== undefined ? { steps } : {}),
+		...(steps !== undefined && steps.length > 0 ? { steps } : {}),
 		...(state === "incomplete" ? { incompleteLabel: INCOMPLETE_LABEL } : {}),
 	}
 }

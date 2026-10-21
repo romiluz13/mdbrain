@@ -583,7 +583,7 @@ export function createDemoUpstream(
 				...(citedBy !== null ? { citedBy } : {}),
 				event: {
 					eventId,
-					canonicalId: eventId,
+					canonicalId: `event:${eventId}`,
 					text: `${ROLE_LABEL}${body}`,
 					...(timestamp !== undefined ? { timestamp } : {}),
 					scope: FIXTURE_ENV.scope,

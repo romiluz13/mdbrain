@@ -95,8 +95,8 @@ export function ArrivalList({
 			<div className={styles.arrivalSummary} data-testid="arrivals-summary">
 				<p className={chapter.note}>
 					The run's record lists {summary.arrived} of {summary.planned} planned
-					source files, in the order they arrived. Each one shown is confirmed
-					by its id through the API; stored claims cite {summary.cited} of them.
+					source files, in the order they arrived. Each one shown is checked by
+					its id through the API; stored claims cite {summary.cited} of them.
 					{summary.citedOutsideRecord > 0
 						? ` ${countOf(summary.citedOutsideRecord, "stored source event")} cited by claims ${summary.citedOutsideRecord === 1 ? "is" : "are"} not in this record.`
 						: ""}

@@ -4,6 +4,7 @@
 // the projection and the pinned-scope refusal run for real; only the database
 // and the API behind them are stand-ins.
 import { parseCitationMarker } from "@mdbrain/client"
+import { AGENT_ROLE_LABELS } from "../lib/demo-data/run-record.js"
 import type {
 	DemoRunEnv,
 	RunManifestSource,
@@ -68,11 +69,6 @@ type StepPlan = {
 	name: string
 	detail?: string
 }
-const ROLE_LABEL = {
-	support: "Support Lead",
-	account: "Account Manager",
-	product: "Product Lead",
-} as const
 
 function stepPlan(reusedSlug: string): StepPlan[] {
 	return [
@@ -87,7 +83,7 @@ function stepPlan(reusedSlug: string): StepPlan[] {
 }
 
 const opening = (runId: string, step: StepPlan): string =>
-	`[${runId}] ${ROLE_LABEL[step.role]} — ${step.name}`
+	`[${runId}] ${AGENT_ROLE_LABELS[step.role]} — ${step.name}`
 const bodyOf = (runId: string, step: StepPlan): string =>
 	`${opening(runId, step)}${step.detail ? ` (${step.detail})` : ""}`
 const stepEventId = (n: number): string => eventIdOf(`fixture-step-${n}`)
@@ -178,7 +174,7 @@ export function createRunFixture(data: Data, options: RunFixtureOptions = {}) {
 		slotIndex: 9,
 		scopeRef: FIXTURE_ENV.scopeRef,
 		agentId: FIXTURE_ENV.agentId,
-		state: agentRun ? "used" : "ready",
+		state: agentRun?.state === "complete" ? "used" : "ready",
 		corpus: {
 			sha256: "f".repeat(64),
 			records: data.sourceOf.size,
@@ -190,7 +186,9 @@ export function createRunFixture(data: Data, options: RunFixtureOptions = {}) {
 		pagesWritten: data.pages.map((page) => page.slug),
 		createdAt: "2026-10-20T08:55:00.000Z",
 		readyAt: "2026-10-20T09:30:00.000Z",
-		...(agentRun ? { usedAt: ENDED_AT, agentRun } : {}),
+		// The driver marks a run used only when its agents finish.
+		...(agentRun?.state === "complete" ? { usedAt: ENDED_AT } : {}),
+		...(agentRun ? { agentRun } : {}),
 	}
 
 	const source: RunManifestSource = async (id) =>
@@ -271,7 +269,7 @@ export function createRunFixture(data: Data, options: RunFixtureOptions = {}) {
 				marker: url.searchParams.get("marker"),
 				event: {
 					eventId: parsed.marker.eventId,
-					canonicalId: parsed.marker.eventId,
+					canonicalId: `event:${parsed.marker.eventId}`,
 					text: bodyOf(runId, wanted.step),
 					timestamp: new Date(
 						Date.parse(STARTED_AT) + wanted.n * 30_000,

@@ -30,7 +30,7 @@ export type SourceView = {
 	eventId: string
 	marker: string
 	status: "resolved" | "unavailable"
-	/** Set when recall answered and could not confirm the source, which is not
+	/** Set when the API answered and could not confirm the source, which is not
 	 * the same as a read that failed and may work on the next try. */
 	reason?: "unconfirmed"
 	text?: string

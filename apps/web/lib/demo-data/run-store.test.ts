@@ -9,10 +9,10 @@ const FAST = 300
 const CLIENT_KEY = Symbol.for("mdbrain.demo.control-client")
 
 afterEach(async () => {
-	const held = (
-		globalThis as Record<symbol, { client: { close(): Promise<void> } }>
-	)[CLIENT_KEY]
-	await held?.client.close()
+	const held = (globalThis as Record<symbol, { close(): Promise<void> }>)[
+		CLIENT_KEY
+	]
+	await held?.close()
 	delete (globalThis as Record<symbol, unknown>)[CLIENT_KEY]
 	vi.resetModules()
 })

@@ -94,7 +94,6 @@ export type RoleStory = {
 	steps: AgentStep[]
 }
 
-/** The three roles in the order the work was handed on. */
 export function roleStories(run: AgentRunRecord): RoleStory[] {
 	return AGENT_ROLE_IDS.map((role) => ({
 		role,
@@ -147,7 +146,6 @@ async function checkPage(
 	}
 }
 
-/** Checks the pages the record names against the stored wiki. */
 export async function loadAgentRunChecks(
 	upstream: DemoDataUpstream,
 	run: AgentRunRecord,

@@ -1,7 +1,6 @@
-// Reads a claim's sources one at a time and remembers what it read. A cite is
-// a governed recall that can take seconds, so a screen asks for each source on
-// its own and shows it as it lands, and a source read once is not read again
-// while the page is open.
+// Reads sources one at a time and remembers what it read. A screen asks for
+// each source on its own and shows it as it lands, and a source read once is
+// not read again while the page is open.
 
 import type { MdbrainWikiClaim } from "@mdbrain/client"
 import type { DemoDataUpstream } from "./loaders.js"
@@ -62,8 +61,7 @@ export function createSourceReader(upstream: DemoDataUpstream): SourceReader {
 	}
 }
 
-/** How many cites a screen asks for at once: each is a governed recall that can
- * take seconds, and recall refuses a flood. */
+/** How many cites a screen asks for at once. */
 export const LANES = 4
 
 export type SourceWanted = { claim: MdbrainWikiClaim; ref: SourceRef }

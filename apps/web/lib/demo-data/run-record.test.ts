@@ -152,6 +152,19 @@ describe("projectRunRecord", () => {
 		])
 	})
 
+	it.each([
+		["an empty step list", []],
+		[
+			"step entries none of which has the stated shape",
+			[{ n: 1, role: "janitor", name: "sweep", eventId: "evt-s1" }],
+		],
+	])("treats %s as steps that were not indexed", (_, steps) => {
+		const { agentRun } = projected(
+			manifest({ agentRun: { ...manifest().agentRun, steps } }),
+		)
+		expect(agentRun?.steps).toBeUndefined()
+	})
+
 	it("never carries the run id, the scope, the agent, the corpus digest or a replay list", () => {
 		const text = JSON.stringify(projected(manifest()))
 		for (const private_ of ["demo-run-9", "f".repeat(64), "src-replay-1"]) {

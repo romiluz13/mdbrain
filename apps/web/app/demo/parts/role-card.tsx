@@ -23,32 +23,31 @@ function pageLine(page: PageCheck & { kind: "stored" }): string {
 	return `${page.title}, revision ${page.revision}, ${page.state}, updated ${stamp(page.updatedAt)}`
 }
 
-/** What each role did, from the run's record. */
 function didOf(
 	role: AgentRoleId,
 	run: AgentRunRecord,
 	checks: AgentRunChecks | null,
 ): string {
 	const reused = checks?.reusedPage
+	const yet = run.state === "running" ? " yet" : ""
 	const name =
 		reused?.kind === "stored" ? reused.title : (run.reusedPage?.slug ?? "")
 	switch (role) {
 		case "support":
 			return run.reusedPage
 				? `Wrote the page “${name}”.`
-				: "No page write is recorded for this role."
+				: `No page write is recorded for this role${yet}.`
 		case "account":
 			return run.reusedPage
 				? `Read Support's completed revision of “${name}”.`
-				: "No page read is recorded for this role."
+				: `No page read is recorded for this role${yet}.`
 		case "product":
 			return run.pendingProposal
 				? `Proposed “${run.pendingProposal.title}”. It is pending review.`
-				: "No proposal is recorded for this role."
+				: `No proposal is recorded for this role${yet}.`
 	}
 }
 
-/** What the wiki says about the part of the story this role owns. */
 function checkOf(
 	role: AgentRoleId,
 	run: AgentRunRecord,

@@ -1,7 +1,8 @@
 import { defineConfig, devices } from "@playwright/test"
 
-// A live /demo run reads each source through Memongo recall, 5 to 7 s apiece,
-// and a test walks every chapter, so it needs more than the fixture's 30 s.
+// A live /demo run walks every chapter and reads each source, so it needs more
+// than the fixture's 30 s. The limit was set when a cite was a Memongo recall of
+// 5 to 7 s and has not been measured again since cite resolves by id.
 const LIVE = process.env.DEMO_E2E_LIVE === "1"
 
 export default defineConfig({

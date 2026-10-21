@@ -39,8 +39,7 @@ const PROJECTION = {
 // module-level client would be orphaned each time with its pool open, so the
 // client is held on globalThis under a fixed key in every mode.
 const CLIENT_KEY = Symbol.for("mdbrain.demo.control-client")
-type Held = { uri: string; client: MongoClient }
-type Holder = typeof globalThis & { [CLIENT_KEY]?: Held }
+type Holder = typeof globalThis & { [CLIENT_KEY]?: MongoClient }
 
 /** The process's one client for the control database. Creating it opens no
  * connection: the driver connects on the first operation. */
@@ -50,21 +49,19 @@ export function controlClient(
 ): MongoClient {
 	const holder = globalThis as Holder
 	const held = holder[CLIENT_KEY]
-	if (held !== undefined && held.uri === uri) {
-		return held.client
+	if (held !== undefined) {
+		return held
 	}
-	void held?.client.close()
 	const client = new MongoClient(uri, {
 		appName: "mdbrain-demo-web",
 		maxPoolSize: 5,
 		serverSelectionTimeoutMS: timeoutMs,
 		connectTimeoutMS: timeoutMs,
 	})
-	holder[CLIENT_KEY] = { uri, client }
+	holder[CLIENT_KEY] = client
 	return client
 }
 
-/** The manifest read for the pinned run: one `findOne` by id. */
 export function createRunManifestSource(
 	env: DemoRunEnv,
 	timeoutMs: number = SELECTION_TIMEOUT_MS,

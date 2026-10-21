@@ -28,8 +28,8 @@ export interface DemoProxyEnv {
 	readKey: string
 	scope: string
 	scopeRef: string
-	/** The agent the pinned run's events were written under. Event citations
-	 * confirm their source through recall, which searches as this agent. */
+	/** The agent the pinned run's events were written under. An event citation
+	 * resolves the event in this agent's scope. */
 	agentId: string
 }
 

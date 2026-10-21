@@ -27,7 +27,7 @@ export function SourceSlip({
 				<p className={styles.slipMarker}>{source.marker}</p>
 				<p className={styles.reading} role="status">
 					<span className={styles.readingBar} aria-hidden="true" />
-					Reading this source through governed recall…
+					Reading this source…
 				</p>
 			</article>
 		)

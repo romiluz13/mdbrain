@@ -25,7 +25,7 @@ export const CHAPTERS: readonly Chapter[] = [
 	{
 		id: "sources",
 		title: "Sources arrive",
-		lede: "Where the knowledge came from: the source events the stored claims cite.",
+		lede: "Where the knowledge came from: the source files the run wrote, in the order they arrived.",
 	},
 	{
 		id: "agents",
