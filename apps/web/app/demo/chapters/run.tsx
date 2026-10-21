@@ -13,6 +13,8 @@ import { StatePanel } from "../parts/state-panel.js"
 type Row = {
 	stat: string
 	label: string
+	/** Set in the mono face: the sans face draws an & like an 8. */
+	read?: string
 	how: string
 	pick: (map: WikiMapView) => number
 }
@@ -21,7 +23,8 @@ const ROWS: Row[] = [
 	{
 		stat: "pages",
 		label: "Pages",
-		how: "GET /api/demo/v1/wiki?limit=100&skip=0 — the total field",
+		read: "GET /api/demo/v1/wiki?limit=100&skip=0",
+		how: "the total field",
 		pick: (m) => m.pageTotal,
 	},
 	{
@@ -39,7 +42,8 @@ const ROWS: Row[] = [
 	{
 		stat: "contradictions",
 		label: "Open contradictions",
-		how: "GET /api/demo/v1/wiki/lint?limit=100 — the unresolved records",
+		read: "GET /api/demo/v1/wiki/lint?limit=100",
+		how: "the unresolved records",
 		pick: (m) => m.unresolvedContradictionCount,
 	},
 ]
@@ -85,8 +89,13 @@ export function RunChapter() {
 									return (
 										<tr key={row.stat} data-verify={row.stat}>
 											<th scope="row">{row.label}</th>
-											<td data-stat={`verify-${row.stat}`}>{onScreen}</td>
-											<td data-reread={row.stat}>
+											<td
+												data-label="On screen"
+												data-stat={`verify-${row.stat}`}
+											>
+												{onScreen}
+											</td>
+											<td data-label="Read again" data-reread={row.stat}>
 												{again === null
 													? "not read again yet"
 													: again.kind === "loading"
@@ -95,7 +104,17 @@ export function RunChapter() {
 															? "could not be read"
 															: `${reread} ${reread === onScreen ? "(matches)" : "(differs)"}`}
 											</td>
-											<td className={styles.how}>{row.how}</td>
+											<td
+												data-label="Where it comes from"
+												className={styles.how}
+											>
+												{row.read ? (
+													<>
+														<code className={styles.mono}>{row.read}</code> —{" "}
+													</>
+												) : null}
+												{row.how}
+											</td>
 										</tr>
 									)
 								})}

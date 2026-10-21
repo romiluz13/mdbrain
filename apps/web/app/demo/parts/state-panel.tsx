@@ -10,7 +10,7 @@ import styles from "../demo.module.css"
 const INCOMPLETE: Record<IncompleteReason, { title: string; body: string }> = {
 	RUN_MANIFEST_NOT_EXPOSED: {
 		title: "Not yet in this run",
-		body: "The read API has no run manifest route yet, so this screen cannot list the run's source files. It shows what is stored instead.",
+		body: "The read API has no run manifest route yet, so this screen cannot show the run's own record: which source files arrived, and in what order. It shows what is stored instead.",
 	},
 	RUN_NOT_READY: {
 		title: "This run is not finished",

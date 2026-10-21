@@ -50,6 +50,11 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await expect(stat(page, "verify-contradictions")).toHaveText(
 			String(lint.unresolvedContradictions.length),
 		)
+		const read = page.locator('[data-verify="pages"] code')
+		await expect(read).toHaveText("GET /api/demo/v1/wiki?limit=100&skip=0")
+		expect(
+			await read.evaluate((element) => getComputedStyle(element).fontFamily),
+		).toMatch(/mono|menlo|monospace/i)
 	})
 
 	test("a pinned page shows its stored revision, tier, state and claim count", async ({

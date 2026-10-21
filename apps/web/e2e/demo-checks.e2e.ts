@@ -130,6 +130,27 @@ test("without the preference the chapter eases in", async ({ page }) => {
 		.toBeGreaterThan(0)
 })
 
+test("the run's number table names each value on the phone, where the header row is hidden", async ({
+	page,
+	isMobile,
+}) => {
+	test.skip(!isMobile, "the table stacks only below 720 px")
+	await installDemoProxy(page)
+	await openDemo(page)
+	await mapReady(page)
+	await goto(page, 8)
+	const columns = await page
+		.locator('[data-verify="pages"] td')
+		.evaluateAll((cells) =>
+			cells.map((cell) => getComputedStyle(cell, "::before").content),
+		)
+	expect(columns).toEqual([
+		'"On screen: "',
+		'"Read again: "',
+		'"Where it comes from: "',
+	])
+})
+
 test("every interactive control on every chapter is at least 44 px", async ({
 	page,
 }) => {

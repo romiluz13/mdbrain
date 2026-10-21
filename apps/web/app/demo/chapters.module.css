@@ -468,4 +468,9 @@
 		padding: 0;
 		border: 0;
 	}
+
+	.verify td::before {
+		content: attr(data-label) ": ";
+		color: var(--ink-2);
+	}
 }
