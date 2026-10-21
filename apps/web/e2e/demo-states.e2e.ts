@@ -319,15 +319,27 @@ test.describe("states", () => {
 		await expect(
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
 		).toHaveCount(0)
-		const count = await rows.count()
-		expect(count).toBeGreaterThan(0)
-		await expect(page.getByTestId("source-label")).toHaveText(
-			Array(count).fill("Recall could not confirm this source"),
+		const unconfirmed = page.locator(
+			'[data-testid="source-row"][data-status="unconfirmed"]',
 		)
-		await expect(page.getByTestId("source-id")).toHaveCount(count)
-		await rows
-			.first()
+		const notConfirmable = page.locator(
+			'[data-testid="source-row"][data-status="not-confirmable"]',
+		)
+		const asked = await unconfirmed.count()
+		expect(asked).toBeGreaterThan(0)
+		await expect(rows).toHaveCount(asked + (await notConfirmable.count()))
+		await expect(unconfirmed.getByTestId("source-label")).toHaveText(
+			Array(asked).fill("Recall could not confirm this source"),
+		)
+		// A source no stored claim cites is not asked about, so recall's refusal
+		// does not reach it: it keeps saying why it cannot be confirmed.
+		await expect(notConfirmable.getByTestId("source-label")).toHaveText(
+			Array(await notConfirmable.count()).fill("Recorded by the run"),
+		)
+		await expect(page.getByTestId("source-id")).toHaveCount(await rows.count())
+		await page
 			.getByRole("button", { name: /^Open source / })
+			.first()
 			.click()
 		const dialog = page.getByRole("dialog")
 		await expect(
@@ -348,9 +360,9 @@ test.describe("states", () => {
 		refuse = "busy"
 		await goto(page, 0)
 		await goto(page, 2)
-		await rows
-			.first()
+		await page
 			.getByRole("button", { name: /^Open source / })
+			.first()
 			.click()
 		await expect(page.getByRole("dialog")).toContainText(
 			"This source could not be read right now.",

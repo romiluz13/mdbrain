@@ -4,7 +4,12 @@
 import { gzipSync } from "node:zlib"
 import type { Page } from "@playwright/test"
 import { handleDemoRead } from "../lib/demo-data/proxy.js"
-import { createRecordedUpstream, readRecording } from "./demo-recorded.js"
+import {
+	createRecordedRun,
+	createRecordedUpstream,
+	readRecording,
+} from "./demo-recorded.js"
+import { createRunFixture, type RunFixtureOptions } from "./demo-run.js"
 import { createDemoUpstream, FIXTURE_ENV } from "./demo-upstream.js"
 
 export type ProxyResponse = {
@@ -47,6 +52,10 @@ export type ProxyOptions = {
 	/** "none" serves a run with no contradiction recorded yet, as a seeded slot is
 	 * before its agent run. */
 	contradiction?: "recorded" | "none" | "unsourced"
+	/** The pinned run's record and its agent run: which part of its life the
+	 * fixture is in (see ./demo-run.ts). The default is a finished run with its
+	 * steps indexed. A recording replays the run it recorded. */
+	run?: RunFixtureOptions
 	/** Model the phone's link for a performance run: each read waits `latencyMs`,
 	 * then its gzipped body takes its turn on one shared downlink. The fixture
 	 * is fulfilled inside the browser, so the CDP network throttle never sees
@@ -82,16 +91,25 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 	const transfer = { raw: 0, wire: 0 }
 	let linkFreeAt = 0
 	if (!LIVE) {
-		const upstreamFetch = REPLAY
-			? createRecordedUpstream(readRecording(REPLAY))
+		const recording = REPLAY ? readRecording(REPLAY) : null
+		const generated = recording
+			? null
 			: createDemoUpstream({
 					padTo: options.padTo,
 					contradiction: options.contradiction,
-				}).fetch
+				})
+		const run = generated ? createRunFixture(generated.data, options.run) : null
+		const recordedRun = recording ? createRecordedRun(recording) : null
+		const upstreamFetch =
+			recording !== null
+				? createRecordedUpstream(recording)
+				: run && generated
+					? run.withRecall(generated.fetch)
+					: fetch
 		await page.route("**/api/demo/v1/**", async (route) => {
 			const request = route.request()
 			const url = new URL(request.url())
-			const forced = await options.override?.(url)
+			const forced = (await options.override?.(url)) ?? recordedRun?.(url)
 			const served =
 				forced ??
 				(await handleDemoRead(
@@ -101,6 +119,7 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 					}),
 					FIXTURE_ENV,
 					upstreamFetch,
+					run?.deps,
 				))
 			const text = await served.text()
 			if (options.link) {
