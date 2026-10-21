@@ -203,7 +203,7 @@ export function createRunManifests(
 		runId: string,
 	): Promise<RunManifestDoc | null> {
 		return store.findOneAndUpdate(
-			{ _id: runId, state: "ready", agentRunState: "" },
+			{ _id: runId, state: "ready", agentRun: { $exists: false } },
 			{
 				$set: {
 					agentRunState: "running",

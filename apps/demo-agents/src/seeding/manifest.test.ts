@@ -156,6 +156,19 @@ describe("agent runs", () => {
 		expect(doc?.state).toBe("ready")
 	})
 
+	it("starts an agent run on a ready run seeded before agent runs existed", async () => {
+		const { collection, manifests } = makeStore()
+		await manifests.createRun(init)
+		await manifests.markReady("run-a")
+		const doc = collection.docs.get("run-a") as Record<string, unknown>
+		delete doc.agentRunState
+
+		const started = await manifests.markAgentRunStarted("run-a")
+
+		expect(started?.agentRun?.state).toBe("running")
+		expect(await manifests.markAgentRunStarted("run-a")).toBeNull()
+	})
+
 	it("refuses to start an agent run outside a ready run", async () => {
 		const { manifests } = makeStore()
 		await manifests.createRun(init)

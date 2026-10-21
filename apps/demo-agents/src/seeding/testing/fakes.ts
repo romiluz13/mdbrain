@@ -94,9 +94,21 @@ function matches(
 			if (!alternatives.some((alt) => matches(doc, alt))) return false
 			continue
 		}
+		if (isExistsOperator(value)) {
+			if ((doc[key] !== undefined) !== value.$exists) return false
+			continue
+		}
 		if (doc[key] !== value) return false
 	}
 	return true
+}
+
+function isExistsOperator(value: unknown): value is { $exists: boolean } {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		typeof (value as { $exists?: unknown }).$exists === "boolean"
+	)
 }
 
 function applyUpdate<T>(
