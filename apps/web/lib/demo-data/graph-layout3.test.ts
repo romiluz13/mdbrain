@@ -74,6 +74,48 @@ describe("layoutSphere", () => {
 		}
 	})
 
+	it("spreads a crowded group through a wider cone than a small one, so a crowd does not pile on its axis", () => {
+		const input: LayoutNode[] = [
+			{ slug: "hub", group: "big", degree: 99 },
+			...Array.from({ length: 80 }, (_, i) => ({
+				slug: `big-${String(i).padStart(2, "0")}`,
+				group: "big",
+				degree: i % 7,
+			})),
+			...Array.from({ length: 8 }, (_, i) => ({
+				slug: `small-${i}`,
+				group: "small",
+				degree: i % 3,
+			})),
+		]
+		const layout = layoutSphere(input, 0, ["big", "small"])
+		const spread = (prefix: string) => {
+			const members = input
+				.map((node, i) => (node.slug.startsWith(prefix) ? i : -1))
+				.filter((i) => i >= 0)
+			const axis = [0, 0, 0]
+			for (const i of members) {
+				const length = dist(layout, i) || 1
+				axis[0] = (axis[0] as number) + (layout.x[i] as number) / length
+				axis[1] = (axis[1] as number) + (layout.y[i] as number) / length
+				axis[2] = (axis[2] as number) + (layout.z[i] as number) / length
+			}
+			const norm = Math.hypot(...(axis as [number, number, number])) || 1
+			let widest = 0
+			for (const i of members) {
+				const length = dist(layout, i) || 1
+				const cosine =
+					((layout.x[i] as number) * (axis[0] as number) +
+						(layout.y[i] as number) * (axis[1] as number) +
+						(layout.z[i] as number) * (axis[2] as number)) /
+					(length * norm)
+				widest = Math.max(widest, Math.acos(Math.min(1, cosine)))
+			}
+			return widest
+		}
+		expect(spread("big-")).toBeGreaterThan(spread("small-") * 1.25)
+	})
+
 	it("places the most connected page of a group nearest the core", () => {
 		const input: LayoutNode[] = [
 			{ slug: "hub", group: "account", degree: 9 },

@@ -15,7 +15,7 @@ export type Pose = {
 }
 
 export const FOV_DEGREES = 42
-export const HOME_DISTANCE = 3.5
+export const HOME_DISTANCE = 3
 export const MIN_DISTANCE = 1.3
 /** The sphere's radius is 1; this much margin keeps its edge pages in view. */
 const SPHERE_MARGIN = 1.15

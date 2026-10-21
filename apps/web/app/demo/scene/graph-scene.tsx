@@ -43,7 +43,11 @@ export const SCENE_SEAM = Symbol.for("mdbrain.demo.scene")
 export type SceneSeam = {
 	screenOf: (slug: string) => { x: number; y: number } | null
 	state: () => {
+		nodes: number
+		edges: number
 		frames: number
+		/** Whether the framed pair has a stored link between them; null when none is framed. */
+		link: boolean | null
 		pose: SceneStore["pose"]
 		drift: number
 		lit: number
@@ -53,7 +57,7 @@ export type SceneSeam = {
 }
 
 /** World units: the brain is a sphere of radius 1. */
-const nodeRadius = (degree: number) => 0.014 + Math.min(degree, 14) * 0.0021
+const nodeRadius = (degree: number) => 0.016 + Math.min(degree, 14) * 0.0026
 
 export type SceneProps = {
 	graph: Graph
@@ -213,7 +217,10 @@ function World({
 		const seam: SceneSeam = {
 			screenOf,
 			state: () => ({
+				nodes: instances.current?.count ?? 0,
+				edges: edges.getAttribute("position").count / 2,
 				frames: frames.current,
+				link: pair?.link ?? null,
 				pose: { ...store.pose },
 				drift: store.drift,
 				lit: store.lit,
@@ -229,7 +236,7 @@ function World({
 				delete host[SCENE_SEAM]
 			}
 		}
-	}, [screenOf, store])
+	}, [screenOf, store, edges, pair])
 
 	useFrame((state, delta) => {
 		const holder = group.current
@@ -344,6 +351,19 @@ function World({
 	)
 }
 
+/** drei's OrbitControls writes `touch-action` on the element it listens to, and
+ * resets it to `auto` when it unmounts, after React has applied the new style.
+ * This sets it last, so a map that is not being turned never traps a swipe. */
+function TouchAction({ orbit }: { orbit: boolean }) {
+	const connected = useThree((state) => state.events.connected)
+	const fallback = useThree((state) => state.gl.domElement)
+	useEffect(() => {
+		const element = (connected as HTMLElement | undefined) ?? fallback
+		element.style.touchAction = orbit ? "none" : "pan-y"
+	}, [connected, fallback, orbit])
+	return null
+}
+
 /** The 3D brain: one instanced mesh for the pages and one line set for the
  * links, rendered only when something changes. */
 export function GraphScene({ orbit, ...rest }: SceneProps) {
@@ -373,9 +393,9 @@ export function GraphScene({ orbit, ...rest }: SceneProps) {
 			camera={camera}
 			gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
 			resize={{ scroll: false }}
-			style={{ touchAction: orbit ? "none" : "pan-y" }}
 		>
-			<fog attach="fog" args={[SCOPE, 2.4, 6.4]} />
+			<TouchAction orbit={orbit} />
+			<fog attach="fog" args={[SCOPE, 2.2, 5.4]} />
 			<World {...rest} store={store} flight={flight} />
 			{orbit ? (
 				<OrbitControls

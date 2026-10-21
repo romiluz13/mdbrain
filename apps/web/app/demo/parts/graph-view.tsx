@@ -143,6 +143,7 @@ export function GraphView({ frame = null, ...canvas }: Props) {
 						className={styles.sceneLayer}
 						role="img"
 						aria-label={canvas.label}
+						data-testid="scene-layer"
 					>
 						<SceneBoundary onError={onFailure}>
 							<Scene

@@ -64,8 +64,14 @@ export function layoutSphere(
 	if (groups.length === 0) {
 		return { x, y, z }
 	}
-	// A wide cap when there is one group, a narrow one when many share the sphere.
-	const cap = Math.min(0.9, Math.max(0.38, 0.95 / Math.sqrt(groups.length)))
+	// A group's cone widens with its share of the pages, so a crowd of pages
+	// spreads through the volume instead of piling on its axis.
+	const total = groups.reduce((sum, members) => sum + members.length, 0)
+	const capOf = (members: number[]) =>
+		Math.min(
+			1.05,
+			Math.max(0.36, 0.32 + 0.85 * Math.sqrt(members.length / total)),
+		)
 	groups.forEach((members, at) => {
 		const axis = direction(at, groups.length)
 		const helper: Vec = Math.abs(axis[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]
@@ -82,7 +88,7 @@ export function layoutSphere(
 		members.forEach((position, rank) => {
 			const share = (rank + 0.5) / members.length
 			const radius = CORE_RADIUS + (1 - CORE_RADIUS) * Math.sqrt(share)
-			const tilt = cap * Math.sqrt(share)
+			const tilt = capOf(members) * Math.sqrt(share)
 			const turn = rank * GOLDEN_ANGLE
 			const along = Math.cos(tilt)
 			const across = Math.sin(tilt)
