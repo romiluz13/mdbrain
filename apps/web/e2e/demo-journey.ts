@@ -8,11 +8,13 @@ import {
 	expectCitationMatchesCites,
 	mapReady,
 	openDemo,
+	refusedReads,
 	settleContradiction,
 	tabTo,
 	type DemoProxy,
+	unexplainedBrowserErrors,
 } from "./demo-helpers"
-import { SLOW_READ } from "./demo-proxy"
+import { GENERATED, SLOW_READ } from "./demo-proxy"
 
 export type Act = (target: Locator) => Promise<void>
 
@@ -192,7 +194,16 @@ export async function journey(
 			name: chapterTitle(CHAPTERS.length - 1),
 		}),
 	).toBeVisible()
-	expect(browserErrors, "console and page errors across the journey").toEqual(
-		[],
-	)
+	await proxy.flush()
+	const refused = refusedReads(proxy)
+	if (refused.length > 0) {
+		console.log(`[demo-e2e] reads the proxy refused:\n${refused.join("\n")}`)
+	}
+	if (GENERATED) {
+		expect(refused, "the fixture refused a read").toEqual([])
+	}
+	expect(
+		unexplainedBrowserErrors(proxy, browserErrors),
+		"console and page errors across the journey",
+	).toEqual([])
 }

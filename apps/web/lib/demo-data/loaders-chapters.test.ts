@@ -239,12 +239,33 @@ describe("loadSource", () => {
 	it("marks the source unavailable when the cite fails, and never throws", async () => {
 		stubUpstream({
 			"/v1/cite": () =>
-				json({ error: { code: "CITATION_UNRESOLVED", message: "no" } }, 404),
+				json(
+					{
+						error: { code: "CITATION_RECALL_DEGRADED", message: "no" },
+						retryAfterMs: 5,
+					},
+					503,
+				),
 		})
 		expect(await loadSource(direct, owner, ref)).toEqual({
 			eventId: "evt-1",
 			marker: ref.marker,
 			status: "unavailable",
+		})
+	})
+
+	it.each([
+		"CITATION_UNRESOLVED",
+		"CITATION_NOT_FOUND",
+	])("says a source is unconfirmed, not busy, when the cite answers %s", async (code) => {
+		stubUpstream({
+			"/v1/cite": () => json({ error: { code, message: "no" } }, 404),
+		})
+		expect(await loadSource(direct, owner, ref)).toEqual({
+			eventId: "evt-1",
+			marker: ref.marker,
+			status: "unavailable",
+			reason: "unconfirmed",
 		})
 	})
 })

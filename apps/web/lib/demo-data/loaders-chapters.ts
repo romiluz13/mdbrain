@@ -30,6 +30,9 @@ export type SourceView = {
 	eventId: string
 	marker: string
 	status: "resolved" | "unavailable"
+	/** Set when recall answered and could not confirm the source, which is not
+	 * the same as a read that failed and may work on the next try. */
+	reason?: "unconfirmed"
 	text?: string
 	businessTime?: string
 }
@@ -99,6 +102,11 @@ export function claimSourceRefs(claim: MdbrainWikiClaim): ClaimSourceRefsState {
 	}
 }
 
+const UNCONFIRMED_CODES: ReadonlySet<string> = new Set([
+	"CITATION_UNRESOLVED",
+	"CITATION_NOT_FOUND",
+])
+
 /** One source of a claim, read through the governed cite route. A source that
  * cannot be cited is marked unavailable; this never throws. */
 export async function loadSource(
@@ -128,8 +136,17 @@ export async function loadSource(
 				? { businessTime: event.timestamp }
 				: {}),
 		}
-	} catch {
-		return { eventId, marker, status: "unavailable" }
+	} catch (error) {
+		const code =
+			error instanceof MdbrainClientError ? error.envelope?.code : undefined
+		return {
+			eventId,
+			marker,
+			status: "unavailable",
+			...(code !== undefined && UNCONFIRMED_CODES.has(code)
+				? { reason: "unconfirmed" as const }
+				: {}),
+		}
 	}
 }
 

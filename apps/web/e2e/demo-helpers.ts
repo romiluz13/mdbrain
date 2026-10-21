@@ -8,7 +8,12 @@ import type {
 import { CHAPTERS, chapterIndex } from "../app/demo/chapters"
 import { SOURCE_LIMIT } from "../lib/demo-data/loaders-chapters.js"
 import { formatUtc } from "../lib/demo-data/views.js"
-import { SLOW_READ, type installDemoProxy } from "./demo-proxy"
+import {
+	GENERATED,
+	SLOW_LIST,
+	SLOW_READ,
+	type installDemoProxy,
+} from "./demo-proxy"
 
 export type DemoProxy = Awaited<ReturnType<typeof installDemoProxy>>
 
@@ -170,7 +175,7 @@ type CitedEvent = { eventId: string; text?: string; timestamp?: string }
 export type StoredClaim = {
 	text: string
 	marker?: string
-	evidence: Array<{ kind: string; sourceId: string }>
+	evidence: Array<{ kind: string; sourceId: string; marker?: string }>
 }
 
 /** The claim a marker names, found in what the proxy served, not on the page. */
@@ -254,13 +259,45 @@ export async function sourcesSettled(scope: Locator): Promise<void> {
 	)
 	await expect(scope.locator('article[data-status="loading"]')).toHaveCount(
 		0,
-		SLOW_READ,
+		SLOW_LIST,
 	)
+}
+
+/** The cite reads the proxy refused for a claim, each as the stored event it
+ * asked about. A source recall cannot confirm, or a recall that is busy, is an
+ * answer the page shows as an unavailable slip; the fixture never refuses one. */
+function refusedCites(
+	proxy: DemoProxy,
+	claim: StoredClaim,
+	marker: string,
+	resolved: ReadonlyMap<string, CitedEvent>,
+): string[] {
+	const refused = new Set<string>()
+	for (const entry of proxy.responses) {
+		if (
+			entry.url.pathname !== "/api/demo/v1/cite" ||
+			entry.url.searchParams.get("citedBy") !== marker ||
+			entry.status < 400
+		) {
+			continue
+		}
+		const asked = entry.url.searchParams.get("marker")
+		const evidence = claim.evidence.find(
+			(candidate) =>
+				candidate.kind === "event" &&
+				(candidate.marker ?? `[[event:${candidate.sourceId}]]`) === asked,
+		)
+		if (evidence && !resolved.has(evidence.sourceId)) {
+			refused.add(evidence.sourceId)
+		}
+	}
+	return [...refused]
 }
 
 /** An open citation shows what the proxy's `cite` answers said: one resolved
  * slip per resolved source, each with its full stored text and its own business
- * time (or the statement that it has none), and no source marked unavailable. */
+ * time (or the statement that it has none), and one unavailable slip for each
+ * source the proxy refused to read. */
 export async function expectCitationMatchesCites(
 	proxy: DemoProxy,
 	dialog: Locator,
@@ -288,10 +325,24 @@ export async function expectCitationMatchesCites(
 			byEvent.set(event.eventId, event)
 		}
 	}
-	expect(byEvent.size, `no cite answer for ${marker}`).toBeGreaterThan(0)
+	const refused = refusedCites(proxy, claim, marker, byEvent)
+	if (GENERATED) {
+		expect(refused, `the fixture refused a cite for ${marker}`).toEqual([])
+	}
+	expect(
+		byEvent.size + refused.length,
+		`no cite answer for ${marker}`,
+	).toBeGreaterThan(0)
 	await expect(
 		dialog.locator('article[data-status="unavailable"]'),
-	).toHaveCount(0)
+	).toHaveCount(refused.length)
+	for (const sourceId of refused) {
+		await expect(
+			dialog
+				.locator('article[data-status="unavailable"]')
+				.filter({ hasText: sourceId }),
+		).toHaveCount(1)
+	}
 	await expect(dialog.locator('article[data-status="resolved"]')).toHaveCount(
 		byEvent.size,
 	)
@@ -312,6 +363,42 @@ export async function expectCitationMatchesCites(
 			event.timestamp ? formatUtc(event.timestamp) : "missing in this source",
 		)
 	}
+}
+
+/** The reads the proxy refused, as `status code path`, for a run's log. */
+export function refusedReads(proxy: DemoProxy): string[] {
+	return proxy.responses
+		.filter(({ status }) => status >= 400)
+		.map(({ status, url, body }) => {
+			const code = (body as { error?: { code?: string } } | null)?.error?.code
+			return `${status} ${code ?? "-"} ${url.pathname}${url.search}`
+		})
+}
+
+/** The console and page errors that no refused read accounts for. The browser
+ * logs one "Failed to load resource" line for each non-2xx answer; a source
+ * recall cannot confirm is such an answer, and the page shows it as an
+ * unavailable slip. Every other error, and any such line the proxy did not
+ * serve, stays an error. */
+export function unexplainedBrowserErrors(
+	proxy: DemoProxy,
+	errors: readonly string[],
+): string[] {
+	const refused = proxy.responses
+		.filter(({ status }) => status >= 400)
+		.map(({ status }) => status)
+	return errors.filter((text) => {
+		const status =
+			/^Failed to load resource: the server responded with a status of (\d{3})\b/.exec(
+				text,
+			)?.[1]
+		const at = status === undefined ? -1 : refused.indexOf(Number(status))
+		if (at === -1) {
+			return true
+		}
+		refused.splice(at, 1)
+		return false
+	})
 }
 
 /** Lets the finite CSS animations and transitions finish, so a contrast check

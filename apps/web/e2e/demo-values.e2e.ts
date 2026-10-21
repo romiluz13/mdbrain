@@ -21,7 +21,7 @@ import {
 	type StoredClaim,
 	wordsOf,
 } from "./demo-helpers"
-import { GENERATED, installDemoProxy, SLOW_READ } from "./demo-proxy"
+import { GENERATED, installDemoProxy, SLOW_LIST, SLOW_READ } from "./demo-proxy"
 
 test.describe("values on screen equal the proxy's responses", () => {
 	test("the brain, the sources and the run's own table", async ({ page }) => {
@@ -89,18 +89,21 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await expect(rows.first()).toBeVisible(SLOW_READ)
 		await expect(
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
-		).toHaveCount(0, SLOW_READ)
+		).toHaveCount(0, SLOW_LIST)
 		await proxy.flush()
-		const stored = new Map(
-			proxy.responses
-				.filter((entry) => entry.url.pathname === "/api/demo/v1/cite")
-				.map((entry) => {
-					const { event } = entry.body as {
-						event: { eventId: string; text?: string }
-					}
-					return [event.eventId, event.text ?? ""] as const
-				}),
-		)
+		const stored = new Map<string, string>()
+		const refused = new Set<string>()
+		for (const entry of proxy.responses) {
+			if (entry.url.pathname !== "/api/demo/v1/cite") continue
+			const { event } = (entry.body ?? {}) as {
+				event?: { eventId: string; text?: string }
+			}
+			if (entry.status === 200 && event) {
+				stored.set(event.eventId, event.text ?? "")
+			} else {
+				refused.add(entry.url.searchParams.get("marker") ?? "")
+			}
+		}
 		const count = await rows.count()
 		expect(count).toBeGreaterThan(0)
 		expect(count).toBeLessThanOrEqual(8)
@@ -108,14 +111,6 @@ test.describe("values on screen equal the proxy's responses", () => {
 			const row = rows.nth(at)
 			const id = (await row.getByTestId("source-id").textContent()) ?? ""
 			const label = (await row.getByTestId("source-label").textContent()) ?? ""
-			const text = stored.get(id)
-			expect(text, `a cite answered for ${id}`).toBeDefined()
-			expect(label).not.toBe("")
-			expect(label).not.toContain(id)
-			// A label is taken from the stored source, never made up.
-			expect(wordsOf(storedBody(text ?? ""))).toContain(
-				wordsOf(label.replace(/…$/, "")),
-			)
 			const order = await row.evaluate((element) =>
 				[...element.querySelectorAll("[data-testid]")].map((node) =>
 					node.getAttribute("data-testid"),
@@ -124,6 +119,26 @@ test.describe("values on screen equal the proxy's responses", () => {
 			expect(order.indexOf("source-label")).toBeLessThan(
 				order.indexOf("source-id"),
 			)
+			const text = stored.get(id)
+			if (text === undefined) {
+				// A source the proxy refused is an unavailable row that still names it.
+				await expect(row).toHaveAttribute("data-status", "unavailable")
+				expect(
+					[...refused].some((marker) => marker.includes(id)),
+					`a refused cite for ${id}`,
+				).toBe(true)
+				expect(label).toMatch(/could not/)
+				continue
+			}
+			expect(label).not.toBe("")
+			expect(label).not.toContain(id)
+			// A label is taken from the stored source, never made up.
+			expect(wordsOf(storedBody(text))).toContain(
+				wordsOf(label.replace(/…$/, "")),
+			)
+		}
+		if (GENERATED) {
+			expect([...refused], "the fixture refused a cite").toEqual([])
 		}
 	})
 
@@ -146,7 +161,9 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await expect(inspector).toContainText(`trust tier: ${stored.trustTier}`)
 		await expect(inspector).toContainText(`state: ${stored.state}`)
 		await expect(inspector).toContainText(`revision ${stored.revision}`)
-		await expect(inspector).toContainText(`${stored.claims.length} claims`)
+		await expect(inspector).toContainText(
+			`${stored.claims.length} ${stored.claims.length === 1 ? "claim" : "claims"}`,
+		)
 		await expect(inspector.locator("time").first()).toHaveText(
 			formatUtc(stored.createdAt),
 		)

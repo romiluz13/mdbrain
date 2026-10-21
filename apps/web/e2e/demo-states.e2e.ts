@@ -3,6 +3,7 @@
 // states through the fixture route, so they do not run against a live stack.
 import { expect, test } from "@playwright/test"
 import { CHAPTERS } from "../app/demo/chapters"
+import { proxyError } from "../lib/demo-data/proxy-errors"
 import {
 	expectCitationMatchesCites,
 	goto,
@@ -281,6 +282,76 @@ test.describe("states", () => {
 		)
 		await expect(dialog.locator('article[data-status="loading"]')).toHaveCount(
 			0,
+		)
+	})
+
+	test("a source recall cannot confirm says so on chapter 3 and in its citation, and a busy recall says to try again", async ({
+		page,
+	}) => {
+		let refuse: "unconfirmed" | "busy" = "unconfirmed"
+		const proxy = await installDemoProxy(page, {
+			override: (url) =>
+				url.pathname === "/api/demo/v1/cite"
+					? refuse === "unconfirmed"
+						? proxyError(
+								404,
+								"CITATION_UNRESOLVED",
+								"The source could not be confirmed through governed recall.",
+							)
+						: proxyError(
+								503,
+								"CITATION_RECALL_DEGRADED",
+								"Recall is busy, so the source could not be checked yet. Try again shortly.",
+								5,
+							)
+					: undefined,
+		})
+		await openDemo(page)
+		await mapReady(page)
+		await goto(page, 2)
+		const rows = page.getByTestId("source-row")
+		await expect(rows.first()).toBeVisible()
+		await expect(
+			page.locator('[data-testid="source-row"][data-status="loading"]'),
+		).toHaveCount(0)
+		const count = await rows.count()
+		expect(count).toBeGreaterThan(0)
+		await expect(page.getByTestId("source-label")).toHaveText(
+			Array(count).fill("Recall could not confirm this source"),
+		)
+		await expect(page.getByTestId("source-id")).toHaveCount(count)
+		await rows
+			.first()
+			.getByRole("button", { name: /^Open source / })
+			.click()
+		const dialog = page.getByRole("dialog")
+		await expect(
+			dialog.locator('article[data-status="unavailable"]'),
+		).toHaveCount(1)
+		await expect(dialog).toContainText(
+			"Governed recall could not confirm this source, so its text is not shown.",
+		)
+		await expect(dialog).not.toContainText("could not be read right now")
+		await proxy.flush()
+		expect(
+			proxy.responses
+				.filter((entry) => entry.url.pathname === "/api/demo/v1/cite")
+				.every((entry) => entry.status === 404),
+		).toBe(true)
+
+		await page.keyboard.press("Escape")
+		refuse = "busy"
+		await goto(page, 0)
+		await goto(page, 2)
+		await rows
+			.first()
+			.getByRole("button", { name: /^Open source / })
+			.click()
+		await expect(page.getByRole("dialog")).toContainText(
+			"This source could not be read right now.",
+		)
+		await expect(page.getByRole("dialog")).not.toContainText(
+			"could not confirm this source",
 		)
 	})
 

@@ -25,7 +25,9 @@ function sourceTitle(read: SourceView | undefined): string {
 		return "Reading this source…"
 	}
 	if (read.status === "unavailable") {
-		return "This source could not be read right now"
+		return read.reason === "unconfirmed"
+			? "Recall could not confirm this source"
+			: "This source could not be read right now"
 	}
 	return (
 		sourceLabel(splitRoleLabel(read.text ?? "").body) ?? "Stored without text"

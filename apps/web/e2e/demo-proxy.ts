@@ -31,6 +31,11 @@ export const GENERATED = !LIVE && REPLAY === undefined
  * fixture answers at once, so it keeps Playwright's default wait. */
 export const SLOW_READ = LIVE ? { timeout: 30_000 } : {}
 
+/** How long a test waits for a list of sources to finish: a screen reads them
+ * four at a time, so eight take two rounds of cites, and a busy recall makes a
+ * cite slower or refuses it. */
+export const SLOW_LIST = LIVE ? { timeout: 90_000 } : {}
+
 export type ProxyOptions = {
 	/** Answer a request instead of the proxy (an outage, an empty run), or hold
 	 * it by awaiting before returning undefined. */

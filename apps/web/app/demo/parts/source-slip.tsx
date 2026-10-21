@@ -40,7 +40,11 @@ export function SourceSlip({
 			</header>
 			<p className={styles.slipMarker}>{source.marker}</p>
 			{source.status === "unavailable" ? (
-				<p className={styles.note}>This source could not be read right now.</p>
+				<p className={styles.note}>
+					{source.reason === "unconfirmed"
+						? "Governed recall could not confirm this source, so its text is not shown."
+						: "This source could not be read right now."}
+				</p>
 			) : source.text === undefined || source.text === "" ? (
 				<p className={styles.note}>The source is stored without text.</p>
 			) : (

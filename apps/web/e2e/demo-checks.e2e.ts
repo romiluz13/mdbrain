@@ -319,9 +319,7 @@ test("no chapter scrolls sideways, keeps the synthetic label in view, and passes
 		await expectNoSeriousAccessibilityViolations(page)
 	}
 	await openAnyCitation(page, proxy)
-	await expect(
-		page.getByRole("dialog").locator('article[data-status="resolved"]').first(),
-	).toBeVisible(SLOW_READ)
+	await sourcesSettled(page.getByRole("dialog"))
 	await expectNoSeriousAccessibilityViolations(page)
 })
 
