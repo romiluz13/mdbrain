@@ -71,6 +71,13 @@ async function journey(
 	act: Act,
 	how: "escape" | "close",
 ): Promise<void> {
+	const browserErrors: string[] = []
+	page.on("console", (message) => {
+		if (message.type() === "error") {
+			browserErrors.push(message.text())
+		}
+	})
+	page.on("pageerror", (error) => browserErrors.push(String(error)))
 	await openDemo(page)
 	await mapReady(page)
 	await expect(page.getByRole("heading", { level: 1 })).toHaveText(
@@ -180,6 +187,9 @@ async function journey(
 			name: chapterTitle(CHAPTERS.length - 1),
 		}),
 	).toBeVisible()
+	expect(browserErrors, "console and page errors across the journey").toEqual(
+		[],
+	)
 }
 
 test.describe("journey", () => {
