@@ -19,7 +19,7 @@ function oneClient(
 
 describe("createStepEventRecorder", () => {
 	it("records without blocking and confirms once the writes land", async () => {
-		const { clients, writtenEvents } = fakeAgentClients({
+		const { clients, writtenEvents, receipts } = fakeAgentClients({
 			writeEventDelayMs: 60,
 		})
 		const recorder = createStepEventRecorder({ clients, ...base })
@@ -33,7 +33,19 @@ describe("createStepEventRecorder", () => {
 		expect(Date.now() - before).toBeLessThan(30)
 		expect(recorder.pendingCount()).toBe(2)
 		const outcome = await recorder.confirm(2000)
-		expect(outcome).toEqual({ confirmed: 2, failed: [] })
+		expect(outcome.confirmed).toBe(2)
+		expect(outcome.failed).toEqual([])
+		expect(outcome.steps).toEqual([
+			{
+				n: 1,
+				role: "support",
+				name: "step 1",
+				detail: "mdbrain_write_event",
+				eventId: receipts[0]?.eventId,
+			},
+			{ n: 2, role: "account", name: "step 2", eventId: receipts[1]?.eventId },
+		])
+		expect(new Set(outcome.steps.map((step) => step.eventId)).size).toBe(2)
 		expect(recorder.pendingCount()).toBe(0)
 		const inputs = writtenEvents.map((event) => event.input)
 		expect(inputs[0]).toMatchObject({
@@ -58,6 +70,7 @@ describe("createStepEventRecorder", () => {
 		const outcome = await recorder.confirm(1000)
 		expect(outcome.confirmed).toBe(0)
 		expect(outcome.failed).toEqual([{ name: "step 1", error: "memongo down" }])
+		expect(outcome.steps).toEqual([])
 	})
 
 	it("marks a write that never lands as failed at the deadline", async () => {
@@ -68,6 +81,7 @@ describe("createStepEventRecorder", () => {
 		expect(outcome.confirmed).toBe(0)
 		expect(outcome.failed[0]).toMatchObject({ name: "step 1" })
 		expect(String(outcome.failed[0]?.error)).toMatch(/timeout/)
+		expect(outcome.steps).toEqual([])
 	})
 
 	it("waits for an in-flight write before confirming", async () => {
@@ -78,7 +92,39 @@ describe("createStepEventRecorder", () => {
 		recorder.record({ role: "support", name: "step 1" })
 		await delay(10)
 		const outcome = await recorder.confirm(500)
-		expect(outcome).toEqual({ confirmed: 1, failed: [] })
+		expect(outcome).toMatchObject({ confirmed: 1, failed: [] })
+		expect(outcome.steps.map((step) => step.name)).toEqual(["step 1"])
 		expect(writtenEvents).toHaveLength(1)
+	})
+
+	it("lists the steps in record order even when the writes land out of order", async () => {
+		const issued: Array<{ eventId: string; chunkCreated: boolean }> = []
+		const waiters: Array<() => void> = []
+		const landed: string[] = []
+		const staggered = oneClient(async () => {
+			const receipt = {
+				eventId: `evt-${issued.length + 1}`,
+				chunkCreated: true,
+			}
+			issued.push(receipt)
+			await new Promise<void>((resolve) => {
+				waiters.push(resolve)
+			})
+			landed.push(receipt.eventId)
+			return receipt as never
+		})
+		const recorder = createStepEventRecorder({ clients: staggered, ...base })
+		recorder.record({ role: "support", name: "step 1" })
+		recorder.record({ role: "account", name: "step 2" })
+		waiters[1]?.()
+		await delay(5)
+		waiters[0]?.()
+		const outcome = await recorder.confirm(500)
+		expect(landed).toEqual(["evt-2", "evt-1"])
+		expect(outcome.steps.map((step) => step.name)).toEqual(["step 1", "step 2"])
+		expect(outcome.steps.map((step) => step.eventId)).toEqual([
+			"evt-1",
+			"evt-2",
+		])
 	})
 })

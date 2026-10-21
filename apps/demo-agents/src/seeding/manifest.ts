@@ -1,3 +1,5 @@
+import type { AgentRole } from "../agents/config.js"
+
 export type RunManifestState = "seeding" | "ready" | "used" | "failed"
 
 export type ManifestEventRef = { sourceId: string; eventId: string }
@@ -47,12 +49,25 @@ export type AgentRunUsage = {
  * then complete (with the outcome summary) or incomplete (with a
  * reason); both terminal states are one-way. The doc's own state stays
  * "ready" throughout; a complete agent run is followed by markUsed. */
+/** One confirmed agent step event, indexed (331): the recorder's step
+ * number (the one in its idempotency key), the role and short labels,
+ * and the id the API returned for the write. The body stays in
+ * Memongo; the manifest is an index, not a copy. */
+export type AgentRunStepRef = {
+	n: number
+	role: AgentRole
+	name: string
+	detail?: string
+	eventId: string
+}
+
 export type AgentRunDoc = {
 	state: "running" | "complete" | "incomplete"
 	startedAt: string
 	endedAt?: string
 	usage?: AgentRunUsage
 	stepsRecorded?: number
+	steps?: AgentRunStepRef[]
 	failureReason?: string
 	reusedPage?: { slug: string; writtenBy: string; readBy: string }
 	pendingProposal?: { title: string; slug: string }
@@ -61,6 +76,7 @@ export type AgentRunDoc = {
 export type AgentRunSummaryInput = {
 	usage: AgentRunUsage
 	stepsRecorded: number
+	steps: AgentRunStepRef[]
 	reusedPage?: { slug: string; writtenBy: string; readBy: string }
 	pendingProposal?: { title: string; slug: string }
 }
@@ -232,6 +248,7 @@ export function createRunManifests(
 						endedAt: now(),
 						usage: summary.usage,
 						stepsRecorded: summary.stepsRecorded,
+						steps: summary.steps,
 						reusedPage: summary.reusedPage,
 						pendingProposal: summary.pendingProposal,
 					},

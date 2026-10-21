@@ -57,6 +57,10 @@ export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
 		{ eventId: string; chunkCreated: boolean }
 	>()
 	let seq = 0
+	/** Receipt ids mint at call time (331): concurrent in-flight writes
+	 * must still get distinct ids, so the id cannot depend on how many
+	 * writes have landed so far. */
+	let receiptSeq = 0
 	function note(
 		role: AgentRole,
 		method: string,
@@ -107,7 +111,8 @@ export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
 			})
 			return { ok: true, eventId: stored.eventId, chunkCreated: false }
 		}
-		const receipt = { eventId: `evt-${logs.length}`, chunkCreated: true }
+		receiptSeq += 1
+		const receipt = { eventId: `evt-${receiptSeq}`, chunkCreated: true }
 		receiptsByKey.set(key, receipt)
 		receipts.push({ role, input, ...receipt })
 		return { ok: true, ...receipt }

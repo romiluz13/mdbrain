@@ -108,4 +108,41 @@ describe("fakeAgentClients role-key constraints", () => {
 		)
 		expect(matching).toHaveLength(2)
 	})
+
+	it("mints a distinct eventId for each step write, even in flight together", async () => {
+		const { clients } = fakeAgentClients({ writeEventDelayMs: 20 })
+		const ids = await Promise.all(
+			[1, 2, 3].map(async (n) => {
+				const receipt = await clients.support.writeEvent({
+					role: "assistant",
+					body: `[run-1] Support Lead — step ${n}`,
+					idempotencyKey: `agents:run-1:step:${n}`,
+					agentId: "demo-run-1",
+					scope: "workspace",
+					scopeRef: "demo-run-1",
+				} as never)
+				return receipt.eventId
+			}),
+		)
+		expect(new Set(ids).size).toBe(3)
+	})
+
+	it("answers a retried step write with the original eventId", async () => {
+		const { clients } = fakeAgentClients()
+		const input = {
+			role: "assistant",
+			body: "[run-1] Support Lead — step 1",
+			idempotencyKey: "agents:run-1:step:1",
+			agentId: "demo-run-1",
+			scope: "workspace",
+			scopeRef: "demo-run-1",
+		}
+		const first = await clients.support.writeEvent(input as never)
+		const retry = await clients.support.writeEvent(input as never)
+		expect(retry).toMatchObject({
+			ok: true,
+			eventId: first.eventId,
+			chunkCreated: false,
+		})
+	})
 })

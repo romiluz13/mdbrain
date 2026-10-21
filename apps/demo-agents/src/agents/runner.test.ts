@@ -207,6 +207,19 @@ describe("runRoleAgents", () => {
 		expect(doc?.agentRun?.usage).toEqual(outcome.usage)
 		expect(doc?.agentRun?.reusedPage).toEqual(outcome.reusedPage)
 		expect(doc?.agentRun?.pendingProposal).toEqual(outcome.pendingProposal)
+		const steps = doc?.agentRun?.steps ?? []
+		expect(steps).toHaveLength(9)
+		expect(steps.length).toBe(doc?.agentRun?.stepsRecorded)
+		expect(steps.map((step) => step.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+		const stepReceipts = clients.receipts.filter((receipt) =>
+			String(receipt.input.idempotencyKey ?? "").startsWith(
+				`agents:${RUN_ID}:step:`,
+			),
+		)
+		expect(steps.map((step) => step.eventId)).toEqual(
+			stepReceipts.map((receipt) => receipt.eventId),
+		)
+		expect(new Set(steps.map((step) => step.eventId)).size).toBe(9)
 		expect(used).toEqual([SLOT.index])
 
 		const logs = clients.logs
@@ -271,6 +284,7 @@ describe("runRoleAgents", () => {
 		const doc = await manifests.get(RUN_ID)
 		expect(doc?.state).toBe("ready")
 		expect(doc?.agentRun?.state).toBe("incomplete")
+		expect(doc?.agentRun?.steps).toBeUndefined()
 		expect(used).toEqual([])
 	})
 

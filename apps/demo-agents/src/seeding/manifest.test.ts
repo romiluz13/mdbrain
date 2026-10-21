@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 import { FakeCollection } from "./testing/fakes.js"
-import { createRunManifests, type RunManifestDoc } from "./manifest.js"
+import {
+	createRunManifests,
+	type AgentRunSummaryInput,
+	type RunManifestDoc,
+} from "./manifest.js"
 
 const NOW = "2026-10-20T12:00:00.000Z"
 const clock = () => new Date(NOW)
@@ -92,7 +96,23 @@ describe("createRunManifests", () => {
 		const { collection, manifests } = makeStore()
 		await manifests.createRun(init)
 		await manifests.recordEvent("run-a", "src-a", "evt-1")
+		await manifests.markReady("run-a")
+		await manifests.markAgentRunStarted("run-a")
+		await manifests.markAgentRunComplete("run-a", {
+			usage: { uncachedInput: 10, cacheRead: 0, cacheWrite: 0, output: 3 },
+			stepsRecorded: 1,
+			steps: [
+				{
+					n: 1,
+					role: "support",
+					name: "step 1",
+					detail: "mdbrain_write_event",
+					eventId: "evt-9",
+				},
+			],
+		})
 		const raw = JSON.stringify([...collection.docs.values()])
+		expect(raw).toContain("evt-9")
 		expect(raw).not.toMatch(/"body"/)
 		expect(raw).not.toMatch(/"markdown"/)
 		expect(raw).not.toMatch(/apiKey|token|secret/i)
@@ -100,9 +120,19 @@ describe("createRunManifests", () => {
 })
 
 describe("agent runs", () => {
-	const summary = {
+	const summary: AgentRunSummaryInput = {
 		usage: { uncachedInput: 10, cacheRead: 2, cacheWrite: 1, output: 3 },
-		stepsRecorded: 9,
+		stepsRecorded: 2,
+		steps: [
+			{
+				n: 1,
+				role: "support",
+				name: "step 1",
+				detail: "mdbrain_write_event",
+				eventId: "evt-1",
+			},
+			{ n: 2, role: "account", name: "step 2", eventId: "evt-2" },
+		],
 		reusedPage: {
 			slug: "risks/halvorsen-renewal-support-view",
 			writtenBy: "support",
@@ -151,6 +181,7 @@ describe("agent runs", () => {
 			state: "incomplete",
 			failureReason: reason,
 		})
+		expect(done?.agentRun?.steps).toBeUndefined()
 		expect(await manifests.markAgentRunComplete("run-a", summary)).toBeNull()
 		const doc = await manifests.get("run-a")
 		expect(doc?.state).toBe("ready")

@@ -1,5 +1,6 @@
 import type { MdbrainClient } from "@mdbrain/client"
 import { ROLE_LABELS, type AgentRole } from "./config.js"
+import type { AgentRunStepRef } from "../seeding/manifest.js"
 
 /** The only client surface a step event needs: one memory write. */
 export type StepEventClient = Pick<MdbrainClient, "writeEvent">
@@ -7,11 +8,17 @@ export type StepEventClient = Pick<MdbrainClient, "writeEvent">
 export type StepEventOutcome = {
 	confirmed: number
 	failed: Array<{ name: string; error: string }>
+	/** The confirmed steps in record order, each with the eventId the
+	 * API returned; a failed or timed-out write gets no entry, and no
+	 * id is invented for one. */
+	steps: AgentRunStepRef[]
 }
 
+type PendingStep = Omit<AgentRunStepRef, "eventId">
+
 type PendingWrite = {
-	name: string
-	settled: Promise<{ ok: true } | { ok: false; error: string }>
+	step: PendingStep
+	settled: Promise<{ ok: true; eventId: string } | { ok: false; error: string }>
 }
 
 /** Non-blocking memory-event recorder for agent steps (decision 4: each
@@ -49,17 +56,30 @@ export function createStepEventRecorder(input: {
 				scopeRef: input.scopeRef,
 			})
 			.then(
-				() => ({ ok: true as const }),
+				(receipt) => ({ ok: true as const, eventId: receipt.eventId }),
 				(error: unknown) => ({
 					ok: false as const,
 					error: error instanceof Error ? error.message : String(error),
 				}),
 			)
-		pending.push({ name: event.name, settled })
+		pending.push({
+			step: {
+				n,
+				role: event.role,
+				name: event.name,
+				...(event.detail ? { detail: event.detail } : {}),
+			},
+			settled,
+		})
 	}
 
 	async function confirm(deadlineMs: number): Promise<StepEventOutcome> {
-		if (pending.length === 0) return { confirmed: 0, failed: [] }
+		if (pending.length === 0)
+			return {
+				confirmed: 0,
+				failed: [],
+				steps: [] as StepEventOutcome["steps"],
+			}
 		let timer: ReturnType<typeof setTimeout> | undefined
 		const deadline = new Promise<never>((_, reject) => {
 			timer = setTimeout(
@@ -73,20 +93,26 @@ export function createStepEventRecorder(input: {
 					try {
 						const result = await Promise.race([write.settled, deadline])
 						return result.ok
-							? { confirmed: 1, failed: [] as StepEventOutcome["failed"] }
+							? {
+									confirmed: 1,
+									failed: [] as StepEventOutcome["failed"],
+									steps: [{ ...write.step, eventId: result.eventId }],
+								}
 							: {
 									confirmed: 0,
-									failed: [{ name: write.name, error: result.error }],
+									failed: [{ name: write.step.name, error: result.error }],
+									steps: [] as StepEventOutcome["steps"],
 								}
 					} catch (error) {
 						return {
 							confirmed: 0,
 							failed: [
 								{
-									name: write.name,
+									name: write.step.name,
 									error: error instanceof Error ? error.message : String(error),
 								},
 							],
+							steps: [] as StepEventOutcome["steps"],
 						}
 					}
 				}),
@@ -97,6 +123,7 @@ export function createStepEventRecorder(input: {
 					0,
 				),
 				failed: outcomes.flatMap((outcome) => outcome.failed),
+				steps: outcomes.flatMap((outcome) => outcome.steps),
 			}
 		} finally {
 			if (timer) clearTimeout(timer)

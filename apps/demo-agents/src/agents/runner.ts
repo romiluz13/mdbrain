@@ -352,6 +352,7 @@ export async function runRoleAgents(
 	await input.manifests.markAgentRunComplete(input.runId, {
 		usage,
 		stepsRecorded,
+		steps: confirmed.steps,
 		reusedPage,
 		pendingProposal,
 	})
