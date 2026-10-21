@@ -3,7 +3,7 @@
 // Set DEMO_E2E_LIVE=1 to shoot a live stack instead of the fixture.
 import { expect, test } from "@playwright/test"
 import { CHAPTERS } from "../app/demo/chapters"
-import { mapReady, settled } from "./demo-helpers"
+import { goto, mapReady, openDemo, settled } from "./demo-helpers"
 import { installDemoProxy } from "./demo-proxy"
 
 const DIR = process.env.DEMO_SHOTS_DIR
@@ -13,11 +13,14 @@ test.skip(!DIR, "set DEMO_SHOTS_DIR to take the screenshots")
 for (const [index, chapter] of CHAPTERS.entries()) {
 	test(`shot ${index + 1} ${chapter.id}`, async ({ page }, testInfo) => {
 		await installDemoProxy(page)
-		await page.goto(`/demo#${chapter.id}`)
+		await openDemo(page)
+		await mapReady(page)
+		if (index > 0) {
+			await goto(page, index)
+		}
 		await expect(
 			page.getByRole("heading", { level: 1, name: chapter.title }),
 		).toBeVisible()
-		await mapReady(page)
 		if (chapter.id === "ask") {
 			await page
 				.getByRole("list", { name: "Example questions" })
@@ -37,6 +40,10 @@ for (const [index, chapter] of CHAPTERS.entries()) {
 			await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
 		}
 		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+		const canvas = page.locator('canvas[data-layer="static"]').first()
+		if ((await canvas.count()) > 0) {
+			await expect(canvas).toHaveAttribute("data-draws", /[1-9]/)
+		}
 		await page.addStyleTag({ content: "nextjs-portal{display:none!important}" })
 		await settled(page)
 		await page.screenshot({
