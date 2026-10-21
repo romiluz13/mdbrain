@@ -4,6 +4,7 @@ import type { ReactNode } from "react"
 import type { Graph } from "../../../lib/demo-data/views.js"
 import type { DataState } from "../../../lib/demo-data/states.js"
 import { useDemo } from "../demo-context.js"
+import { countOf } from "../../../lib/demo-data/plural.js"
 import styles from "../graph.module.css"
 import { GraphCanvas } from "./graph-canvas.js"
 import { StatePanel } from "./state-panel.js"
@@ -14,6 +15,8 @@ type Props = {
 	highlight?: ReadonlySet<string>
 	caption?: ReactNode
 	compact?: boolean
+	/** Stays in view beside a long list when the page has two columns. */
+	sticky?: boolean
 }
 
 const NONE: ReadonlySet<string> = new Set()
@@ -25,6 +28,7 @@ export function GraphStage({
 	highlight = NONE,
 	caption,
 	compact,
+	sticky,
 }: Props) {
 	const { data, graph, layout, pinned, pin, reload } = useDemo()
 	const ready = graph !== null && layout !== null
@@ -32,13 +36,15 @@ export function GraphStage({
 		<section
 			className={styles.stage}
 			data-compact={compact || undefined}
+			data-sticky={sticky || undefined}
 			aria-label={title}
 		>
 			<header className={styles.stageHead}>
 				<h2>{title}</h2>
 				{graph ? (
 					<p>
-						{graph.edges.length} links between {graph.nodes.length} pages
+						{countOf(graph.edges.length, "link")} between{" "}
+						{countOf(graph.nodes.length, "page")}
 					</p>
 				) : null}
 			</header>
@@ -49,7 +55,7 @@ export function GraphStage({
 					highlight={highlight}
 					pinned={pinned}
 					onPin={pin}
-					label={`Map of ${graph.nodes.length} stored pages in ${graph.groups.length} groups, ${graph.edges.length} links. Use the page picker to read a page.`}
+					label={`Map of ${countOf(graph.nodes.length, "stored page")} in ${countOf(graph.groups.length, "group")}, ${countOf(graph.edges.length, "link")}. Use the page picker to read a page.`}
 				/>
 			) : (
 				<StageState

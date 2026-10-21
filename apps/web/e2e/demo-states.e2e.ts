@@ -4,12 +4,14 @@
 import { expect, test } from "@playwright/test"
 import { CHAPTERS } from "../app/demo/chapters"
 import {
+	expectCitationMatchesCites,
 	goto,
 	listPages,
 	mapReady,
 	openAnyCitation,
 	openDemo,
 	settleContradiction,
+	sourcesSettled,
 	stat,
 } from "./demo-helpers"
 import { GENERATED, installDemoProxy } from "./demo-proxy"
@@ -172,8 +174,44 @@ test.describe("states", () => {
 		expect(await settleContradiction(page, proxy)).toBe("none")
 		await openAnyCitation(page, proxy)
 		await expect(
-			page.getByRole("dialog").getByTestId("source-text").first(),
+			page
+				.getByRole("dialog")
+				.locator('article[data-status="resolved"]')
+				.first(),
 		).toBeVisible()
+	})
+
+	test("a claim stored with no evidence says so plainly in chapter 5 and in its citation, and nothing keeps loading", async ({
+		page,
+	}) => {
+		const proxy = await installDemoProxy(page, { contradiction: "unsourced" })
+		await openDemo(page)
+		await mapReady(page)
+		await goto(page, 4)
+		expect(await settleContradiction(page, proxy)).toBe("recorded")
+		const cards = page.locator('li:has([data-testid="contradiction-claim"])')
+		await expect(cards).toHaveCount(2)
+		const bare = cards.nth(1)
+		await expect(bare.locator('[data-state="empty"]')).toContainText(
+			"stored with no evidence",
+		)
+		await expect(bare.locator("article[data-status]")).toHaveCount(0)
+		await expect(bare.locator('[data-state="loading"]')).toHaveCount(0)
+		await expect(cards.nth(0).locator("article[data-status]")).not.toHaveCount(
+			0,
+		)
+
+		await page
+			.getByRole("button", { name: "Open citation for claim two" })
+			.click()
+		const dialog = page.getByRole("dialog")
+		await expect(dialog.getByTestId("citation-claim")).toBeVisible()
+		await expectCitationMatchesCites(proxy, dialog)
+		await expect(dialog.locator('[data-state="empty"]')).toContainText(
+			"stored with no evidence",
+		)
+		await expect(dialog.locator("article")).toHaveCount(0)
+		await expect(dialog.locator('[data-state="loading"]')).toHaveCount(0)
 	})
 
 	test("a citation shows its claim at once and each source as its own read resolves", async ({
@@ -275,6 +313,75 @@ test.describe("states", () => {
 		await expect(screen.locator('article[data-status="loading"]')).toHaveCount(
 			0,
 		)
+	})
+
+	test("a source reads as markdown, shows its role apart, and opens to its full text", async ({
+		page,
+	}) => {
+		const proxy = await installDemoProxy(page)
+		await openDemo(page)
+		await mapReady(page)
+		await goto(
+			page,
+			CHAPTERS.findIndex((entry) => entry.id === "contradiction"),
+		)
+		await settleContradiction(page, proxy)
+		const screen = page.getByTestId("screen")
+		await sourcesSettled(screen)
+		const slip = screen.locator('article[data-status="resolved"]').first()
+		await expect(slip.getByTestId("source-role")).toContainText("User")
+		const full = slip.getByTestId("source-text")
+		const text = (await full.textContent()) ?? ""
+		expect(text).not.toMatch(/\*\*/)
+		expect(text.trimStart()).not.toMatch(/^User:/)
+		expect(await full.locator("strong, li, td").count()).toBeGreaterThan(0)
+		const excerpt = slip.getByTestId("source-excerpt")
+		await expect(excerpt).toBeVisible()
+		await expect(excerpt.locator("mark")).toBeVisible()
+		await expect(full).toBeHidden()
+		const summary = slip.locator("summary")
+		await expect(summary).toHaveText("Show full source")
+		await summary.focus()
+		await page.keyboard.press("Enter")
+		await expect(full).toBeVisible()
+		await expect(full.locator("mark")).toBeVisible()
+		await expect(summary).toHaveText("Hide full source")
+		await page.keyboard.press("Enter")
+		await expect(full).toBeHidden()
+	})
+
+	test("source text is shown as text: markup and links in it do nothing", async ({
+		page,
+	}) => {
+		const hostile =
+			'User: # Notes\n\n**Bold** <img src=x onerror="window.__pwned=1"> [click](javascript:window.__pwned=2)\n\n<script>window.__pwned=3</script>'
+		const proxy = await installDemoProxy(page, {
+			rewrite: (url, body) => {
+				if (url.pathname !== "/api/demo/v1/cite") return body
+				const cite = body as { event: Record<string, unknown> }
+				return { ...cite, event: { ...cite.event, text: hostile } }
+			},
+		})
+		await openDemo(page)
+		await mapReady(page)
+		await goto(
+			page,
+			CHAPTERS.findIndex((entry) => entry.id === "contradiction"),
+		)
+		await settleContradiction(page, proxy)
+		const screen = page.getByTestId("screen")
+		await sourcesSettled(screen)
+		const slip = screen.locator('article[data-status="resolved"]').first()
+		await expect(slip.getByTestId("source-text")).toContainText(
+			'<img src=x onerror="window.__pwned=1">',
+		)
+		await expect(slip.locator("img, script, a, iframe")).toHaveCount(0)
+		await expect(slip.locator("strong")).toHaveText("Bold")
+		expect(
+			await page.evaluate(
+				() => (window as unknown as { __pwned?: number }).__pwned,
+			),
+		).toBeUndefined()
 	})
 
 	test("a source with no business time says it is missing, and keeps ingestion time", async ({

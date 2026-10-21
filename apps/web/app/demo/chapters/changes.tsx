@@ -8,6 +8,8 @@ import styles from "../chapters.module.css"
 import { GraphStage } from "../parts/graph-stage.js"
 import { StatePanel } from "../parts/state-panel.js"
 import { StatTile } from "../parts/stat-tile.js"
+import { CitationTrigger } from "../parts/citation-trigger.js"
+import { BusinessTimeNote } from "../parts/business-time-note.js"
 import { TimeLine } from "../parts/time-line.js"
 
 const SHOWN = 12
@@ -59,22 +61,26 @@ export function ChangesChapter() {
 						<div className={styles.tiles}>
 							<StatTile
 								label="Revisions"
+								singular="Revision"
 								stat="revisions"
 								value={totals.revisions}
 							/>
 							<StatTile
 								label="Pages touched"
+								singular="Page touched"
 								stat="pages-touched"
 								value={totals.pages}
 							/>
 							<StatTile
 								label="Claims added"
+								singular="Claim added"
 								stat="claims-added"
 								value={totals.added}
 								tone="ok"
 							/>
 							<StatTile
 								label="Claims changed or removed"
+								singular="Claim changed or removed"
 								stat="claims-moved"
 								value={totals.changed + totals.removed}
 							/>
@@ -86,6 +92,11 @@ export function ChangesChapter() {
 							things happened.
 							{view.complete ? "" : " More revisions exist than were read."}
 						</p>
+						<BusinessTimeNote>
+							Business time is when a source says something happened. A revision
+							carries none of its own, so each row says so briefly; the sources
+							behind a revision's claims carry theirs.
+						</BusinessTimeNote>
 						<div className={styles.split}>
 							<ol className={styles.changeList} aria-label="Recent revisions">
 								{shown.map((change) => {
@@ -120,17 +131,16 @@ export function ChangesChapter() {
 											<TimeLine
 												kind="business"
 												iso={undefined}
-												missingNote="missing on a revision; its sources carry their own"
+												missingNote="none on a revision"
 											/>
 											{moved ? (
 												<>
 													<p className={styles.claimMeta}>{moved.verb}</p>
 													<p className={styles.record}>{moved.claim.text}</p>
-													<button
-														type="button"
-														className={styles.linkButton}
-														aria-label={`Open citation for: ${moved.claim.text.slice(0, 48)}`}
-														onClick={(event) =>
+													<CitationTrigger
+														claim={moved.claim}
+														label={`Open citation for: ${moved.claim.text.slice(0, 48)}`}
+														onOpen={(opener) =>
 															cite(
 																{
 																	claim: moved.claim,
@@ -138,12 +148,10 @@ export function ChangesChapter() {
 																	pageTitle: title,
 																	revision: change.revision,
 																},
-																event.currentTarget,
+																opener,
 															)
 														}
-													>
-														Open citation
-													</button>
+													/>
 												</>
 											) : null}
 										</li>
@@ -154,6 +162,7 @@ export function ChangesChapter() {
 								title="Where it changed"
 								highlight={highlight}
 								compact
+								sticky
 							/>
 						</div>
 					</>

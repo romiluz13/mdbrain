@@ -123,7 +123,7 @@ function words(text: string): string[] {
 
 type Json = Record<string, unknown>
 
-function build(padTo = 0, withContradiction = true) {
+function build(padTo = 0, withContradiction = true, unsourced = false) {
 	const dir = corpusDir()
 	const world = JSON.parse(
 		readFileSync(join(dir, "world.json"), "utf8"),
@@ -211,14 +211,17 @@ function build(padTo = 0, withContradiction = true) {
 					claimId: claim.id,
 					revision,
 				}),
-				evidence: claim.evidence.map((item) => ({
-					kind: "event" as const,
-					sourceId: eventIdOf(item.sourceId),
-					marker: formatCitationMarker({
-						kind: "event",
-						eventId: eventIdOf(item.sourceId),
-					}),
-				})),
+				evidence:
+					unsourced && claim.id === incomingClaimId
+						? []
+						: claim.evidence.map((item) => ({
+								kind: "event" as const,
+								sourceId: eventIdOf(item.sourceId),
+								marker: formatCitationMarker({
+									kind: "event",
+									eventId: eventIdOf(item.sourceId),
+								}),
+							})),
 				derivedFrom: [],
 			})),
 			contradictions: [],
@@ -295,12 +298,18 @@ export function createDemoUpstream(
 	options: {
 		padTo?: number
 		/** "none" models a seeded slot before its agent run: the lint read lists
-		 * nothing and no claim is contradicted. */
-		contradiction?: "recorded" | "none"
+		 * nothing and no claim is contradicted. "unsourced" records the
+		 * contradiction with its second claim stored with no evidence, as an
+		 * agent that dropped the evidence writes it. */
+		contradiction?: "recorded" | "none" | "unsourced"
 	} = {},
 ) {
 	const recorded = options.contradiction !== "none"
-	const data = build(options.padTo, recorded)
+	const data = build(
+		options.padTo,
+		recorded,
+		options.contradiction === "unsourced",
+	)
 	const { pages, bySlug } = data
 
 	const search = (query: string, max: number) => {

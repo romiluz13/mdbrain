@@ -49,6 +49,15 @@ function contrast(a: string, b: string): number {
 	return (high + 0.05) / (low + 0.05)
 }
 
+describe("a missing time", () => {
+	it("is stated in neutral ink, never in the signal color that reads as a failure", () => {
+		const rule =
+			/\.time\[data-missing="true"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? ""
+		expect(rule).toMatch(/color:\s*var\(--ink-[23]\)/)
+		expect(rule).not.toMatch(/signal|bad/)
+	})
+})
+
 // Text pairs the demo actually sets: [text token, surface token].
 const TEXT_PAIRS: Array<[string, string]> = [
 	["ink", "panel"],

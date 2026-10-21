@@ -41,7 +41,7 @@ export type ProxyOptions = {
 	padTo?: number
 	/** "none" serves a run with no contradiction recorded yet, as a seeded slot is
 	 * before its agent run. */
-	contradiction?: "recorded" | "none"
+	contradiction?: "recorded" | "none" | "unsourced"
 	/** Model the phone's link for a performance run: each read waits `latencyMs`,
 	 * then its gzipped body takes its turn on one shared downlink. The fixture
 	 * is fulfilled inside the browser, so the CDP network throttle never sees

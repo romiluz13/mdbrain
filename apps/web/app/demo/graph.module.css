@@ -9,6 +9,13 @@
 	min-width: 0;
 }
 
+@media (min-width: 1000px) {
+	.stage[data-sticky="true"] {
+		position: sticky;
+		top: calc(var(--target) + 16px);
+	}
+}
+
 .stage :focus-visible {
 	outline-color: var(--focus-dark);
 }
@@ -210,21 +217,4 @@
 .claimMeta {
 	color: var(--ink-2);
 	font-size: var(--t12);
-}
-
-.linkButton {
-	min-height: var(--target);
-	min-width: var(--target);
-	padding: 0 12px;
-	border: 1px solid var(--ink-2);
-	border-radius: var(--r1);
-	background: transparent;
-	color: var(--ink);
-	font-size: var(--t13);
-	font-weight: 600;
-	cursor: pointer;
-}
-
-.linkButton:hover {
-	background: var(--inset);
 }

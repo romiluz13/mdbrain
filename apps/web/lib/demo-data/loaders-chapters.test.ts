@@ -9,6 +9,7 @@ import { json, stubUpstream } from "./test-upstream.js"
 import type { DemoDataUpstream } from "./loaders.js"
 import {
 	claimSourceRefs,
+	eventRef,
 	loadAgentActivity,
 	loadClaimSources,
 	loadContradictionCase,
@@ -198,6 +199,20 @@ describe("claimSourceRefs", () => {
 		if (result.kind === "error") {
 			expect(result.code).toBe("NO_CLAIM_MARKER")
 		}
+	})
+})
+
+describe("eventRef", () => {
+	it("names one cited event, even past the first six a claim lists", () => {
+		const ids = Array.from({ length: 9 }, (_, at) => `evt-${at}`)
+		expect(eventRef(claim("a", "b", "x", ids), "evt-8")).toEqual({
+			eventId: "evt-8",
+			marker: eventMarker("evt-8"),
+		})
+	})
+
+	it("is undefined for an event the claim does not cite", () => {
+		expect(eventRef(claim("a", "b", "x", ["evt-1"]), "evt-2")).toBeUndefined()
 	})
 })
 

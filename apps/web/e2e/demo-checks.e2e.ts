@@ -156,6 +156,89 @@ test("the run's number table names each value on the phone, where the header row
 	])
 })
 
+test("the map stays in view beside a long list on a wide screen", async ({
+	page,
+	isMobile,
+}) => {
+	test.skip(isMobile, "the map sits under the list on a phone")
+	const proxy = await installDemoProxy(page)
+	await openDemo(page)
+	await mapReady(page)
+	const stays = async (name: string) => {
+		const stage = page.getByRole("region", { name })
+		await expect(stage).toBeVisible()
+		const before = await stage.boundingBox()
+		expect(before?.y ?? Number.NaN).toBeGreaterThan(0)
+		await page.mouse.wheel(0, 700)
+		await expect
+			.poll(() => page.evaluate(() => window.scrollY), { timeout: 5_000 })
+			.toBeGreaterThan(500)
+		const after = await stage.boundingBox()
+		const height = page.viewportSize()?.height ?? 0
+		expect(
+			after?.y ?? Number.NaN,
+			`${name} stays below the label`,
+		).toBeGreaterThan(40)
+		expect(after?.y ?? Number.NaN, `${name} stays near the top`).toBeLessThan(
+			120,
+		)
+		expect((after?.y ?? 0) + (after?.height ?? 0), `${name} fits`).toBeLessThan(
+			height,
+		)
+	}
+	await goto(page, 1)
+	await page
+		.getByRole("list", { name: "Example questions" })
+		.getByRole("button")
+		.first()
+		.click()
+	await expect(page.getByRole("list", { name: "Search results" })).toBeVisible(
+		SLOW_READ,
+	)
+	await stays("Where the answers live")
+	await proxy.flush()
+	await page.evaluate(() => window.scrollTo(0, 0))
+	await goto(page, 6)
+	await expect(page.getByTestId("change-row").first()).toBeVisible(SLOW_READ)
+	await stays("Where it changed")
+})
+
+test("chapter 5's claim cards are as tall as their own content, not stretched to the taller one", async ({
+	page,
+	isMobile,
+}) => {
+	test.skip(isMobile, "the cards sit side by side only on a wide screen")
+	const proxy = await installDemoProxy(page)
+	await openDemo(page)
+	await mapReady(page)
+	await goto(page, 4)
+	if ((await settleContradiction(page, proxy)) === "none") {
+		return
+	}
+	await sourcesSettled(page.getByTestId("screen"))
+	const stretched = await page.evaluate(() => {
+		const cards = [
+			...document.querySelectorAll(
+				'li:has([data-testid="contradiction-claim"])',
+			),
+		] as HTMLElement[]
+		return cards.map((card) => {
+			const height = card.getBoundingClientRect().height
+			const others = cards.filter((other) => other !== card)
+			for (const other of others) {
+				other.style.display = "none"
+			}
+			const alone = card.getBoundingClientRect().height
+			for (const other of others) {
+				other.style.display = ""
+			}
+			return Math.round(height - alone)
+		})
+	})
+	expect(stretched.length).toBe(2)
+	expect(stretched).toEqual([0, 0])
+})
+
 test("every interactive control on every chapter is at least 44 px", async ({
 	page,
 }) => {
@@ -235,7 +318,7 @@ test("no chapter scrolls sideways, keeps the synthetic label in view, and passes
 	}
 	await openAnyCitation(page, proxy)
 	await expect(
-		page.getByRole("dialog").getByTestId("source-text").first(),
+		page.getByRole("dialog").locator('article[data-status="resolved"]').first(),
 	).toBeVisible(SLOW_READ)
 	await expectNoSeriousAccessibilityViolations(page)
 })

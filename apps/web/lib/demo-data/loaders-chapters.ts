@@ -18,7 +18,8 @@ import { readsFor } from "./reads.js"
 import { mapWithStatus, type DataState } from "./states.js"
 import { rankClaims } from "./views.js"
 
-const SOURCE_LIMIT = 6
+/** How many of a claim's source events the page reads and shows. */
+export const SOURCE_LIMIT = 6
 const SEARCH_RESULTS = 6
 const SEARCH_CLAIMS_PER_HIT = 3
 
@@ -52,6 +53,26 @@ export type ClaimSourceRefsState =
 	| { kind: "empty" }
 	| { kind: "error"; code: string; message: string }
 
+type EventEvidence = MdbrainWikiClaim["evidence"][number]
+
+const refOf = (evidence: EventEvidence): SourceRef => ({
+	eventId: evidence.sourceId,
+	marker:
+		evidence.marker ??
+		formatCitationMarker({ kind: "event", eventId: evidence.sourceId }),
+})
+
+/** One event a claim cites, named without reading it. */
+export function eventRef(
+	claim: MdbrainWikiClaim,
+	eventId: string,
+): SourceRef | undefined {
+	const found = claim.evidence.find(
+		(evidence) => evidence.kind === "event" && evidence.sourceId === eventId,
+	)
+	return found ? refOf(found) : undefined
+}
+
 /** The events a claim rests on, named without reading any of them, so a screen
  * can show each source as it is read. A claim with no marker cannot be cited
  * through, and says so rather than showing no sources. */
@@ -71,12 +92,7 @@ export function claimSourceRefs(claim: MdbrainWikiClaim): ClaimSourceRefsState {
 	return {
 		kind: "ready",
 		data: {
-			refs: events.slice(0, SOURCE_LIMIT).map((evidence) => ({
-				eventId: evidence.sourceId,
-				marker:
-					evidence.marker ??
-					formatCitationMarker({ kind: "event", eventId: evidence.sourceId }),
-			})),
+			refs: events.slice(0, SOURCE_LIMIT).map(refOf),
 			eventCount: events.length,
 			otherEvidence: claim.evidence.length - events.length,
 		},

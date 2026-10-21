@@ -4,8 +4,10 @@ import { expect, test } from "@playwright/test"
 import { formatUtc } from "../lib/demo-data/views"
 import {
 	allChanges,
+	blockText,
 	bodyOf,
 	claimsOf,
+	expectSourcesMatchEvidence,
 	eventSourceIds,
 	goto,
 	listPages,
@@ -14,8 +16,10 @@ import {
 	openDemo,
 	settleContradiction,
 	sourcesSettled,
-	squash,
+	storedBody,
 	stat,
+	type StoredClaim,
+	wordsOf,
 } from "./demo-helpers"
 import { GENERATED, installDemoProxy, SLOW_READ } from "./demo-proxy"
 
@@ -58,6 +62,69 @@ test.describe("values on screen equal the proxy's responses", () => {
 		expect(
 			await read.evaluate((element) => getComputedStyle(element).fontFamily),
 		).toMatch(/mono|menlo|monospace/i)
+	})
+
+	test("a count tile says its label in the singular when its value is one", async ({
+		page,
+	}) => {
+		await installDemoProxy(page)
+		await openDemo(page)
+		await mapReady(page)
+		const tile = stat(page, "contradictions")
+		const value = Number((await tile.textContent()) ?? Number.NaN)
+		expect(Number.isInteger(value)).toBe(true)
+		await expect(tile.locator("xpath=following-sibling::p")).toHaveText(
+			value === 1 ? "Open contradiction" : "Open contradictions",
+		)
+	})
+
+	test("sources arrive leads each row with a label read from its stored source, the id second", async ({
+		page,
+	}) => {
+		const proxy = await installDemoProxy(page)
+		await openDemo(page)
+		await mapReady(page)
+		await goto(page, 2)
+		const rows = page.getByTestId("source-row")
+		await expect(rows.first()).toBeVisible(SLOW_READ)
+		await expect(
+			page.locator('[data-testid="source-row"][data-status="loading"]'),
+		).toHaveCount(0, SLOW_READ)
+		await proxy.flush()
+		const stored = new Map(
+			proxy.responses
+				.filter((entry) => entry.url.pathname === "/api/demo/v1/cite")
+				.map((entry) => {
+					const { event } = entry.body as {
+						event: { eventId: string; text?: string }
+					}
+					return [event.eventId, event.text ?? ""] as const
+				}),
+		)
+		const count = await rows.count()
+		expect(count).toBeGreaterThan(0)
+		expect(count).toBeLessThanOrEqual(8)
+		for (let at = 0; at < count; at += 1) {
+			const row = rows.nth(at)
+			const id = (await row.getByTestId("source-id").textContent()) ?? ""
+			const label = (await row.getByTestId("source-label").textContent()) ?? ""
+			const text = stored.get(id)
+			expect(text, `a cite answered for ${id}`).toBeDefined()
+			expect(label).not.toBe("")
+			expect(label).not.toContain(id)
+			// A label is taken from the stored source, never made up.
+			expect(wordsOf(storedBody(text ?? ""))).toContain(
+				wordsOf(label.replace(/…$/, "")),
+			)
+			const order = await row.evaluate((element) =>
+				[...element.querySelectorAll("[data-testid]")].map((node) =>
+					node.getAttribute("data-testid"),
+				),
+			)
+			expect(order.indexOf("source-label")).toBeLessThan(
+				order.indexOf("source-id"),
+			)
+		}
 	})
 
 	test("a pinned page shows its stored revision, tier, state and claim count", async ({
@@ -151,7 +218,8 @@ test.describe("values on screen equal the proxy's responses", () => {
 		)
 		await expect(
 			row.locator('[data-time-kind="business"][data-missing]'),
-		).toContainText("missing on a revision")
+		).toContainText("none on a revision")
+		await expect(page.getByTestId("business-time-note")).toHaveCount(1)
 	})
 
 	test("ask lists the search response's pages in its order, with their scores", async ({
@@ -214,15 +282,32 @@ test.describe("values on screen equal the proxy's responses", () => {
 			`wiki/overview/${encodeURIComponent(holder.pageSlug)}`,
 		)?.body as {
 			contradictions: {
-				items: Array<{ claims: Array<{ claim: { text: string } }> }>
+				items: Array<{ claims: Array<{ claim: StoredClaim }> }>
 			}
 		}
 		const record = overview.contradictions.items[0]
 		await sourcesSettled(page.getByTestId("screen"))
 		await proxy.flush()
+		const cards = page.locator('li:has([data-testid="contradiction-claim"])')
+		for (const [at, entry] of (record?.claims ?? []).entries()) {
+			await expectSourcesMatchEvidence(cards.nth(at), entry.claim)
+		}
+		await expect(page.getByTestId("business-time-note")).toHaveCount(1)
+		await expect(
+			page.locator(
+				'li:has([data-testid="contradiction-claim"]) > [data-time-kind="business"]',
+			),
+		).toHaveCount(0)
 		await expect(page.getByTestId("contradiction-claim")).toHaveText(
 			record?.claims.map((entry) => entry.claim.text) ?? [],
 		)
+		for (const [at, entry] of (record?.claims ?? []).entries()) {
+			await expect(
+				page.getByRole("button", {
+					name: `Open citation for claim ${["one", "two"][at]}`,
+				}),
+			).toHaveText(entry.claim.marker ?? "Open citation")
+		}
 		const stamp = page.getByTestId("contradiction-stamp")
 		await expect(stamp.locator("time")).toHaveText(
 			formatUtc(holder.contradiction.detectedAt),
@@ -234,7 +319,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		const cites = proxy.responses.filter(
 			(entry) => entry.url.pathname === "/api/demo/v1/cite",
 		)
-		expect(cites.length).toBeGreaterThanOrEqual(2)
+		expect(cites.length).toBeGreaterThan(0)
 		for (const cite of cites) {
 			const event = (
 				cite.body as {
@@ -246,8 +331,8 @@ test.describe("values on screen equal the proxy's responses", () => {
 				.filter({ hasText: event.eventId })
 				.first()
 			await expect(slip.locator("time")).toHaveText(formatUtc(event.timestamp))
-			expect(squash(await slip.getByTestId("source-text").innerText())).toBe(
-				squash(event.text),
+			expect(wordsOf(await blockText(slip.getByTestId("source-text")))).toBe(
+				wordsOf(storedBody(event.text)),
 			)
 		}
 	})

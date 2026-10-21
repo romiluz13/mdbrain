@@ -6,6 +6,7 @@ import type {
 	MdbrainWikiPageView,
 } from "@mdbrain/client"
 import { CHAPTERS, chapterIndex } from "../app/demo/chapters"
+import { SOURCE_LIMIT } from "../lib/demo-data/loaders-chapters.js"
 import { formatUtc } from "../lib/demo-data/views.js"
 import { SLOW_READ, type installDemoProxy } from "./demo-proxy"
 
@@ -127,15 +128,126 @@ export function eventSourceIds(pages: MdbrainWikiPageView[]): Set<string> {
 
 export const squash = (text: string): string => text.replace(/\s+/g, " ").trim()
 
+/** The words of a text in order, with every mark that is not a letter or a digit
+ * dropped, so a source rendered as markdown can be held against what the cite
+ * answered without the test reading markdown the way the page does. */
+export const wordsOf = (text: string): string =>
+	(text.match(/[\p{L}\p{N}]+/gu) ?? []).join(" ")
+
+/** The text of a rendered source with its blocks kept apart. The page draws each
+ * paragraph, list item and table cell as its own element and each line of a
+ * paragraph after a line break, and `textContent` would run the last word of
+ * one into the first of the next. */
+export function blockText(source: Locator): Promise<string> {
+	return source.evaluate((root) => {
+		const selector = "p, li, td, th, pre"
+		const blocks = [...root.querySelectorAll(selector)].filter(
+			(block) => block.querySelector(selector) === null,
+		)
+		return blocks
+			.map((block) => {
+				const copy = block.cloneNode(true) as Element
+				for (const lineBreak of copy.querySelectorAll("br")) {
+					lineBreak.replaceWith(" ")
+				}
+				return copy.textContent ?? ""
+			})
+			.join(" ")
+	})
+}
+
+const ROLE = /^(User|Assistant|System|Tool): /
+
+/** What Memongo stored in front of an event is its role; the page shows it
+ * apart from the text. */
+export const storedRole = (text: string): string | undefined =>
+	ROLE.exec(text)?.[1]
+export const storedBody = (text: string): string => text.replace(ROLE, "")
+
 type CitedEvent = { eventId: string; text?: string; timestamp?: string }
 
+/** A stored claim as the proxy served it: the part the page's sources read. */
+export type StoredClaim = {
+	text: string
+	marker?: string
+	evidence: Array<{ kind: string; sourceId: string }>
+}
+
+/** The claim a marker names, found in what the proxy served, not on the page. */
+export function findClaim(
+	proxy: DemoProxy,
+	marker: string,
+): StoredClaim | undefined {
+	const walk = (value: unknown): StoredClaim | undefined => {
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				const found = walk(item)
+				if (found) return found
+			}
+			return undefined
+		}
+		if (typeof value !== "object" || value === null) {
+			return undefined
+		}
+		const record = value as Record<string, unknown>
+		if (
+			record.marker === marker &&
+			typeof record.text === "string" &&
+			Array.isArray(record.evidence)
+		) {
+			return record as unknown as StoredClaim
+		}
+		for (const child of Object.values(record)) {
+			const found = walk(child)
+			if (found) return found
+		}
+		return undefined
+	}
+	for (const entry of proxy.responses) {
+		const found = walk(entry.body)
+		if (found) return found
+	}
+	return undefined
+}
+
+/** What `scope` shows of a claim's sources is what the claim stores: a slip for
+ * each source event it cites (to the page's limit), or, when it cites none, the
+ * plain statement of that, with nothing left loading. */
+export async function expectSourcesMatchEvidence(
+	scope: Locator,
+	claim: StoredClaim,
+): Promise<void> {
+	const events = claim.evidence.filter((entry) => entry.kind === "event")
+	if (events.length === 0) {
+		const honest = scope.locator('[data-state="empty"]')
+		await expect(honest).toBeVisible(SLOW_READ)
+		await expect(honest).toContainText(
+			claim.evidence.length === 0
+				? /stored with no evidence/i
+				: /not a source event/i,
+		)
+		await expect(scope.locator("article[data-status]")).toHaveCount(0)
+		await expect(scope.locator('[data-state="loading"]')).toHaveCount(0)
+		return
+	}
+	await sourcesSettled(scope)
+	const shown = events.slice(0, SOURCE_LIMIT)
+	await expect(scope.locator("article[data-status]")).toHaveCount(shown.length)
+	for (const entry of shown) {
+		await expect(
+			scope.locator("article").filter({ hasText: entry.sourceId }),
+		).toHaveCount(1)
+	}
+}
+
 /** Every source slip under `scope` has been read: each is its own cite, and a
- * cite is slow live, so the slips fill in one by one. At least one slip must
- * exist, so an absent list is not mistaken for a finished one. */
+ * cite is slow live, so the slips fill in one by one. At least one slip, or the
+ * statement that a claim has no source, must exist, so an absent list is not
+ * mistaken for a finished one. */
 export async function sourcesSettled(scope: Locator): Promise<void> {
-	await expect(scope.locator("article[data-status]").first()).toBeVisible(
-		SLOW_READ,
-	)
+	await expect(
+		scope.locator('article[data-status], [data-state="empty"]').first(),
+	).toBeVisible(SLOW_READ)
 	await expect(scope.locator('[data-state="loading"]')).toHaveCount(
 		0,
 		SLOW_READ,
@@ -158,6 +270,12 @@ export async function expectCitationMatchesCites(
 	const marker = squash(
 		(await dialog.getByTestId("citation-marker").textContent()) ?? "",
 	)
+	const claim = findClaim(proxy, marker)
+	expect(claim, `no stored claim for ${marker}`).toBeDefined()
+	await expectSourcesMatchEvidence(dialog, claim as StoredClaim)
+	if (!claim?.evidence.some((entry) => entry.kind === "event")) {
+		return
+	}
 	const byEvent = new Map<string, CitedEvent>()
 	for (const entry of proxy.responses) {
 		const { event } = (entry.body ?? {}) as { event?: CitedEvent }
@@ -182,9 +300,13 @@ export async function expectCitationMatchesCites(
 			has: dialog.page().getByText(event.eventId, { exact: true }),
 		})
 		if (event.text) {
-			expect(
-				squash((await slip.getByTestId("source-text").textContent()) ?? ""),
-			).toBe(squash(event.text))
+			expect(wordsOf(await blockText(slip.getByTestId("source-text")))).toBe(
+				wordsOf(storedBody(event.text)),
+			)
+			const role = storedRole(event.text)
+			if (role) {
+				await expect(slip.getByTestId("source-role")).toContainText(role)
+			}
 		}
 		await expect(slip.locator('[data-time-kind="business"]')).toContainText(
 			event.timestamp ? formatUtc(event.timestamp) : "missing in this source",

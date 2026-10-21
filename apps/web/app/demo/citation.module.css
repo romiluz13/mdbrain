@@ -226,18 +226,55 @@
 	gap: 4px;
 }
 
-.slipText {
+.role {
 	margin: 0;
-	font-family: var(--font-serif);
-	font-size: var(--t17);
-	line-height: 1.5;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
+	font-size: var(--t13);
+	color: var(--ink-2);
 }
 
-.slipText mark {
-	background: var(--mark);
+.roleLabel {
+	font-weight: 600;
+}
+
+.full {
+	display: grid;
+	gap: 8px;
+}
+
+.full summary {
+	display: flex;
+	align-items: center;
+	min-height: var(--target);
 	color: var(--ink);
-	border-radius: 3px;
-	padding: 0 2px;
+	font-size: var(--t13);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.full[open] summary {
+	border-bottom: 1px solid var(--line);
+}
+
+.trigger {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--target);
+	min-width: var(--target);
+	max-width: 100%;
+	padding: 0 4px;
+	border: 0;
+	background: transparent;
+	color: var(--ink-2);
+	font-family: var(--font-mono);
+	font-size: var(--t12);
+	text-align: left;
+	text-decoration: underline dotted;
+	text-underline-offset: 4px;
+	overflow-wrap: anywhere;
+	cursor: pointer;
+}
+
+.trigger:hover {
+	background: var(--inset);
+	color: var(--ink);
 }

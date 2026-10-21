@@ -3,7 +3,9 @@
 import { useId } from "react"
 import type { MdbrainWikiClaim } from "@mdbrain/client"
 import { useDemo } from "../demo-context.js"
+import { countOf } from "../../../lib/demo-data/plural.js"
 import styles from "../graph.module.css"
+import { CitationTrigger } from "./citation-trigger.js"
 import { TimeLine } from "./time-line.js"
 
 const CLAIMS_SHOWN = 5
@@ -85,8 +87,8 @@ export function PageInspector() {
 							<span>revision {page.revision}</span>
 						</p>
 						<p className={styles.pageMeta}>
-							<span>{page.claimCount} claims</span>
-							<span>{page.links.length} links</span>
+							<span>{countOf(page.claimCount, "claim")}</span>
+							<span>{countOf(page.links.length, "link")}</span>
 						</p>
 						<TimeLine
 							kind="ingestion"
@@ -137,11 +139,10 @@ export function PageInspector() {
 											{claim.status} · confidence{" "}
 											{Math.round(claim.confidence * 100)}%
 										</p>
-										<button
-											type="button"
-											className={styles.linkButton}
-											aria-label={`Open citation for: ${claimLabel(claim)}`}
-											onClick={(event) =>
+										<CitationTrigger
+											claim={claim}
+											label={`Open citation for: ${claimLabel(claim)}`}
+											onOpen={(opener) =>
 												cite(
 													{
 														claim,
@@ -149,12 +150,10 @@ export function PageInspector() {
 														pageTitle: page.title,
 														revision: page.revision,
 													},
-													event.currentTarget,
+													opener,
 												)
 											}
-										>
-											Open citation
-										</button>
+										/>
 									</li>
 								))}
 							</ul>
@@ -171,7 +170,9 @@ export function PageInspector() {
 								<li key={node.slug}>
 									<button type="button" onClick={() => pin(node.slug)}>
 										{node.title}
-										<span className={styles.linkKind}>{node.degree} links</span>
+										<span className={styles.linkKind}>
+											{countOf(node.degree, "link")}
+										</span>
 									</button>
 								</li>
 							))}

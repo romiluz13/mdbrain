@@ -5,6 +5,7 @@ import { loadWikiSearch } from "../../../lib/demo-data/loaders-chapters.js"
 import { suggestQuestions } from "../../../lib/demo-data/views.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../chapters.module.css"
+import { CitationTrigger } from "../parts/citation-trigger.js"
 import { GraphStage } from "../parts/graph-stage.js"
 import { StatePanel } from "../parts/state-panel.js"
 
@@ -123,11 +124,10 @@ export function AskChapter() {
 											{hit.claims.map((claim) => (
 												<li key={claim.id}>
 													<p className={styles.record}>{claim.text}</p>
-													<button
-														type="button"
-														className={styles.linkButton}
-														aria-label={`Open citation for: ${claim.text.slice(0, 48)}`}
-														onClick={(event) =>
+													<CitationTrigger
+														claim={claim}
+														label={`Open citation for: ${claim.text.slice(0, 48)}`}
+														onOpen={(opener) =>
 															cite(
 																{
 																	claim,
@@ -141,12 +141,10 @@ export function AskChapter() {
 																			}
 																		: {}),
 																},
-																event.currentTarget,
+																opener,
 															)
 														}
-													>
-														Open citation
-													</button>
+													/>
 												</li>
 											))}
 										</ul>
@@ -161,6 +159,7 @@ export function AskChapter() {
 				title="Where the answers live"
 				highlight={highlight}
 				compact
+				sticky
 			/>
 		</div>
 	)

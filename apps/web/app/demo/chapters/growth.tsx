@@ -45,19 +45,27 @@ export function GrowthChapter() {
 				return (
 					<>
 						<div className={styles.tiles}>
-							<StatTile label="Pages" stat="pages" value={map.pageTotal} />
+							<StatTile
+								label="Pages"
+								singular="Page"
+								stat="pages"
+								value={map.pageTotal}
+							/>
 							<StatTile
 								label="Trust tiers in use"
+								singular="Trust tier in use"
 								stat="tiers"
 								value={mix.tiers.length}
 							/>
 							<StatTile
 								label="Lifecycle states in use"
+								singular="Lifecycle state in use"
 								stat="states"
 								value={mix.states.length}
 							/>
 							<StatTile
 								label="Open contradictions"
+								singular="Open contradiction"
 								stat="contradictions"
 								value={map.unresolvedContradictionCount}
 								tone="signal"

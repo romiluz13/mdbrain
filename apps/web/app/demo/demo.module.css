@@ -471,8 +471,14 @@
 }
 
 .time[data-missing="true"] {
-	color: var(--signal-ink);
-	font-weight: 600;
+	color: var(--ink-2);
+}
+
+.timeNote {
+	margin: 0;
+	max-width: 68ch;
+	font-size: var(--t13);
+	color: var(--ink-2);
 }
 
 @media (prefers-reduced-motion: reduce) {

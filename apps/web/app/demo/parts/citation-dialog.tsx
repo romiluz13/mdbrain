@@ -112,11 +112,7 @@ function CitationBody({ target }: { target: CitationTarget }) {
 				</p>
 			) : null}
 			<h3>Evidence</h3>
-			<ClaimSources
-				claim={claim}
-				listClassName={styles.slips}
-				emptyNote="This claim cites no source event. It may rest on other evidence."
-			/>
+			<ClaimSources claim={claim} listClassName={styles.slips} />
 		</div>
 	)
 }
