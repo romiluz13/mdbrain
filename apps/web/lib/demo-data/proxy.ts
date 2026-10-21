@@ -21,6 +21,7 @@ import {
 	upstreamFailureResponse,
 } from "./proxy-errors.js"
 import { decodeSlug, matchOperation, validateParam } from "./proxy-routes.js"
+import { handleDemoRunRead, isRunPath, type RunReadDeps } from "./proxy-run.js"
 
 export interface DemoProxyEnv {
 	apiBaseUrl: string
@@ -57,6 +58,14 @@ export const DEMO_READ_OPERATIONS: ReadonlyArray<{
 		chapter: "contradictions",
 	},
 	{ operation: "cite", upstream: "GET /v1/cite", chapter: "sources" },
+	// The pinned run's own record: read from the control database by the
+	// server, not forwarded. See ./proxy-run.ts.
+	{
+		operation: "run-record",
+		upstream: "findOne, control database",
+		chapter: "sources",
+	},
+	{ operation: "run-step", upstream: "POST /v1/search", chapter: "agents" },
 	// The one POST: a fixed-shape governed read. The caller sends a GET with a
 	// bounded question; the proxy builds the whole upstream body itself.
 	{
@@ -123,6 +132,7 @@ export async function handleDemoRead(
 	request: Request,
 	env: DemoProxyEnv,
 	fetchImpl: typeof fetch,
+	run?: RunReadDeps,
 ): Promise<Response> {
 	const method = request.method.toUpperCase()
 	if (method !== "GET") {
@@ -134,6 +144,14 @@ export async function handleDemoRead(
 	}
 	const url = new URL(request.url)
 	const pathname = url.pathname
+	if (isRunPath(pathname)) {
+		return handleDemoRunRead(
+			request,
+			env,
+			run ?? { run: null, manifest: async () => null },
+			fetchImpl,
+		)
+	}
 	// Route on the raw path, the way the API's router does: literal slashes
 	// separate route segments, an encoded separator stays inside a slug.
 	if (!pathname.startsWith("/api/demo/v1/")) {
