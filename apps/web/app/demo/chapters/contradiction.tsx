@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useRef, useState } from "react"
+import { countOf } from "../../../lib/demo-data/plural.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../chapters.module.css"
 import { GraphStage } from "../parts/graph-stage.js"
@@ -12,8 +13,15 @@ import { BusinessTimeNote } from "../parts/business-time-note.js"
 import { TimeLine } from "../parts/time-line.js"
 
 const ORDINAL = ["one", "two", "three", "four"]
-const BEATS = ["Claim one", "Claim two", "Recorded"]
-const LAST_BEAT = BEATS.length - 1
+
+/** One beat for each stored claim, then the recorded stamp. */
+const beatLabels = (claims: number): string[] => [
+	...Array.from(
+		{ length: claims },
+		(_, position) => `Claim ${ORDINAL[position] ?? position + 1}`,
+	),
+	"Recorded",
+]
 
 export function ContradictionChapter() {
 	const { data, cite, pin, goTo, reload } = useDemo()
@@ -31,6 +39,8 @@ export function ContradictionChapter() {
 			top.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" })
 		}
 	}
+	const labels = beatLabels(found?.claims.length ?? 0)
+	const lastBeat = labels.length - 1
 	const highlight = useMemo(
 		() => new Set(found?.claims.map((claim) => claim.pageSlug) ?? []),
 		[found],
@@ -52,7 +62,7 @@ export function ContradictionChapter() {
 							it has none.
 						</BusinessTimeNote>
 						<div className={styles.beats} ref={beats}>
-							<BeatStepper labels={BEATS} beat={beat} onBeat={showBeat} />
+							<BeatStepper labels={labels} beat={beat} onBeat={showBeat} />
 							<ol className={styles.caseSteps}>
 								{record.claims.map((entry, position) => (
 									<li
@@ -62,9 +72,7 @@ export function ContradictionChapter() {
 										data-past={position < beat || undefined}
 										data-current={position === beat || undefined}
 									>
-										<h2 className={styles.stepLabel}>
-											Claim {ORDINAL[position] ?? position + 1}
-										</h2>
+										<h2 className={styles.stepLabel}>{labels[position]}</h2>
 										<p className={styles.where}>
 											On the page{" "}
 											<button
@@ -113,8 +121,8 @@ export function ContradictionChapter() {
 								<li
 									className={styles.stamp}
 									data-testid="contradiction-stamp"
-									hidden={beat < LAST_BEAT}
-									data-past={beat > LAST_BEAT || undefined}
+									hidden={beat < lastBeat}
+									data-past={beat > lastBeat || undefined}
 								>
 									<h2>Contradiction recorded</h2>
 									<p className={styles.mono}>{record.id}</p>
@@ -125,10 +133,18 @@ export function ContradictionChapter() {
 									/>
 									<p>Resolution: {record.resolution}</p>
 									{record.note ? <p>{record.note}</p> : null}
-									<p>Both claims were kept. Nothing was overwritten.</p>
+									<p>
+										{record.claims.length === 2
+											? "Both claims were kept."
+											: "Every claim was kept."}{" "}
+										Nothing was overwritten.
+									</p>
 									<p className={styles.claimMeta}>
-										{record.unresolvedCount} unresolved contradiction
-										{record.unresolvedCount === 1 ? "" : "s"} in this brain.
+										{countOf(
+											record.unresolvedCount,
+											"unresolved contradiction",
+										)}{" "}
+										in this brain.
 									</p>
 								</li>
 							</ol>
@@ -137,7 +153,7 @@ export function ContradictionChapter() {
 				)}
 			</StatePanel>
 			<GraphStage
-				title="Where the two pages sit"
+				title={found ? "Where the two pages sit" : "The pages in this brain"}
 				highlight={highlight}
 				compact
 			/>

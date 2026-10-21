@@ -246,23 +246,24 @@ export async function handleDemoRead(
 			},
 		}
 	}
-	let response: Response
+	// A failure while the body is still being read is as unreachable as one
+	// before the answer: no transport text may reach the browser from either.
 	try {
-		response = await fetchImpl(upstreamUrl, init)
+		const response = await fetchImpl(upstreamUrl, init)
+		if (!response.ok) {
+			return await upstreamFailureResponse(response)
+		}
+		const body = redact(await response.text(), env.readKey)
+		return new Response(body, {
+			status: response.status,
+			headers: {
+				"content-type":
+					response.headers.get("content-type") ?? "application/json",
+			},
+		})
 	} catch {
 		return unreachableResponse()
 	}
-	if (!response.ok) {
-		return upstreamFailureResponse(response)
-	}
-	const body = redact(await response.text(), env.readKey)
-	return new Response(body, {
-		status: response.status,
-		headers: {
-			"content-type":
-				response.headers.get("content-type") ?? "application/json",
-		},
-	})
 }
 
 function redact(text: string, secret: string): string {

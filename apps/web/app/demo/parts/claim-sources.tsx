@@ -1,7 +1,7 @@
 "use client"
 
 import type { MdbrainWikiClaim } from "@mdbrain/client"
-import { countOf } from "../../../lib/demo-data/plural.js"
+import { countOf, nonEventEvidence } from "../../../lib/demo-data/plural.js"
 import styles from "../citation.module.css"
 import { useClaimSources } from "../use-claim-sources.js"
 import { SourceSlip } from "./source-slip.js"
@@ -19,7 +19,7 @@ function noSource(claim: MdbrainWikiClaim): { title: string; note: string } {
 	}
 	return {
 		title: "No source event",
-		note: `This claim rests on ${countOf(other, "evidence item")} that ${other === 1 ? "is" : "are"} not a source event, so there is no source event to read for it. Nothing is shown here in its place.`,
+		note: `This claim rests on ${nonEventEvidence(other)}, so there is no source event to read for it. Nothing is shown here in its place.`,
 	}
 }
 
@@ -57,8 +57,7 @@ export function ClaimSources({
 					</ol>
 					{view.otherEvidence > 0 ? (
 						<p className={styles.note}>
-							Also rests on {view.otherEvidence} evidence item
-							{view.otherEvidence === 1 ? "" : "s"} that are not source events.
+							Also rests on {nonEventEvidence(view.otherEvidence)}.
 						</p>
 					) : null}
 				</>

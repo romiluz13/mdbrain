@@ -11,7 +11,10 @@ import {
 	useSyncExternalStore,
 } from "react"
 import { claimSourceRefs } from "../../lib/demo-data/loaders-chapters.js"
-import { createSourceReader } from "../../lib/demo-data/source-reader.js"
+import {
+	createSourceReader,
+	readInLanes,
+} from "../../lib/demo-data/source-reader.js"
 import { buildGraph, flagPages } from "../../lib/demo-data/views.js"
 import { AgentsChapter } from "./chapters/agents.js"
 import { AskChapter } from "./chapters/ask.js"
@@ -96,20 +99,21 @@ export function DemoApp() {
 	const sources = useMemo(() => createSourceReader(DEMO_UPSTREAM), [])
 
 	// A cite is a governed recall that takes seconds, so the recorded
-	// contradiction's own sources are read as soon as it is known, and chapter 5
-	// finds them waiting.
+	// contradiction's own sources are read as soon as it is known, a few at a
+	// time, and chapter 5 finds them waiting.
 	useEffect(() => {
 		if (data.contradiction.kind !== "ready") {
 			return
 		}
-		for (const { claim } of data.contradiction.data.claims) {
-			const named = claimSourceRefs(claim)
-			if (named.kind === "ready") {
-				for (const ref of named.data.refs) {
-					void sources.read(claim, ref)
-				}
-			}
-		}
+		void readInLanes(
+			sources,
+			data.contradiction.data.claims.flatMap(({ claim }) => {
+				const named = claimSourceRefs(claim)
+				return named.kind === "ready"
+					? named.data.refs.map((ref) => ({ claim, ref }))
+					: []
+			}),
+		)
 	}, [data.contradiction, sources])
 
 	useEffect(() => {

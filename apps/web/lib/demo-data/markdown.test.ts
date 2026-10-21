@@ -123,6 +123,51 @@ describe("parseMarkdown", () => {
 	})
 })
 
+describe("a stored source of any shape", () => {
+	const quickly = (source: string): number => {
+		const started = performance.now()
+		parseMarkdown(source)
+		return performance.now() - started
+	}
+
+	it.each([
+		["a line of emphasis marks that never close", " _a".repeat(32_000)],
+		[
+			"a table row followed by a line of spaces",
+			`| a |\n${" ".repeat(40_000)}`,
+		],
+		[
+			"a bold mark on every line and one at the end",
+			`${"**a\n".repeat(20_000)}**`,
+		],
+		["backticks that never close", "`a ".repeat(30_000)],
+		["emphasis marks nested without end", "*a _b ".repeat(10_000)],
+	])("is read in under a second: %s", (_name, source) => {
+		expect(quickly(source)).toBeLessThan(1000)
+	})
+
+	it("reads a source written with CRLF line ends as the same blocks", () => {
+		const lf = "# Title\n\n- one\n- two\n\n| a | b |\n|---|---|\n| 1 | 2 |"
+		const crlf = lf.replaceAll("\n", "\r\n")
+		const kinds = (blocks: Block[]) => blocks.map((block) => block.kind)
+		expect(kinds(parseMarkdown(crlf))).toEqual(kinds(parseMarkdown(lf)))
+		const [heading] = parseMarkdown(crlf)
+		expect(heading?.kind === "heading" && text(heading.inline)).toBe("Title")
+	})
+
+	it("keeps the offsets of the stored text when it has CRLF line ends", () => {
+		const stored = "# Title\r\n\r\nA claim here."
+		const paragraph = parseMarkdown(stored)[1]
+		const line =
+			paragraph?.kind === "paragraph" ? paragraph.lines[0] : undefined
+		const node = line?.inline[0]
+		expect(
+			node?.kind === "text" &&
+				stored.slice(node.start, node.start + node.text.length),
+		).toBe("A claim here.")
+	})
+})
+
 describe("excerptBlocks", () => {
 	const source =
 		"# Title\n\n**Owner:** Priya\n\nIntro paragraph.\n\n- alpha point\n- beta point\n- gamma point\n\n| A | B |\n|---|---|\n| x | y |\n| the marked cell | z |"

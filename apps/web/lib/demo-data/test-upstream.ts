@@ -1,5 +1,12 @@
 import type { MdbrainWikiClaim, MdbrainWikiPageView } from "@mdbrain/client"
 import { vi } from "vitest"
+import type { DemoDataUpstream } from "./loaders.js"
+import {
+	claimSourceRefs,
+	loadSource,
+	type SourceView,
+} from "./loaders-chapters.js"
+import { type DataState, mapWithStatus } from "./states.js"
 
 /** Shared test helper: a JSON Response with a content type. */
 export function json(body: unknown, status = 200): Response {
@@ -86,4 +93,29 @@ export function pageView(
 		transcludes: [],
 		...overrides,
 	}
+}
+
+export type ClaimSourcesView = {
+	sources: SourceView[]
+	/** Evidence that is not an event source (a file, a URL, a manual note). */
+	otherEvidence: number
+}
+
+/** Shared test helper: every source of a claim, read before it returns. The page
+ * reads them one at a time instead, each as its own cite lands. */
+export async function loadClaimSources(
+	upstream: DemoDataUpstream,
+	claim: MdbrainWikiClaim,
+): Promise<DataState<ClaimSourcesView>> {
+	const named = claimSourceRefs(claim)
+	if (named.kind !== "ready") {
+		return named
+	}
+	const sources = await Promise.all(
+		named.data.refs.map((ref) => loadSource(upstream, claim, ref)),
+	)
+	return mapWithStatus(
+		{ data: { sources, otherEvidence: named.data.otherEvidence } },
+		upstream.readKey,
+	)
 }

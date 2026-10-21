@@ -34,27 +34,40 @@ export type Block =
 	| (Span & { kind: "rule" })
 
 const MAX_DEPTH = 3
+// Emphasis inside emphasis is read this deep and no deeper.
+const MAX_NESTING = 3
 const HEADING = /^(#{1,6})\s+(\S.*)$/
 const RULE = /^\s*([-*_])(?:\s*\1){2,}\s*$/
 const ITEM = /^(\s*)([-*+]|\d+[.)])\s+(\S.*)$/
 const FENCE = /^\s*```/
-const SEPARATOR = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/
+// Tested on a trimmed line: padding on both sides of a pipe would make `\s*\s*`.
+const SEPARATOR = /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$/
 
 const isSpace = (char: string | undefined): boolean =>
 	char === undefined || /\s/.test(char)
 const isWordChar = (char: string | undefined): boolean =>
 	char !== undefined && /[\p{L}\p{N}]/u.test(char)
 
-function parseInline(source: string, from: number, to: number): Inline[] {
+function parseInline(
+	source: string,
+	from: number,
+	to: number,
+	depth = 0,
+): Inline[] {
+	// Reading a slice keeps every search inside the line it belongs to.
+	const text = source.slice(from, to)
 	const out: Inline[] = []
-	let textStart = from
-	let at = from
+	// A mark with no closer to its right leaves every later mark of its kind
+	// without one, so one failed search is the only search.
+	const unclosed = new Set<string>()
+	let textStart = 0
+	let at = 0
 	const flush = (end: number) => {
 		if (end > textStart) {
 			out.push({
 				kind: "text",
-				text: source.slice(textStart, end),
-				start: textStart,
+				text: text.slice(textStart, end),
+				start: from + textStart,
 			})
 		}
 	}
@@ -64,26 +77,35 @@ function parseInline(source: string, from: number, to: number): Inline[] {
 		at = next
 		textStart = next
 	}
-	while (at < to) {
-		const char = source[at]
+	while (at < text.length) {
+		const char = text[at]
 		if (char === "`") {
-			const close = source.indexOf("`", at + 1)
-			if (close > at + 1 && close < to) {
+			const close = text.indexOf("`", at + 1)
+			if (close > at + 1) {
 				take(
-					{ kind: "code", text: source.slice(at + 1, close), start: at + 1 },
+					{
+						kind: "code",
+						text: text.slice(at + 1, close),
+						start: from + at + 1,
+					},
 					close + 1,
 					at,
 				)
 				continue
 			}
-		} else if (char === "*" && source[at + 1] === "*") {
-			const close = source.indexOf("**", at + 2)
-			if (close > at + 2 && close < to && !isSpace(source[at + 2])) {
+		} else if (depth < MAX_NESTING && char === "*" && text[at + 1] === "*") {
+			const close = text.indexOf("**", at + 2)
+			if (close > at + 2 && !isSpace(text[at + 2])) {
 				take(
 					{
 						kind: "strong",
-						children: parseInline(source, at + 2, close),
-						start: at,
+						children: parseInline(
+							source,
+							from + at + 2,
+							from + close,
+							depth + 1,
+						),
+						start: from + at,
 					},
 					close + 2,
 					at,
@@ -91,40 +113,48 @@ function parseInline(source: string, from: number, to: number): Inline[] {
 				continue
 			}
 		} else if (
+			depth < MAX_NESTING &&
 			(char === "*" || char === "_") &&
-			source[at + 1] !== char &&
-			!isSpace(source[at + 1]) &&
-			!isWordChar(source[at - 1])
+			!unclosed.has(char) &&
+			text[at + 1] !== char &&
+			!isSpace(text[at + 1]) &&
+			!isWordChar(text[at - 1])
 		) {
 			let close = at + 1
-			while (close < to) {
-				close = source.indexOf(char, close)
-				if (close === -1 || close >= to) break
+			while (close < text.length) {
+				close = text.indexOf(char, close)
+				if (close === -1) break
 				if (
-					source[close + 1] !== char &&
-					!isSpace(source[close - 1]) &&
-					!isWordChar(source[close + 1])
+					text[close + 1] !== char &&
+					!isSpace(text[close - 1]) &&
+					!isWordChar(text[close + 1])
 				) {
 					break
 				}
 				close++
 			}
-			if (close > at + 1 && close !== -1 && close < to) {
+			if (close !== -1 && close < text.length) {
 				take(
 					{
 						kind: "em",
-						children: parseInline(source, at + 1, close),
-						start: at,
+						children: parseInline(
+							source,
+							from + at + 1,
+							from + close,
+							depth + 1,
+						),
+						start: from + at,
 					},
 					close + 1,
 					at,
 				)
 				continue
 			}
+			unclosed.add(char)
 		}
 		at++
 	}
-	flush(to)
+	flush(text.length)
 	return out
 }
 
@@ -150,11 +180,16 @@ function cellRanges(line: string, base: number): Span[] {
 
 export function parseMarkdown(source: string): Block[] {
 	const blocks: Block[] = []
-	const rows: Array<{ text: string; start: number }> = []
+	// `gap` is the line end before a row: one character, or two when the source
+	// was written with CRLF. Offsets stay those of the stored text.
+	const rows: Array<{ text: string; start: number; gap: number }> = []
 	let offset = 0
-	for (const text of source.split("\n")) {
-		rows.push({ text, start: offset })
-		offset += text.length + 1
+	let gap = 0
+	for (const line of source.split("\n")) {
+		const crlf = line.endsWith("\r")
+		rows.push({ text: crlf ? line.slice(0, -1) : line, start: offset, gap })
+		offset += line.length + 1
+		gap = crlf ? 2 : 1
 	}
 	let paragraph: ParagraphLine[] = []
 	const closeParagraph = () => {
@@ -173,7 +208,7 @@ export function parseMarkdown(source: string): Block[] {
 	for (let index = 0; index < rows.length; index++) {
 		const row = rows[index]
 		if (row === undefined) break
-		const { text, start } = row
+		const { text, start, gap: before } = row
 		const end = start + text.length
 		const next = rows[index + 1]
 		if (text.trim() === "") {
@@ -211,7 +246,7 @@ export function parseMarkdown(source: string): Block[] {
 		} else if (
 			text.trimStart().startsWith("|") &&
 			next !== undefined &&
-			SEPARATOR.test(next.text)
+			SEPARATOR.test(next.text.trim())
 		) {
 			closeParagraph()
 			const cellsOf = (line: { text: string; start: number }) =>
@@ -257,7 +292,7 @@ export function parseMarkdown(source: string): Block[] {
 			if (
 				previous?.kind === "list" &&
 				previous.ordered === /\d/.test(marker) &&
-				previous.end + 1 === start
+				previous.end + before === start
 			) {
 				previous.items.push(item)
 				previous.end = end
@@ -275,7 +310,7 @@ export function parseMarkdown(source: string): Block[] {
 			if (
 				paragraph.length === 0 &&
 				previous?.kind === "list" &&
-				previous.end + 1 === start &&
+				previous.end + before === start &&
 				/^\s{2,}\S/.test(text)
 			) {
 				// A continuation line of the last list item.

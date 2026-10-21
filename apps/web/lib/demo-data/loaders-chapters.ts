@@ -36,11 +36,6 @@ export type SourceView = {
 	text?: string
 	businessTime?: string
 }
-export type ClaimSourcesView = {
-	sources: SourceView[]
-	/** Evidence that is not an event source (a file, a URL, a manual note). */
-	otherEvidence: number
-}
 
 /** One event a claim cites: what to read, not yet read. */
 export type SourceRef = { eventId: string; marker: string }
@@ -92,11 +87,16 @@ export function claimSourceRefs(claim: MdbrainWikiClaim): ClaimSourceRefsState {
 				"the claim carries no citation marker to cite its sources through",
 		}
 	}
+	// A claim can cite one event more than once; it is one source.
+	const named = events.filter(
+		(evidence, at) =>
+			events.findIndex((other) => other.sourceId === evidence.sourceId) === at,
+	)
 	return {
 		kind: "ready",
 		data: {
-			refs: events.slice(0, SOURCE_LIMIT).map(refOf),
-			eventCount: events.length,
+			refs: named.slice(0, SOURCE_LIMIT).map(refOf),
+			eventCount: named.length,
 			otherEvidence: claim.evidence.length - events.length,
 		},
 	}
@@ -148,24 +148,6 @@ export async function loadSource(
 				: {}),
 		}
 	}
-}
-
-/** The sources behind a claim, all read before it returns. */
-export async function loadClaimSources(
-	upstream: DemoDataUpstream,
-	claim: MdbrainWikiClaim,
-): Promise<DataState<ClaimSourcesView>> {
-	const named = claimSourceRefs(claim)
-	if (named.kind !== "ready") {
-		return named
-	}
-	const sources = await Promise.all(
-		named.data.refs.map((ref) => loadSource(upstream, claim, ref)),
-	)
-	return mapWithStatus(
-		{ data: { sources, otherEvidence: named.data.otherEvidence } },
-		upstream.readKey,
-	)
 }
 
 const NOT_READABLE: DataState<never> = {

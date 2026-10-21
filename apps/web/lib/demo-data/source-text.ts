@@ -50,7 +50,10 @@ function firstLine(block: Block): string | undefined {
  * line shortened at a word. Undefined when the source has no text to take one
  * from. */
 export function sourceLabel(body: string): string | undefined {
-	const blocks = parseMarkdown(body)
+	return labelOf(parseMarkdown(body))
+}
+
+function labelOf(blocks: Block[]): string | undefined {
 	const heading = blocks.find((block) => block.kind === "heading")
 	const label = (
 		heading ? firstLine(heading) : blocks.map(firstLine).find(Boolean)
@@ -86,7 +89,7 @@ export function viewSource(stored: string, claimText: string): SourceView {
 	const mark = marked
 		? { start: marked.start, end: marked.start + marked.text.length }
 		: null
-	const label = sourceLabel(body)
+	const label = labelOf(blocks)
 	return {
 		...(role !== undefined ? { role } : {}),
 		...(label !== undefined ? { label } : {}),

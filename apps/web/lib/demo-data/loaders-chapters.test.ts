@@ -5,13 +5,12 @@ import {
 	type MdbrainWikiOverviewResponse,
 	type MdbrainWikiPageView,
 } from "@mdbrain/client"
-import { json, stubUpstream } from "./test-upstream.js"
+import { json, loadClaimSources, stubUpstream } from "./test-upstream.js"
 import type { DemoDataUpstream } from "./loaders.js"
 import {
 	claimSourceRefs,
 	eventRef,
 	loadAgentActivity,
-	loadClaimSources,
 	loadContradictionCase,
 	loadSource,
 	loadWikiSearch,
@@ -186,6 +185,19 @@ describe("claimSourceRefs", () => {
 		expect(result.data.refs.map((ref) => ref.eventId)).toEqual(ids.slice(0, 6))
 		expect(result.data.eventCount).toBe(9)
 		expect(result.data.otherEvidence).toBe(1)
+	})
+
+	it("names an event once however many times the claim cites it", () => {
+		const result = claimSourceRefs(
+			claim("a", "b", "x", ["evt-1", "evt-1", "evt-2"]),
+		)
+		if (result.kind !== "ready") throw new Error("not ready")
+		expect(result.data.refs.map((ref) => ref.eventId)).toEqual([
+			"evt-1",
+			"evt-2",
+		])
+		expect(result.data.eventCount).toBe(2)
+		expect(result.data.otherEvidence).toBe(0)
 	})
 
 	it("reports empty for a claim with no event evidence", () => {

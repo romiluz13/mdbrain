@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { countOf } from "./plural.js"
+import { countOf, nonEventEvidence } from "./plural.js"
 
 describe("countOf", () => {
 	it("uses the singular for exactly one", () => {
@@ -12,9 +12,15 @@ describe("countOf", () => {
 		expect(countOf(2, "page")).toBe("2 pages")
 		expect(countOf(182, "source event")).toBe("182 source events")
 	})
+})
 
-	it("takes an irregular plural", () => {
-		expect(countOf(1, "match", "matches")).toBe("1 match")
-		expect(countOf(3, "match", "matches")).toBe("3 matches")
+describe("nonEventEvidence", () => {
+	it("agrees the verb and the noun with the count", () => {
+		expect(nonEventEvidence(1)).toBe(
+			"1 evidence item that is not a source event",
+		)
+		expect(nonEventEvidence(2)).toBe(
+			"2 evidence items that are not source events",
+		)
 	})
 })

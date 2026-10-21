@@ -8,15 +8,13 @@ import {
 	type SourceRef,
 	type SourceView,
 } from "../../lib/demo-data/loaders-chapters.js"
+import { readInLanes, sourceKey } from "../../lib/demo-data/source-reader.js"
 import type { DataState } from "../../lib/demo-data/states.js"
 import { useDemo } from "./demo-context.js"
 
 /** A source of a claim: read, or still being read. */
 export type SourceSlot = SourceView | (SourceRef & { status: "loading" })
 export type ClaimSourcesProgress = ClaimSourceRefs & { slots: SourceSlot[] }
-
-const keyOf = (claim: MdbrainWikiClaim, ref: SourceRef): string =>
-	`${claim.marker ?? claim.id}\u0000${ref.marker}`
 
 /** A claim's sources, each as its own read lands. The claim's events are known
  * at once, so every source has a slot from the first render and fills in when
@@ -33,13 +31,16 @@ export function useClaimSources(
 			return
 		}
 		let live = true
-		for (const ref of named.data.refs) {
-			void sources.read(claim, ref).then((view) => {
-				if (live) {
-					setArrived((current) => ({ ...current, [keyOf(claim, ref)]: view }))
-				}
-			})
-		}
+		void readInLanes(
+			sources,
+			named.data.refs.map((ref) => ({ claim, ref })),
+			({ ref }, view) =>
+				setArrived((current) => ({
+					...current,
+					[sourceKey(claim, ref)]: view,
+				})),
+			() => live,
+		)
 		return () => {
 			live = false
 		}
@@ -54,7 +55,7 @@ export function useClaimSources(
 			...named.data,
 			slots: named.data.refs.map(
 				(ref): SourceSlot =>
-					arrived[keyOf(claim, ref)] ??
+					arrived[sourceKey(claim, ref)] ??
 					sources.peek(claim, ref) ?? { ...ref, status: "loading" },
 			),
 		},

@@ -1,18 +1,12 @@
 "use client"
 
-import type { MdbrainWikiClaim } from "@mdbrain/client"
 import { useEffect, useState } from "react"
-import type {
-	SourceRef,
-	SourceView,
-} from "../../lib/demo-data/loaders-chapters.js"
+import type { SourceView } from "../../lib/demo-data/loaders-chapters.js"
+import {
+	readInLanes,
+	type SourceWanted,
+} from "../../lib/demo-data/source-reader.js"
 import { useDemo } from "./demo-context.js"
-
-export type SourceWanted = { claim: MdbrainWikiClaim; ref: SourceRef }
-
-// A cite is a governed recall that can take seconds: a list asks for a few at a
-// time, in order, so the first rows land first and recall is not flooded.
-const LANES = 4
 
 /** The sources of a list, each as its own read lands, keyed by event id. A source
  * read before is there on the first render. */
@@ -24,23 +18,13 @@ export function useSourceReads(
 
 	useEffect(() => {
 		let live = true
-		let next = 0
-		const lane = async () => {
-			while (live && next < wanted.length) {
-				const item = wanted[next]
-				next += 1
-				if (item === undefined) {
-					return
-				}
-				const view = await sources.read(item.claim, item.ref)
-				if (live) {
-					setArrived((current) => ({ ...current, [item.ref.eventId]: view }))
-				}
-			}
-		}
-		for (let at = 0; at < Math.min(LANES, wanted.length); at += 1) {
-			void lane()
-		}
+		void readInLanes(
+			sources,
+			wanted,
+			({ ref }, view) =>
+				setArrived((current) => ({ ...current, [ref.eventId]: view })),
+			() => live,
+		)
 		return () => {
 			live = false
 		}

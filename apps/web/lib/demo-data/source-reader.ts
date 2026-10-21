@@ -21,7 +21,7 @@ export interface SourceReader {
 
 // A cite is keyed by the claim that cites and the event cited: the same event
 // cited through two claims is two reads.
-const keyOf = (claim: MdbrainWikiClaim, ref: SourceRef): string =>
+export const sourceKey = (claim: MdbrainWikiClaim, ref: SourceRef): string =>
 	`${claim.marker ?? claim.id}\u0000${ref.marker}`
 
 export function createSourceReader(upstream: DemoDataUpstream): SourceReader {
@@ -29,7 +29,7 @@ export function createSourceReader(upstream: DemoDataUpstream): SourceReader {
 	const settled = new Map<string, SourceView>()
 	return {
 		read(claim, ref) {
-			const key = keyOf(claim, ref)
+			const key = sourceKey(claim, ref)
 			const known = settled.get(key)
 			if (known !== undefined) {
 				return Promise.resolve(known)
@@ -51,7 +51,41 @@ export function createSourceReader(upstream: DemoDataUpstream): SourceReader {
 			return started
 		},
 		peek(claim, ref) {
-			return settled.get(keyOf(claim, ref))
+			return settled.get(sourceKey(claim, ref))
 		},
 	}
+}
+
+/** How many cites a screen asks for at once: each is a governed recall that can
+ * take seconds, and recall refuses a flood. */
+export const LANES = 4
+
+export type SourceWanted = { claim: MdbrainWikiClaim; ref: SourceRef }
+
+/** Reads the sources through the reader a few at a time, in order, so the
+ * first land first. `onRead` hears each as it lands; once `live` says no, no
+ * further source is asked for and none is heard. */
+export async function readInLanes(
+	reader: SourceReader,
+	wanted: readonly SourceWanted[],
+	onRead?: (item: SourceWanted, view: SourceView) => void,
+	live: () => boolean = () => true,
+): Promise<void> {
+	let next = 0
+	const lane = async () => {
+		while (live() && next < wanted.length) {
+			const item = wanted[next]
+			next += 1
+			if (item === undefined) {
+				return
+			}
+			const view = await reader.read(item.claim, item.ref)
+			if (live()) {
+				onRead?.(item, view)
+			}
+		}
+	}
+	await Promise.all(
+		Array.from({ length: Math.min(LANES, wanted.length) }, lane),
+	)
 }

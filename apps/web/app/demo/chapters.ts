@@ -35,7 +35,7 @@ export const CHAPTERS: readonly Chapter[] = [
 	{
 		id: "contradiction",
 		title: "A contradiction caught",
-		lede: "Two pages disagree. mdbrain kept both claims and recorded the conflict. Nothing was overwritten.",
+		lede: "When two pages disagree, mdbrain keeps both claims and records the conflict. Nothing is overwritten.",
 	},
 	{
 		id: "growth",

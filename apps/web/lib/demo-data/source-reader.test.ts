@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { formatCitationMarker, type MdbrainWikiClaim } from "@mdbrain/client"
 import { json, stubUpstream } from "./test-upstream.js"
 import type { DemoDataUpstream } from "./loaders.js"
-import { createSourceReader } from "./source-reader.js"
+import {
+	createSourceReader,
+	LANES,
+	readInLanes,
+	type SourceReader,
+} from "./source-reader.js"
 
 const direct: DemoDataUpstream = {
 	apiBaseUrl: "http://upstream.test",
@@ -98,5 +103,64 @@ describe("createSourceReader", () => {
 		answer = cite("evt-1", "text")
 		expect((await reader.read(owner, refOf("evt-1"))).status).toBe("resolved")
 		expect(calls).toHaveLength(2)
+	})
+})
+
+describe("readInLanes", () => {
+	const wanted = Array.from({ length: 10 }, (_, at) => ({
+		claim: owner,
+		ref: refOf(`evt-${at}`),
+	}))
+	const slowReader = () => {
+		const log = { inFlight: 0, peak: 0, started: [] as string[] }
+		const releases: Array<() => void> = []
+		const reader: SourceReader = {
+			peek: () => undefined,
+			read: (_claim, ref) => {
+				log.started.push(ref.eventId)
+				log.inFlight += 1
+				log.peak = Math.max(log.peak, log.inFlight)
+				return new Promise((resolve) => {
+					releases.push(() => {
+						log.inFlight -= 1
+						resolve({ ...ref, status: "resolved" })
+					})
+				})
+			},
+		}
+		return { reader, log, releases }
+	}
+
+	it("keeps no more than the lanes in flight, and starts the sources in order", async () => {
+		const { reader, log, releases } = slowReader()
+		const done = readInLanes(reader, wanted)
+		await Promise.resolve()
+		expect(log.inFlight).toBe(LANES)
+		while (log.started.length < wanted.length || releases.length > 0) {
+			releases.shift()?.()
+			await Promise.resolve()
+			await Promise.resolve()
+		}
+		await done
+		expect(log.peak).toBe(LANES)
+		expect(log.started).toEqual(wanted.map((item) => item.ref.eventId))
+	})
+
+	it("stops asking once the screen has moved on", async () => {
+		const { reader, log, releases } = slowReader()
+		let live = true
+		const heard: string[] = []
+		const done = readInLanes(
+			reader,
+			wanted,
+			(item) => heard.push(item.ref.eventId),
+			() => live,
+		)
+		await Promise.resolve()
+		live = false
+		for (const release of releases.splice(0)) release()
+		await done
+		expect(log.started).toHaveLength(LANES)
+		expect(heard).toEqual([])
 	})
 })
