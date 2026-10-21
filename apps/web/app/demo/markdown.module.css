@@ -1,0 +1,102 @@
+/* A stored source read as markdown: serif prose, quiet structure. Nothing here
+ * scrolls sideways; a table wraps its cells instead. */
+.doc {
+	display: grid;
+	gap: 8px;
+	font-family: var(--font-serif);
+	font-size: var(--t17);
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+
+.doc p,
+.doc ul,
+.doc ol,
+.doc pre,
+.doc hr {
+	margin: 0;
+}
+
+.heading {
+	margin: 0;
+	font-weight: 700;
+	line-height: 1.3;
+}
+
+.heading[data-level="1"] {
+	font-size: var(--t21);
+}
+
+.doc ul,
+.doc ol {
+	display: grid;
+	gap: 4px;
+	padding: 0;
+	list-style: none;
+}
+
+.item {
+	position: relative;
+	padding-left: calc(20px + var(--depth, 0) * 16px);
+}
+
+.bullet,
+.number {
+	position: absolute;
+	left: calc(var(--depth, 0) * 16px);
+	color: var(--ink-2);
+}
+
+.doc hr {
+	border: 0;
+	border-top: 1px solid var(--line);
+}
+
+.doc code {
+	font-family: var(--font-mono);
+	font-size: 0.85em;
+	background: var(--inset);
+	border-radius: 4px;
+	padding: 0 4px;
+}
+
+.doc pre {
+	padding: 8px 12px;
+	background: var(--inset);
+	border-radius: var(--r1);
+	white-space: pre-wrap;
+}
+
+.doc pre code {
+	padding: 0;
+	background: none;
+}
+
+.table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--t15);
+	line-height: 1.4;
+}
+
+.table th,
+.table td {
+	padding: 4px 8px;
+	border-bottom: 1px solid var(--line);
+	text-align: left;
+	vertical-align: top;
+}
+
+.table th {
+	font-family: var(--font-sans);
+	font-size: var(--t13);
+	font-weight: 600;
+	color: var(--ink-2);
+}
+
+.doc mark {
+	background: var(--mark);
+	color: var(--ink);
+	border-radius: 3px;
+	padding: 0 2px;
+}

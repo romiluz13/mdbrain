@@ -1,7 +1,12 @@
 import { defineConfig, devices } from "@playwright/test"
 
+// A live /demo run reads each source through Memongo recall, 5 to 7 s apiece,
+// and a test walks every chapter, so it needs more than the fixture's 30 s.
+const LIVE = process.env.DEMO_E2E_LIVE === "1"
+
 export default defineConfig({
 	testDir: "./e2e",
+	timeout: LIVE ? 180_000 : 30_000,
 	testMatch: "**/*.e2e.ts",
 	fullyParallel: true,
 	forbidOnly: Boolean(process.env.CI),

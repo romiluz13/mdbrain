@@ -7,7 +7,8 @@
 //
 // Production path: the /demo page runs the loaders in the browser against
 // the same-origin /api/demo route (handleDemoRead in ./proxy.ts injects the
-// principal and the read key). MdbrainClient cannot serve that path: every
+// principal and the read key). Even the search read is a GET toward the proxy;
+// the proxy turns it into one fixed-shape upstream POST. MdbrainClient cannot serve that path: every
 // one of its read methods requires scope and scopeRef and always sends
 // them, which the proxy refuses. The proxy reader builds the same paths
 // the SDK builds, minus the principal parameters.
@@ -21,6 +22,18 @@ import {
 	type MdbrainWikiPageView,
 } from "@mdbrain/client"
 import type { DemoDataUpstream } from "./loaders.js"
+
+/** The wiki search envelope: SDK `wikiSearch` types it as unknown. */
+export type WikiSearchEnvelope = {
+	results: Array<{
+		page: MdbrainWikiPageView
+		score: number
+		source: string
+	}>
+	total: number
+	recipe: string
+	mode: string
+}
 
 /** The reads the demo data layer needs. The principal is not part of the
  * input: either the caller-owned principal is folded in by `clientReads`,
@@ -37,6 +50,11 @@ export interface DemoReads {
 		cursor?: string
 	}): Promise<MdbrainWikiChangesResponse>
 	wikiGet(slug: string): Promise<MdbrainWikiPageView>
+	/** The governed text-lane question read: no model, a bounded result count. */
+	search(input: {
+		query: string
+		maxResults: number
+	}): Promise<WikiSearchEnvelope>
 	cite(input: {
 		marker: string
 		citedBy: string
@@ -66,6 +84,13 @@ function clientReads(upstream: DemoDataUpstream): DemoReads {
 		overview: (slug) => client.overview({ slug, ...principal }),
 		changes: (input) => client.changes({ ...principal, ...input }),
 		wikiGet: (slug) => client.wikiGet({ slug, ...principal }),
+		search: async (input) =>
+			(await client.wikiSearch({
+				...principal,
+				query: input.query,
+				recipe: "text",
+				maxResults: input.maxResults,
+			})) as WikiSearchEnvelope,
 		// agentId rides along for direct reads; the proxy reader drops it.
 		cite: (input) => client.cite({ ...input, ...principal }),
 	}
@@ -123,6 +148,10 @@ function proxyReads(upstream: DemoDataUpstream): DemoReads {
 			),
 		wikiGet: (slug) =>
 			get<MdbrainWikiPageView>(`/v1/wiki/${encodeURIComponent(slug)}`),
+		search: (input) =>
+			get<WikiSearchEnvelope>(
+				`/v1/wiki/search${query({ query: input.query, maxResults: input.maxResults })}`,
+			),
 		// agentId is a principal parameter: the proxy refuses it from the
 		// caller, so the proxy reader never forwards it.
 		cite: (input) =>

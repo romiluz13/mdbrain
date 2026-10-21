@@ -1,0 +1,379 @@
+// The e2e fixture is a stand-in for the API, so it gets its own check: the real
+// loaders, through the real proxy handler, must read the committed corpus out of
+// it exactly as the corpus states it.
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import {
+	loadContradictions,
+	loadWikiChanges,
+	loadWikiMap,
+	type DemoDataUpstream,
+} from "../lib/demo-data/loaders.js"
+import {
+	loadContradictionCase,
+	loadWikiSearch,
+} from "../lib/demo-data/loaders-chapters.js"
+import { handleDemoRead } from "../lib/demo-data/proxy.js"
+import { loadClaimSources } from "../lib/demo-data/test-upstream.js"
+import { governanceMix, summarizeChanges } from "../lib/demo-data/views.js"
+import {
+	corpusDir,
+	createDemoUpstream,
+	eventIdOf,
+	FIXTURE_ENV,
+} from "./demo-upstream.js"
+
+const browserUpstream: DemoDataUpstream = {
+	apiBaseUrl: "http://demo.local/api/demo",
+	readKey: "",
+}
+
+type World = {
+	pages: Array<{
+		slug: string
+		claims: Array<{ evidence: Array<{ sourceId: string }> }>
+	}>
+	sources: Array<{ id: string; date: string }>
+	contradiction: { incoming: { slug: string } }
+}
+
+const world = JSON.parse(
+	readFileSync(join(corpusDir(), "world.json"), "utf8"),
+) as World
+
+afterEach(() => {
+	vi.unstubAllGlobals()
+})
+
+function throughProxy() {
+	const upstream = createDemoUpstream()
+	vi.stubGlobal(
+		"fetch",
+		async (input: RequestInfo | URL, init?: RequestInit) => {
+			const raw =
+				typeof input === "string"
+					? input
+					: input instanceof URL
+						? input.href
+						: input.url
+			return handleDemoRead(new Request(raw, init), FIXTURE_ENV, upstream.fetch)
+		},
+	)
+	return upstream
+}
+
+describe("demo upstream fixture", () => {
+	const slugs = new Set(world.pages.map((p) => p.slug))
+	const pages =
+		world.pages.length + (slugs.has(world.contradiction.incoming.slug) ? 0 : 1)
+	const claims =
+		world.pages.reduce((n, p) => n + p.claims.length, 0) +
+		(slugs.has(world.contradiction.incoming.slug) ? 0 : 1)
+
+	it("serves every corpus page and claim through the real proxy and loaders", async () => {
+		throughProxy()
+		const map = await loadWikiMap(browserUpstream)
+		expect(map.kind).toBe("ready")
+		if (map.kind !== "ready") return
+		expect(map.data.pageTotal).toBe(pages)
+		expect(map.data.pages).toHaveLength(pages)
+		expect(map.data.claimTotal).toBe(claims)
+		const cited = new Set<string>()
+		for (const page of world.pages) {
+			for (const claim of page.claims)
+				for (const e of claim.evidence) cited.add(e.sourceId)
+		}
+		expect(map.data.sourceTotal).toBeGreaterThanOrEqual(cited.size)
+		expect(map.data.unresolvedContradictionCount).toBe(1)
+	})
+
+	it("holds the planted contradiction with both sources and their business times", async () => {
+		throughProxy()
+		const result = await loadContradictionCase(browserUpstream)
+		expect(result.kind).toBe("ready")
+		if (result.kind !== "ready") return
+		expect(result.data.claims).toHaveLength(2)
+		for (const entry of result.data.claims) {
+			expect(entry.claim.status).toBe("contradicted")
+			const sources = await loadClaimSources(browserUpstream, entry.claim)
+			expect(sources.kind).toBe("ready")
+			const source =
+				sources.kind === "ready" ? sources.data.sources[0] : undefined
+			expect(source?.status).toBe("resolved")
+			const dated = world.sources.find(
+				(s) => eventIdOf(s.id) === source?.eventId,
+			)
+			expect(source?.businessTime).toBe(dated?.date)
+			expect(source?.text?.length ?? 0).toBeGreaterThan(20)
+		}
+	})
+
+	it("answers a text-lane question with the page that holds the answer", async () => {
+		throughProxy()
+		const result = await loadWikiSearch(browserUpstream, "Halvorsen renewal")
+		expect(result.kind).toBe("ready")
+		if (result.kind !== "ready") return
+		expect(result.data.hits.map((h) => h.slug)).toContain(
+			"accounts/halvorsen-freight-group",
+		)
+	})
+
+	it("reads the stored revisions from the first page's creation time", async () => {
+		throughProxy()
+		const result = await loadWikiChanges(
+			browserUpstream,
+			"2026-10-20T08:59:59.000Z",
+		)
+		expect(result.kind).toBe("ready")
+		if (result.kind !== "ready") return
+		expect(result.data.complete).toBe(true)
+	})
+
+	it("varies tiers, states and revisions, so a value check cannot pass by accident", async () => {
+		throughProxy()
+		const map = await loadWikiMap(browserUpstream)
+		const changes = await loadWikiChanges(
+			browserUpstream,
+			"2026-10-20T08:59:59.000Z",
+		)
+		if (map.kind !== "ready" || changes.kind !== "ready") {
+			throw new Error("the fixture did not read")
+		}
+		const mix = governanceMix(map.data)
+		expect(mix.tiers.length).toBeGreaterThan(1)
+		expect(mix.states.length).toBeGreaterThan(1)
+		const revised = map.data.pages.filter((stored) => stored.revision > 1)
+		expect(revised.length).toBeGreaterThan(2)
+		const later = revised.reduce((n, stored) => n + stored.revision - 1, 0)
+		expect(changes.data.changes).toHaveLength(pages + later)
+		for (const stored of revised) {
+			const own = changes.data.changes.filter(
+				(change) => change.pageSlug === stored.slug,
+			)
+			expect(own.map((change) => change.revision).sort()).toEqual(
+				Array.from({ length: stored.revision }, (_, at) => at + 1),
+			)
+			expect(
+				own.find((change) => change.revision === stored.revision)?.createdAt,
+			).toBe(stored.updatedAt)
+		}
+		const totals = summarizeChanges(changes.data)
+		expect(totals.added).toBeGreaterThan(0)
+		expect(totals.changed).toBeGreaterThan(0)
+		expect(totals.removed).toBeGreaterThan(0)
+	})
+
+	it("opens any claim's sources through cite", async () => {
+		throughProxy()
+		const map = await loadWikiMap(browserUpstream)
+		if (map.kind !== "ready") throw new Error("map not ready")
+		const withEvidence = map.data.pages
+			.flatMap((p) => p.claims)
+			.find((c) => c.evidence.length > 0)
+		if (!withEvidence) throw new Error("no claim with evidence")
+		const sources = await loadClaimSources(browserUpstream, withEvidence)
+		expect(sources.kind).toBe("ready")
+	})
+
+	it("refuses a read that carries no key or the wrong run, so the proxy has to inject both", async () => {
+		const upstream = createDemoUpstream()
+		const noKey = await upstream.fetch(
+			"http://upstream.test/v1/wiki?scope=workspace&scopeRef=demo-run-e2e&limit=1",
+		)
+		expect(noKey.status).toBe(401)
+		const wrongRun = await upstream.fetch(
+			"http://upstream.test/v1/wiki?scope=workspace&scopeRef=other&limit=1",
+			{
+				headers: { authorization: `Bearer ${FIXTURE_ENV.readKey}` },
+			},
+		)
+		expect(wrongRun.status).toBe(403)
+	})
+})
+
+describe("event citations in the fixture", () => {
+	const upstream = createDemoUpstream()
+	const claims = upstream.data.pages.flatMap((page) => page.claims)
+	const citing = claims.find((claim) =>
+		claim.evidence.some((evidence) => evidence.kind === "event"),
+	)
+	const cited = citing?.evidence.find((evidence) => evidence.kind === "event")
+	if (!citing?.marker || !cited) throw new Error("no claim cites an event")
+	const marker = `[[event:${cited.sourceId}]]`
+	const strangerEvent = claims
+		.flatMap((claim) => claim.evidence)
+		.find(
+			(evidence) =>
+				evidence.kind === "event" &&
+				!citing.evidence.some((own) => own.sourceId === evidence.sourceId),
+		)
+	if (!strangerEvent) throw new Error("no event the claim does not cite")
+
+	const cite = (
+		agentId: string | null,
+		asked = marker,
+		citedBy = citing.marker,
+	) => {
+		const url = new URL("http://upstream.test/v1/cite")
+		url.searchParams.set("scope", FIXTURE_ENV.scope)
+		url.searchParams.set("scopeRef", FIXTURE_ENV.scopeRef)
+		url.searchParams.set("marker", asked)
+		url.searchParams.set("citedBy", String(citedBy))
+		if (agentId !== null) url.searchParams.set("agentId", agentId)
+		return upstream.fetch(url, {
+			headers: { authorization: `Bearer ${FIXTURE_ENV.readKey}` },
+		})
+	}
+
+	it("stay unresolved for an event the citing claim does not cite", async () => {
+		const response = await cite(
+			FIXTURE_ENV.agentId,
+			`[[event:${strangerEvent.sourceId}]]`,
+		)
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_UNRESOLVED" },
+		})
+	})
+
+	it("are not found when the citing claim is not stored", async () => {
+		const response = await cite(
+			FIXTURE_ENV.agentId,
+			marker,
+			"[[wiki:company/northstar-systems#no-such-claim@r1]]",
+		)
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_NOT_FOUND" },
+		})
+	})
+
+	it("resolve for the run's own agent", async () => {
+		const response = await cite(FIXTURE_ENV.agentId)
+		expect(response.status).toBe(200)
+		expect(await response.json()).toMatchObject({
+			status: "resolved",
+			kind: "event",
+		})
+	})
+
+	it("stay unresolved without an agent, as the real API answers for the default agent", async () => {
+		const response = await cite(null)
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_UNRESOLVED" },
+		})
+	})
+
+	it("stay unresolved for another agent", async () => {
+		const response = await cite("main")
+		expect(response.status).toBe(404)
+		expect(await response.json()).toMatchObject({
+			error: { code: "CITATION_UNRESOLVED" },
+		})
+	})
+})
+
+describe("live shapes in the fixture", () => {
+	const since = "2026-10-20T08:59:59.000Z"
+
+	function throughOptions(options: Parameters<typeof createDemoUpstream>[0]) {
+		const upstream = createDemoUpstream(options)
+		vi.stubGlobal(
+			"fetch",
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const raw =
+					typeof input === "string"
+						? input
+						: input instanceof URL
+							? input.href
+							: input.url
+				return handleDemoRead(
+					new Request(raw, init),
+					FIXTURE_ENV,
+					upstream.fetch,
+				)
+			},
+		)
+		return upstream
+	}
+
+	it("spans the changes feed over more than one page, as the live feed does", async () => {
+		throughOptions({})
+		const first = await fetch(
+			`http://demo.local/api/demo/v1/wiki/changes?since=${since}`,
+		)
+		const page = (await first.json()) as {
+			changes: unknown[]
+			hasMore: boolean
+			nextCursor?: string
+		}
+		expect(page.hasMore).toBe(true)
+		expect(typeof page.nextCursor).toBe("string")
+		const all = await loadWikiChanges(browserUpstream, since)
+		if (all.kind !== "ready") throw new Error("the feed did not read")
+		expect(all.data.complete).toBe(true)
+		expect(all.data.changes.length).toBeGreaterThan(page.changes.length)
+	})
+
+	it("refuses a cursor read whose since differs from the cursor's window", async () => {
+		throughOptions({})
+		const first = (await (
+			await fetch(`http://demo.local/api/demo/v1/wiki/changes?since=${since}`)
+		).json()) as { nextCursor: string }
+		const moved = await fetch(
+			`http://demo.local/api/demo/v1/wiki/changes?since=2026-10-20T09:30:00.000Z&cursor=${first.nextCursor}`,
+		)
+		expect(moved.status).toBe(502)
+	})
+
+	it("names every event source by a Memongo UUID, not by the corpus's own id", async () => {
+		throughOptions({})
+		const map = await loadWikiMap(browserUpstream)
+		if (map.kind !== "ready") throw new Error("the map did not read")
+		const ids = new Set(
+			map.data.pages.flatMap((stored) =>
+				stored.claims.flatMap((claim) =>
+					claim.evidence.map((item) => item.sourceId),
+				),
+			),
+		)
+		expect(ids.size).toBeGreaterThan(10)
+		for (const id of ids) {
+			expect(id).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+			)
+		}
+	})
+
+	it("serves event text with the role label Memongo stores in front of it", async () => {
+		throughOptions({})
+		const result = await loadContradictionCase(browserUpstream)
+		if (result.kind !== "ready") throw new Error("no contradiction case")
+		const claim = result.data.claims[0]?.claim
+		if (!claim) throw new Error("no claim")
+		const first = await loadClaimSources(browserUpstream, claim)
+		if (first.kind !== "ready") throw new Error("no sources")
+		const text = first.data.sources[0]?.text ?? ""
+		expect(text).toMatch(/^User: /)
+		const corpus = readFileSync(join(corpusDir(), "records.jsonl"), "utf8")
+		expect(corpus).toContain(
+			JSON.stringify(text.slice("User: ".length)).slice(1, -1),
+		)
+	})
+
+	it("can hold no contradiction, as a seeded slot does before its agent run", async () => {
+		throughOptions({ contradiction: "none" })
+		const lint = await loadContradictions(browserUpstream)
+		expect(lint.kind).toBe("empty")
+		const chapter = await loadContradictionCase(browserUpstream)
+		expect(chapter.kind).toBe("empty")
+		const map = await loadWikiMap(browserUpstream)
+		if (map.kind !== "ready") throw new Error("the map did not read")
+		expect(map.data.unresolvedContradictionCount).toBe(0)
+		expect(
+			map.data.pages.flatMap((stored) => stored.claims).map((c) => c.status),
+		).not.toContain("contradicted")
+	})
+})

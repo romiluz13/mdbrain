@@ -1,0 +1,280 @@
+/* The citation dialog: a right drawer on wide screens, a bottom sheet on
+   phones. Tokens are inherited from the demo root through the DOM tree. */
+.dialog {
+	padding: 0;
+	border: 0;
+	background: var(--panel);
+	color: var(--ink);
+	font-family: var(--font-sans);
+	overflow: auto;
+	margin: auto 0 0;
+	width: 100%;
+	max-width: 100%;
+	max-height: 88dvh;
+	border-radius: var(--r3) var(--r3) 0 0;
+	animation: sheet var(--dur-2) ease-out;
+}
+
+.dialog::backdrop {
+	background: rgb(10 30 36 / 0.55);
+}
+
+.dialog :focus-visible {
+	outline: 3px solid var(--focus);
+	outline-offset: 2px;
+}
+
+@media (min-width: 720px) {
+	.dialog {
+		margin: 0 0 0 auto;
+		width: min(560px, 100vw);
+		height: 100dvh;
+		max-height: 100dvh;
+		border-radius: var(--r3) 0 0 var(--r3);
+	}
+}
+
+@keyframes sheet {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dialog {
+		animation: none;
+	}
+}
+
+.sheet {
+	display: grid;
+	gap: 12px;
+	padding: 16px;
+}
+
+@media (min-width: 600px) {
+	.sheet {
+		padding: 24px;
+	}
+}
+
+.sheet h3 {
+	margin: 8px 0 0;
+	font-size: var(--t13);
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-2);
+}
+
+.sheet p,
+.sheet ol,
+.sheet dl,
+.sheet blockquote {
+	margin: 0;
+}
+
+.sheet ol {
+	padding: 0;
+	list-style: none;
+}
+
+.head {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.head h2 {
+	margin: 0;
+	font-size: var(--t21);
+	font-weight: 700;
+	line-height: 1.2;
+}
+
+.kicker {
+	color: var(--ink-2);
+	font-size: var(--t12);
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.close {
+	min-height: var(--target);
+	min-width: var(--target);
+	border: 1px solid var(--ink-2);
+	border-radius: var(--r1);
+	background: transparent;
+	color: var(--ink);
+	font-size: var(--t26);
+	line-height: 1;
+	cursor: pointer;
+}
+
+.close:hover {
+	background: var(--inset);
+}
+
+.claim {
+	padding-left: 12px;
+	border-left: 4px solid var(--scope);
+	font-family: var(--font-serif);
+	font-size: var(--t21);
+	line-height: 1.35;
+}
+
+.facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 24px;
+}
+
+.facts dt {
+	color: var(--ink-2);
+	font-size: var(--t12);
+	font-weight: 700;
+}
+
+.facts dd {
+	margin: 0;
+	font-size: var(--t15);
+}
+
+.marker {
+	font-family: var(--font-mono);
+	font-size: var(--t12);
+	color: var(--ink-2);
+	overflow-wrap: anywhere;
+}
+
+.note {
+	color: var(--ink-2);
+	font-size: var(--t13);
+}
+
+.slips {
+	display: grid;
+	gap: 12px;
+}
+
+.reading {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin: 0;
+	color: var(--ink-2);
+	font-size: var(--t13);
+}
+
+.readingBar {
+	flex: none;
+	width: 48px;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--line);
+	animation: reading 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes reading {
+	to {
+		opacity: 0.35;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.readingBar {
+		animation: none;
+	}
+}
+
+.slip {
+	display: grid;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r2);
+	background: var(--inset);
+}
+
+.slip header {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 4px 16px;
+}
+
+.eventId {
+	font-family: var(--font-mono);
+	font-size: var(--t12);
+	font-weight: 500;
+	overflow-wrap: anywhere;
+}
+
+.slipMarker {
+	margin: 0;
+	font-family: var(--font-mono);
+	font-size: var(--t12);
+	color: var(--ink-2);
+	overflow-wrap: anywhere;
+}
+
+.clocks {
+	display: grid;
+	gap: 4px;
+}
+
+.role {
+	margin: 0;
+	font-size: var(--t13);
+	color: var(--ink-2);
+}
+
+.roleLabel {
+	font-weight: 600;
+}
+
+.full {
+	display: grid;
+	gap: 8px;
+}
+
+.full summary {
+	display: flex;
+	align-items: center;
+	min-height: var(--target);
+	color: var(--ink);
+	font-size: var(--t13);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.full[open] summary {
+	border-bottom: 1px solid var(--line);
+}
+
+.trigger {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--target);
+	min-width: var(--target);
+	max-width: 100%;
+	padding: 0 4px;
+	border: 0;
+	background: transparent;
+	color: var(--ink-2);
+	font-family: var(--font-mono);
+	font-size: var(--t12);
+	text-align: left;
+	text-decoration: underline dotted;
+	text-underline-offset: 4px;
+	overflow-wrap: anywhere;
+	cursor: pointer;
+}
+
+.trigger:hover {
+	background: var(--inset);
+	color: var(--ink);
+}

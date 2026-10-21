@@ -16,6 +16,7 @@ import {
 	loadWikiMap,
 	type DemoDataUpstream,
 } from "./loaders.js"
+import { loadWikiSearch } from "./loaders-chapters.js"
 import { handleDemoRead, type DemoProxyEnv } from "./proxy.js"
 
 const proxyEnv: DemoProxyEnv = {
@@ -23,6 +24,7 @@ const proxyEnv: DemoProxyEnv = {
 	readKey: "test-read-key-123",
 	scope: "workspace",
 	scopeRef: "demo-run-2",
+	agentId: "demo-run-2",
 }
 
 // The loader reads against the demo route prefix, exactly as production
@@ -191,5 +193,55 @@ describe("loaders through the demo proxy route", () => {
 		expect(upstream.calls[0].url.pathname).toBe(
 			"/v1/wiki/overview/changes%2Fold-page",
 		)
+	})
+})
+
+describe("the search read through the whole production path", () => {
+	it("goes out as one fixed-shape upstream POST with the server's scope", async () => {
+		const seen: Array<{
+			url: URL
+			method: string
+			body: Record<string, unknown>
+		}> = []
+		const upstreamFetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
+			const url = new URL(
+				typeof input === "string"
+					? input
+					: input instanceof URL
+						? input.href
+						: input.url,
+			)
+			seen.push({
+				url,
+				method: init?.method ?? "GET",
+				body: init?.body ? JSON.parse(String(init.body)) : {},
+			})
+			return new Response(
+				JSON.stringify({
+					results: [],
+					total: 0,
+					recipe: "text",
+					mode: "text-only",
+				}),
+				{ headers: { "content-type": "application/json" } },
+			)
+		}) as typeof fetch
+		stubProxyFetch(upstreamFetch)
+		const result = await loadWikiSearch(proxyUpstream, "Is the renewal safe?")
+		expect(result.kind).toBe("empty")
+		expect(seen).toHaveLength(1)
+		expect(seen[0]?.method).toBe("POST")
+		expect(seen[0]?.url.pathname).toBe("/v1/wiki/search")
+		expect(seen[0]?.url.search).toBe("")
+		expect(seen[0]?.body).toEqual({
+			scope: "workspace",
+			scopeRef: "demo-run-2",
+			query: "Is the renewal safe?",
+			recipe: "text",
+			maxResults: 6,
+		})
 	})
 })

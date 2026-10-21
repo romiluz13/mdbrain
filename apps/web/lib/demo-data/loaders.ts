@@ -70,7 +70,7 @@ export interface PinnedPageRef {
 	claims: ReadonlyArray<{ id: string }>
 }
 
-function errorState(error: unknown, secret: string): DataState<never> {
+export function errorState(error: unknown, secret: string): DataState<never> {
 	if (error instanceof MdbrainClientError) {
 		return mapWithStatus(
 			{
@@ -99,25 +99,37 @@ const MAX_LIST_CALLS = 50
 const MAX_CHANGE_CALLS = 10
 
 // The wiki-lint envelope. The SDK types wikiLint as unknown, so the loader
-// keeps its own narrow, guarded view of it.
-interface LintContradiction {
-	id: string
-	detectedAt?: string
-	resolution?: string
-	note?: string
-	claims?: unknown[]
+// keeps its own narrow, guarded view of it. Each entry is the page that holds
+// an unresolved record and the stored record itself (wiki-engine
+// UnresolvedContradiction).
+interface LintEntry {
+	pageSlug: string
+	pageTitle: string
+	contradiction: {
+		id: string
+		claimIds?: unknown
+		detectedAt?: unknown
+		resolution?: unknown
+		note?: unknown
+	}
 }
 type LintEnvelope = {
 	pages?: number
 	total?: number
-	unresolvedContradictions?: LintContradiction[]
+	unresolvedContradictions?: unknown[]
 }
 
-function isLintContradiction(value: unknown): value is LintContradiction {
+function isLintEntry(value: unknown): value is LintEntry {
+	if (typeof value !== "object" || value === null) {
+		return false
+	}
+	const entry = value as Partial<LintEntry>
 	return (
-		typeof value === "object" &&
-		value !== null &&
-		typeof (value as { id?: unknown }).id === "string"
+		typeof entry.pageSlug === "string" &&
+		typeof entry.pageTitle === "string" &&
+		typeof entry.contradiction === "object" &&
+		entry.contradiction !== null &&
+		typeof entry.contradiction.id === "string"
 	)
 }
 
@@ -125,17 +137,64 @@ export type WikiMapPage = {
 	slug: string
 	title: string
 	kind: string
+	/** The page's own type (frontmatter.type), falling back to its kind. */
+	type: string
 	trustTier: string
 	state: string
 	revision: number
 	claimCount: number
 	linkCount: number
+	/** Ingestion time: when mdbrain stored the page. */
+	createdAt: string
 	updatedAt: string
+	/** The pages this page links to, as the stored relationships name them. */
+	links: Array<{ slug: string; kind: string }>
+	/** Event sources the page's claims cite. */
+	sourceIds: string[]
+	contradictedClaims: number
+	/** The stored claims, so a citation can open one without another read. */
+	claims: MdbrainWikiClaim[]
 }
 export type WikiMapView = {
 	pages: WikiMapPage[]
 	pageTotal: number
+	claimTotal: number
+	/** Distinct event sources cited by the stored claims. */
+	sourceTotal: number
 	unresolvedContradictionCount: number
+}
+
+function pageLinks(page: MdbrainWikiPageView): WikiMapPage["links"] {
+	const seen = new Set<string>()
+	const links: WikiMapPage["links"] = []
+	for (const relationship of page.relationships) {
+		const { targetPageSlug, kind } = (relationship ?? {}) as {
+			targetPageSlug?: unknown
+			kind?: unknown
+		}
+		if (typeof targetPageSlug !== "string") {
+			continue
+		}
+		const label = typeof kind === "string" ? kind : "related"
+		const key = `${targetPageSlug}\u0000${label}`
+		if (!seen.has(key)) {
+			seen.add(key)
+			links.push({ slug: targetPageSlug, kind: label })
+		}
+	}
+	return links
+}
+
+function pageSourceIds(page: MdbrainWikiPageView): string[] {
+	const ids = new Set<string>()
+	for (const claim of page.claims) {
+		for (const evidence of claim.evidence) {
+			if (evidence.kind === "event") {
+				ids.add(evidence.sourceId)
+			}
+		}
+	}
+	return [...ids]
 }
 
 /** The map chapter: every page in the run scope plus the unresolved
@@ -171,26 +230,48 @@ export async function loadWikiMap(
 				typeof lint === "object" &&
 				Array.isArray(lint.unresolvedContradictions)
 			) {
-				unresolvedContradictionCount = lint.unresolvedContradictions.length
+				unresolvedContradictionCount =
+					lint.unresolvedContradictions.filter(isLintEntry).length
 			}
 		} catch {
 			// The map stays usable without the contradiction count.
 		}
+		const allSources = new Set<string>()
+		let claimTotal = 0
+		const mapPages = pages.map((page): WikiMapPage => {
+			const sourceIds = pageSourceIds(page)
+			for (const id of sourceIds) {
+				allSources.add(id)
+			}
+			claimTotal += page.claims.length
+			const type = page.frontmatter?.type
+			return {
+				slug: page.slug,
+				title: page.title,
+				kind: page.kind,
+				type: typeof type === "string" && type !== "" ? type : page.kind,
+				trustTier: page.trustTier,
+				state: page.state,
+				revision: page.revision,
+				claimCount: page.claims.length,
+				linkCount: page.relationships.length,
+				createdAt: page.createdAt,
+				updatedAt: page.updatedAt,
+				links: pageLinks(page),
+				sourceIds,
+				contradictedClaims: page.claims.filter(
+					(claim) => claim.status === "contradicted",
+				).length,
+				claims: page.claims,
+			}
+		})
 		return mapWithStatus(
 			{
 				data: {
-					pages: pages.map((page) => ({
-						slug: page.slug,
-						title: page.title,
-						kind: page.kind,
-						trustTier: page.trustTier,
-						state: page.state,
-						revision: page.revision,
-						claimCount: page.claims.length,
-						linkCount: page.relationships.length,
-						updatedAt: page.updatedAt,
-					})),
+					pages: mapPages,
 					pageTotal: total,
+					claimTotal,
+					sourceTotal: allSources.size,
 					unresolvedContradictionCount,
 				},
 			},
@@ -283,13 +364,39 @@ export async function loadEntityOverview(
 	}
 }
 
+/** One unresolved record, flattened with the page that holds it. */
+export type UnresolvedContradictionView = {
+	id: string
+	pageSlug: string
+	pageTitle: string
+	claimIds: string[]
+	/** Ingestion time: when the detector recorded it. */
+	detectedAt?: string
+	resolution?: string
+	note?: string
+}
 export type ContradictionsView = {
-	unresolved: LintContradiction[]
+	unresolved: UnresolvedContradictionView[]
 	pageCount: number
 	pageTotal: number
 }
 
-/** The contradiction chapter: the flat unresolved list from the lint read. */
+function flattenLintEntry(entry: LintEntry): UnresolvedContradictionView {
+	const { id, claimIds, detectedAt, resolution, note } = entry.contradiction
+	return {
+		id,
+		pageSlug: entry.pageSlug,
+		pageTitle: entry.pageTitle,
+		claimIds: Array.isArray(claimIds)
+			? claimIds.filter((c): c is string => typeof c === "string")
+			: [],
+		...(typeof detectedAt === "string" ? { detectedAt } : {}),
+		...(typeof resolution === "string" ? { resolution } : {}),
+		...(typeof note === "string" ? { note } : {}),
+	}
+}
+
+/** The contradiction chapter: the unresolved records from the lint read. */
 export async function loadContradictions(
 	upstream: DemoDataUpstream,
 ): Promise<DataState<ContradictionsView>> {
@@ -303,7 +410,9 @@ export async function loadContradictions(
 			Array.isArray(envelope.unresolvedContradictions)
 				? envelope.unresolvedContradictions
 				: []
-		).filter(isLintContradiction)
+		)
+			.filter(isLintEntry)
+			.map(flattenLintEntry)
 		const pageCount =
 			typeof envelope.pages === "number" ? envelope.pages : unresolved.length
 		const pageTotal =
@@ -366,161 +475,6 @@ export async function loadWikiChanges(
 					window,
 					hasMore,
 					complete: !hasMore && cursor === undefined,
-				},
-			},
-			upstream.readKey,
-		)
-	} catch (error) {
-		return errorState(error, upstream.readKey)
-	}
-}
-
-/** One source event of the run, cited through the governed recall route.
- * `timestamp` is the event's business time; it is absent when the source
- * carried none. `citedBy` is the wiki claim marker the cite resolved
- * through. */
-export type RunEventView = {
-	id: string
-	text?: string
-	timestamp?: string
-	citedBy: string
-}
-export type RunSourcesView = {
-	runId: string
-	slotIndex?: number
-	state: string
-	events: RunEventView[]
-	unresolvedEventIds: string[]
-}
-
-async function resolveCitedBy(
-	reads: DemoReads,
-	upstream: DemoDataUpstream,
-): Promise<string> {
-	if (upstream.pinnedPage) {
-		const first = upstream.pinnedPage.claims[0]
-		if (first) {
-			return formatCitationMarker({
-				kind: "wiki",
-				slug: upstream.pinnedPage.slug,
-				claimId: first.id,
-				revision: upstream.pinnedPage.revision,
-			})
-		}
-	}
-	const list = await reads.wikiList({ limit: 1 })
-	const listed = list.pages[0]
-	if (!listed) {
-		throw noCitingPageError()
-	}
-	const page = await reads.wikiGet(listed.slug)
-	const claim = page.claims[0]
-	if (!claim) {
-		throw noCitingPageError()
-	}
-	return (
-		claim.marker ??
-		formatCitationMarker({
-			kind: "wiki",
-			slug: page.slug,
-			claimId: claim.id,
-			revision: page.revision,
-		})
-	)
-}
-
-function noCitingPageError(): MdbrainClientError {
-	return new MdbrainClientError(
-		404,
-		JSON.stringify({
-			error: {
-				code: "NO_CITING_PAGE",
-				message: "no wiki page with a claim exists to cite run events",
-			},
-		}),
-	)
-}
-
-/** The sources chapter, shaped per D19: run manifest -> ordered event ids ->
- * one cite per event. The manifest read has no API route yet, so without an
- * injected manifest source this reports RUN_MANIFEST_NOT_EXPOSED. A full
- * run cites every planned event (564 in the full corpus plan), which is the
- * batching target named in the Return. */
-export async function loadRunSources(
-	upstream: DemoDataUpstream,
-): Promise<DataState<RunSourcesView>> {
-	const reads = readsFor(upstream)
-	const manifest = upstream.getRunManifest
-		? await upstream.getRunManifest()
-		: null
-	if (!manifest) {
-		return {
-			kind: "incomplete",
-			reason: "RUN_MANIFEST_NOT_EXPOSED",
-			state: null,
-		}
-	}
-	if (manifest.state !== "ready") {
-		return {
-			kind: "incomplete",
-			reason: "RUN_NOT_READY",
-			state: manifest.state,
-		}
-	}
-	const eventIds = manifest.eventsWritten ?? []
-	if (eventIds.length === 0) {
-		return { kind: "empty" }
-	}
-	try {
-		const citedBy = await resolveCitedBy(reads, upstream)
-		const events: RunEventView[] = []
-		const unresolvedEventIds: string[] = []
-		for (const eventId of eventIds) {
-			try {
-				const response: MdbrainCitationResponse = await reads.cite({
-					marker: formatCitationMarker({ kind: "event", eventId }),
-					citedBy,
-					...(upstream.scopeRef !== undefined
-						? { agentId: upstream.scopeRef }
-						: {}),
-				})
-				if (response.kind !== "event") {
-					unresolvedEventIds.push(eventId)
-					continue
-				}
-				const event: MdbrainCitationEventResponse["event"] = response.event
-				events.push({
-					id: event.eventId,
-					...(event.text !== undefined ? { text: event.text } : {}),
-					...(event.timestamp !== undefined
-						? { timestamp: event.timestamp }
-						: {}),
-					citedBy,
-				})
-			} catch {
-				unresolvedEventIds.push(eventId)
-			}
-		}
-		if (events.length === 0) {
-			return mapWithStatus(
-				{
-					status: 502,
-					code: "NO_SOURCES_RESOLVED",
-					message: "none of the run's source events could be cited",
-				},
-				upstream.readKey,
-			)
-		}
-		return mapWithStatus(
-			{
-				data: {
-					runId: manifest.runId,
-					...(manifest.slotIndex !== undefined
-						? { slotIndex: manifest.slotIndex }
-						: {}),
-					state: manifest.state,
-					events,
-					unresolvedEventIds,
 				},
 			},
 			upstream.readKey,
