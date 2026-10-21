@@ -125,22 +125,35 @@ test.describe("reduced motion", () => {
 	})
 })
 
-test("without the preference the chapter eases in", async ({ page }) => {
-	const motion = await watchMotion(page)
+test("without the preference the chapter eases in, under GSAP", async ({
+	page,
+}) => {
 	await installDemoProxy(page)
+	await page.addInitScript(() => {
+		let peak = 0
+		const watch = () => {
+			const seam = Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as
+				| { tweens: () => number }
+				| undefined
+			peak = Math.max(peak, seam?.tweens() ?? 0)
+			Reflect.set(window, "__tweenPeak", peak)
+			requestAnimationFrame(watch)
+		}
+		requestAnimationFrame(watch)
+	})
 	await page.goto("/demo")
 	await expect(page.locator("[data-motion]").first()).toHaveAttribute(
 		"data-motion",
 		"full",
 	)
+	await expect
+		.poll(() => page.evaluate(() => Reflect.get(window, "__tweenPeak")))
+		.toBeGreaterThan(0)
 	expect(
 		await page
 			.getByTestId("screen")
 			.evaluate((element) => getComputedStyle(element).animationName),
-	).not.toBe("none")
-	await expect
-		.poll(async () => (await motion()).started.length)
-		.toBeGreaterThan(0)
+	).toBe("none")
 })
 
 test("the run's number table names each value on the phone, where the header row is hidden", async ({

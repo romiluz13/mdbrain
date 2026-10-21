@@ -29,7 +29,14 @@ import {
 } from "../../../lib/demo-data/scene-store.js"
 import type { Graph } from "../../../lib/demo-data/views.js"
 import { createFlight } from "../motion/fly.js"
-import { Label, LitEdge, Ring, SCOPE_INK, SIGNAL } from "./scene-marks.js"
+import {
+	Label,
+	LabelLayer,
+	LitEdge,
+	Ring,
+	SCOPE_INK,
+	SIGNAL,
+} from "./scene-marks.js"
 import { usePicking } from "./use-picking.js"
 
 gsap.registerPlugin(useGSAP)
@@ -395,6 +402,7 @@ export function GraphScene({ orbit, ...rest }: SceneProps) {
 			resize={{ scroll: false }}
 		>
 			<TouchAction orbit={orbit} />
+			<LabelLayer />
 			<fog attach="fog" args={[SCOPE, 2.2, 5.4]} />
 			<World {...rest} store={store} flight={flight} />
 			{orbit ? (
