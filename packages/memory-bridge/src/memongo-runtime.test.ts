@@ -8,10 +8,10 @@ import {
 } from "./memongo-runtime.js"
 
 describe("resolveMemongoRuntimeConfig", () => {
-	it("accepts the captured public v2.2.3 contract before tenant traffic", async () => {
+	it("accepts the captured v2.3.0 contract before tenant traffic", async () => {
 		const document = readFileSync(
 			new URL(
-				"../../../docs/contracts/memongo/2.2.3/1cbc1bbe7b60e415a2ee24368f9f5d04ab8f43f2faee1321a1be9a0b65b4d23a/openapi.json",
+				"../../../docs/contracts/memongo/2.3.0/f0827813d376cbee4b4152bee77a04002dbe53d3cea144cc859c60fadc769f3a/openapi.json",
 				import.meta.url,
 			),
 			"utf8",
@@ -49,9 +49,9 @@ describe("resolveMemongoRuntimeConfig", () => {
 			allowInsecureHttp: false,
 			readinessControlLanes: [],
 		})
-		expect(MEMONGO_CONTRACT_VERSION).toBe("2.2.3")
+		expect(MEMONGO_CONTRACT_VERSION).toBe("2.3.0")
 		expect(MEMONGO_CONTRACT_SHA256).toBe(
-			"1cbc1bbe7b60e415a2ee24368f9f5d04ab8f43f2faee1321a1be9a0b65b4d23a",
+			"f0827813d376cbee4b4152bee77a04002dbe53d3cea144cc859c60fadc769f3a",
 		)
 	})
 

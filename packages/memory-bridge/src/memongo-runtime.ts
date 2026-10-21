@@ -9,9 +9,9 @@ import {
 	type MemongoReadinessReport,
 } from "./memongo-memory-gateway.js"
 
-export const MEMONGO_CONTRACT_VERSION = "2.2.3"
+export const MEMONGO_CONTRACT_VERSION = "2.3.0"
 export const MEMONGO_CONTRACT_SHA256 =
-	"1cbc1bbe7b60e415a2ee24368f9f5d04ab8f43f2faee1321a1be9a0b65b4d23a"
+	"f0827813d376cbee4b4152bee77a04002dbe53d3cea144cc859c60fadc769f3a"
 // Full git ref (40-char SHA — actions/checkout and git fetch cannot resolve
 // abbreviated SHAs without local objects) of the Memongo commit verified to
 // serve exactly the contract pinned above (single source of truth: the CI
@@ -19,7 +19,7 @@ export const MEMONGO_CONTRACT_SHA256 =
 // the upgrade rail moves it together with the pin). Drift on Memongo main
 // is the rail's job to catch, not the smoke's.
 export const MEMONGO_CONTRACT_SOURCE_REF =
-	"08d4828d0432f348461f1bed78ce476dad9f31ab"
+	"c7fd4e18df96bc557b0f2443c404e36fda778c51"
 
 export type MemongoRuntimeConfig = Omit<
 	MemongoHttpClientOptions,
