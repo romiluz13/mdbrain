@@ -48,14 +48,27 @@ export function agentTools(input: {
 	writes?: RunWrites
 }): ToolSet {
 	const names = new Set<string>(agentToolNames(input.role))
+	const defs = toolList.filter((def) => names.has(def.name))
 	const tools: ToolSet = {}
-	for (const def of toolList) {
-		if (!names.has(def.name)) continue
+	for (const [index, def] of defs.entries()) {
 		tools[def.name] = tool({
 			description: def.description,
 			inputSchema: jsonSchema(
 				def.inputSchema as unknown as Parameters<typeof jsonSchema>[0],
 			),
+			// One cache breakpoint (336) on the last tool of the role's set:
+			// the tool prefix is identical across every step of a run, so a
+			// single ephemeral breakpoint at its end lets later steps read the
+			// ~2.5k-token prefix from the cache instead of paying full input
+			// price for it. The prefix is cached first (tools, then system,
+			// then messages), and one breakpoint stays under the API's cap.
+			...(index === defs.length - 1
+				? {
+						providerOptions: {
+							anthropic: { cacheControl: { type: "ephemeral" } },
+						},
+					}
+				: {}),
 			execute: async (args) => {
 				let callArgs = identity(args, input)
 				if (def.name === "mdbrain_write_event") {
