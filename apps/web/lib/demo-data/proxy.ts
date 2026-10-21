@@ -16,6 +16,11 @@
 // API's own encoding rules.
 
 import { parseCitationMarker } from "@mdbrain/client"
+import {
+	proxyError,
+	unreachableResponse,
+	upstreamFailureResponse,
+} from "./proxy-errors.js"
 
 export interface DemoProxyEnv {
 	apiBaseUrl: string
@@ -407,13 +412,6 @@ function validateParam(
 	}
 }
 
-function proxyError(status: number, code: string, message: string): Response {
-	return new Response(JSON.stringify({ error: { code, message } }), {
-		status,
-		headers: { "content-type": "application/json" },
-	})
-}
-
 /** Handles one demo read request against the given env. `fetchImpl` is
  * injectable so tests and the live check can observe or redirect the
  * upstream call. Never logs; the read key appears in no output. */
@@ -547,12 +545,11 @@ export async function handleDemoRead(
 	let response: Response
 	try {
 		response = await fetchImpl(upstreamUrl, init)
-	} catch (error) {
-		const raw =
-			error instanceof Error
-				? error.message
-				: "the upstream could not be reached"
-		return proxyError(502, "UPSTREAM_UNREACHABLE", redact(raw, env.readKey))
+	} catch {
+		return unreachableResponse()
+	}
+	if (!response.ok) {
+		return upstreamFailureResponse(response)
 	}
 	const body = redact(await response.text(), env.readKey)
 	return new Response(body, {

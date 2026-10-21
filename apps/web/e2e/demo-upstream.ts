@@ -412,7 +412,7 @@ export function createDemoUpstream(options: { padTo?: number } = {}) {
 		if (path.startsWith("/v1/wiki/overview/")) {
 			const slug = decodeURIComponent(path.slice("/v1/wiki/overview/".length))
 			const page = bySlug.get(slug)
-			if (!page) return failure(404, "NOT_FOUND", `no page ${slug}`)
+			if (!page) return failure(404, "WIKI_NOT_FOUND", `no page ${slug}`)
 			return reply({
 				page,
 				contradictions: {
@@ -428,7 +428,9 @@ export function createDemoUpstream(options: { padTo?: number } = {}) {
 		if (path.startsWith("/v1/wiki/")) {
 			const slug = decodeURIComponent(path.slice("/v1/wiki/".length))
 			const page = bySlug.get(slug)
-			return page ? reply(page) : failure(404, "NOT_FOUND", `no page ${slug}`)
+			return page
+				? reply(page)
+				: failure(404, "WIKI_NOT_FOUND", `no page ${slug}`)
 		}
 		if (path === "/v1/cite") {
 			const marker = url.searchParams.get("marker") ?? ""
@@ -458,7 +460,11 @@ export function createDemoUpstream(options: { padTo?: number } = {}) {
 			const sourceId = parsed.marker.eventId.replace(/^evt-/, "")
 			const text = data.bodies.get(sourceId)
 			if (text === undefined)
-				return failure(404, "NOT_FOUND", `no event ${parsed.marker.eventId}`)
+				return failure(
+					404,
+					"CITATION_UNRESOLVED",
+					`no event ${parsed.marker.eventId}`,
+				)
 			const timestamp = data.dates.get(sourceId)
 			return reply({
 				status: "resolved",

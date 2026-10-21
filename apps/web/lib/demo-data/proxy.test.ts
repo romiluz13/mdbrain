@@ -132,18 +132,30 @@ describe("allowlist forwarding", () => {
 		expect(url.searchParams.get("citedBy")).toBe(citedBy)
 	})
 
-	it("passes upstream statuses and envelopes through unchanged", async () => {
-		const upstream = stubUpstream(() =>
-			json({ error: { code: "WIKI_NOT_FOUND", message: "no such page" } }, 404),
+	it("passes a success through unchanged and a known failure with the proxy's own message", async () => {
+		const found = await handleDemoRead(
+			request("/api/demo/v1/wiki/halvorsen-renewal"),
+			env,
+			stubUpstream(() => json({ slug: "halvorsen-renewal" })).fetch,
 		)
-		const response = await handleDemoRead(
+		expect(found.status).toBe(200)
+		expect(await bodyOf(found)).toEqual({ slug: "halvorsen-renewal" })
+		const missing = await handleDemoRead(
 			request("/api/demo/v1/wiki/no-such-page"),
 			env,
-			upstream.fetch,
+			stubUpstream(() =>
+				json(
+					{ error: { code: "WIKI_NOT_FOUND", message: "no such page" } },
+					404,
+				),
+			).fetch,
 		)
-		expect(response.status).toBe(404)
-		expect(await bodyOf(response)).toEqual({
-			error: { code: "WIKI_NOT_FOUND", message: "no such page" },
+		expect(missing.status).toBe(404)
+		expect(await bodyOf(missing)).toEqual({
+			error: {
+				code: "WIKI_NOT_FOUND",
+				message: "That page is not stored in this run.",
+			},
 		})
 	})
 })
@@ -425,15 +437,7 @@ describe("refusals", () => {
 describe("key protection", () => {
 	it("redacts the read key if the upstream echoes it", async () => {
 		const upstream = stubUpstream(() =>
-			json(
-				{
-					error: {
-						code: "INTERNAL",
-						message: "auth failed for test-read-key-123",
-					},
-				},
-				500,
-			),
+			json({ pages: [], total: 0, note: "auth failed for test-read-key-123" }),
 		)
 		const response = await handleDemoRead(
 			request("/api/demo/v1/wiki?limit=5"),
@@ -441,7 +445,7 @@ describe("key protection", () => {
 			upstream.fetch,
 		)
 		const text = await response.text()
-		expect(response.status).toBe(500)
+		expect(response.status).toBe(200)
 		expect(text).not.toContain("test-read-key-123")
 		expect(text).toContain("[redacted]")
 	})
