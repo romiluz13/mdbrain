@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react"
 import {
-	loadRunSources,
 	loadWikiChanges,
 	loadWikiMap,
 	type ChangesView,
 	type DemoDataUpstream,
-	type RunSourcesView,
 	type WikiMapView,
 } from "../../lib/demo-data/loaders.js"
+import {
+	loadRunSources,
+	type RunSourcesView,
+} from "../../lib/demo-data/loaders-run.js"
 import {
 	loadAgentActivity,
 	loadContradictionCase,
