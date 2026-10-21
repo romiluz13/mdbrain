@@ -1,0 +1,47 @@
+// The viewer's reduced-motion setting, for every animation on /demo. GSAP's
+// matchMedia() attaches a `change` listener per condition that neither revert()
+// nor kill() ever removes, so the conditions are registered here, once, and
+// components subscribe to this store instead of making their own.
+
+import gsap from "gsap"
+
+const listeners = new Set<() => void>()
+let reduced = false
+let started = false
+
+function start(): void {
+	if (started || typeof window === "undefined") {
+		return
+	}
+	started = true
+	gsap.matchMedia().add(
+		{
+			full: "(prefers-reduced-motion: no-preference)",
+			reduced: "(prefers-reduced-motion: reduce)",
+		},
+		(context) => {
+			const next = context.conditions?.reduced === true
+			if (next !== reduced) {
+				reduced = next
+				for (const listener of [...listeners]) {
+					listener()
+				}
+			}
+		},
+	)
+}
+
+/** True while the viewer asks for reduced motion. The first call reads the
+ * setting, so ask before the first thing is drawn. */
+export function motionReduced(): boolean {
+	start()
+	return reduced
+}
+
+export function subscribeMotion(listener: () => void): () => void {
+	start()
+	listeners.add(listener)
+	return () => {
+		listeners.delete(listener)
+	}
+}
