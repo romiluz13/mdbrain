@@ -9,7 +9,7 @@
  * drains while later tasks run instead of stalling every step. */
 import { generateText, stepCountIs } from "ai"
 import type { LanguageModelV2 } from "@ai-sdk/provider"
-import type { MdbrainClient } from "@mdbrain/client"
+import { MdbrainClientError, type MdbrainClient } from "@mdbrain/client"
 import {
 	BudgetExhaustedError,
 	type BudgetUsage,
@@ -265,12 +265,14 @@ export async function runRoleAgents(
 				}
 			}
 			const deadline = Date.now() + stagingDeadlineMs
+			let refusal: string | undefined
 			for (;;) {
 				try {
 					await input.clients.account.wikiGet({
 						slug: riskSlug,
 						scope: "workspace",
 						scopeRef: input.slot.scopeRef,
+						agentId: input.slot.agentId,
 					})
 					reusedPage = {
 						slug: riskSlug,
@@ -278,9 +280,20 @@ export async function runRoleAgents(
 						readBy: "account",
 					}
 					break
-				} catch {
+				} catch (error) {
+					// Only "not there yet" is worth waiting out; any other answer is final.
+					if (!(error instanceof MdbrainClientError) || error.status !== 404) {
+						refusal = describeReadError(error)
+						break
+					}
 					if (Date.now() >= deadline) break
 					await delay(pollIntervalMs)
+				}
+			}
+			if (refusal) {
+				return {
+					ok: false,
+					reason: `staging: account could not read ${riskSlug}: ${refusal}`,
 				}
 			}
 			if (!reusedPage) {
@@ -334,4 +347,11 @@ export async function runRoleAgents(
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function describeReadError(error: unknown): string {
+	if (error instanceof MdbrainClientError) {
+		return `${error.status} ${error.envelope?.message ?? error.message}`
+	}
+	return error instanceof Error ? error.message : String(error)
 }

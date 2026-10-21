@@ -154,7 +154,7 @@ async function runComplete(
 		account: scriptedModel(turns.account!),
 		product: scriptedModel(turns.product!),
 	}
-	const clients = fakeAgentClients()
+	const clients = fakeAgentClients({ pinnedAgentId: SLOT.agentId })
 	const { budget } = fakeModelBudget({ ceiling: 1_000_000 })
 	const { pool, used } = fakePool()
 	const base = {
@@ -328,6 +328,45 @@ describe("runRoleAgents", () => {
 		const doc = await manifests.get(RUN_ID)
 		expect(doc?.agentRun?.state).toBe("incomplete")
 		expect(used).toEqual([])
+	})
+
+	it("fails staging at once with the API's reason when the account read is refused", async () => {
+		const { manifests } = makeControl()
+		await readyRun(manifests)
+		const plans = buildRolePlans({
+			world: makeDemoWorld(),
+			records: makeDemoRecords(),
+			runId: RUN_ID,
+			scopeRef: SLOT.scopeRef,
+		})
+		const turns = happyTurns(plans)
+		const models: Record<AgentRole, ScriptedModel> = {
+			support: scriptedModel(turns.support!),
+			account: scriptedModel(turns.account!),
+			product: scriptedModel(turns.product!),
+		}
+		const clients = fakeAgentClients({ pinnedAgentId: "another-agent" })
+		const { budget } = fakeModelBudget({ ceiling: 1_000_000 })
+		const { pool } = fakePool()
+		const started = Date.now()
+		const outcome = await runRoleAgents({
+			manifests,
+			pool,
+			runId: RUN_ID,
+			slot: SLOT,
+			clients: clients.clients,
+			modelFor: (role: AgentRole) => models[role]!,
+			budget,
+			ceilings: { steps: 8, taskDeadlineMs: 5000, tokens: 1_000_000 },
+			world: makeDemoWorld(),
+			records: makeDemoRecords(),
+			stagingDeadlineMs: 2000,
+			pollIntervalMs: 5,
+		})
+		expect(outcome.state).toBe("incomplete")
+		expect(outcome.failureReason).toMatch(/403/)
+		expect(outcome.failureReason).toMatch(/agentId is required/)
+		expect(Date.now() - started).toBeLessThan(2000)
 	})
 
 	it("marks the run incomplete when the account role cannot read the support page in time", async () => {

@@ -34,6 +34,9 @@ export type FakeAgentClientsOptions = {
 	refuseWikiGetFor?: Partial<Record<AgentRole, string[]>>
 	/** artificial delay for every writeEvent call. */
 	writeEventDelayMs?: number
+	/** the agentId the support and account keys are pinned to; like the API,
+	 * a read from either role without that agentId is refused with 403. */
+	pinnedAgentId?: string
 }
 
 export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
@@ -72,6 +75,13 @@ export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
 			},
 			wikiGet: async (input: Record<string, unknown>) => {
 				note(role, "wikiGet", input)
+				if (
+					options.pinnedAgentId !== undefined &&
+					role !== "product" &&
+					input.agentId !== options.pinnedAgentId
+				) {
+					throw agentIdRequired()
+				}
 				const slug = String(input.slug)
 				if (options.refuseWikiGetFor?.[role]?.includes(slug)) {
 					throw notFound(slug)
@@ -93,6 +103,18 @@ export function fakeAgentClients(options: FakeAgentClientsOptions = {}) {
 		writtenEvents,
 		pages,
 	}
+}
+
+function agentIdRequired(): MdbrainClientError {
+	return new MdbrainClientError(
+		403,
+		JSON.stringify({
+			error: {
+				code: "FORBIDDEN",
+				message: "agentId is required for this API key",
+			},
+		}),
+	)
 }
 
 function notFound(slug: string): MdbrainClientError {
