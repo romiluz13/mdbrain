@@ -11,6 +11,7 @@ import {
 	openAnyCitation,
 	openDemo,
 	settleContradiction,
+	showBeat,
 	sourcesSettled,
 	stat,
 } from "./demo-helpers"
@@ -171,6 +172,7 @@ test.describe("states", () => {
 		await expect(screen.getByRole("alert")).toHaveCount(0)
 		await expect(screen.getByTestId("contradiction-stamp")).toHaveCount(0)
 		await expect(screen.getByTestId("contradiction-claim")).toHaveCount(0)
+		await expect(screen.getByTestId("beat-stepper")).toHaveCount(0)
 		expect(await settleContradiction(page, proxy)).toBe("none")
 		await openAnyCitation(page, proxy)
 		await expect(
@@ -191,15 +193,16 @@ test.describe("states", () => {
 		expect(await settleContradiction(page, proxy)).toBe("recorded")
 		const cards = page.locator('li:has([data-testid="contradiction-claim"])')
 		await expect(cards).toHaveCount(2)
+		await expect(cards.nth(0).locator("article[data-status]")).not.toHaveCount(
+			0,
+		)
+		await showBeat(page, 1)
 		const bare = cards.nth(1)
 		await expect(bare.locator('[data-state="empty"]')).toContainText(
 			"stored with no evidence",
 		)
 		await expect(bare.locator("article[data-status]")).toHaveCount(0)
 		await expect(bare.locator('[data-state="loading"]')).toHaveCount(0)
-		await expect(cards.nth(0).locator("article[data-status]")).not.toHaveCount(
-			0,
-		)
 
 		await page
 			.getByRole("button", { name: "Open citation for claim two" })
@@ -281,7 +284,7 @@ test.describe("states", () => {
 		)
 	})
 
-	test("chapter 5 shows both claims and the stamp while their sources are still being read", async ({
+	test("chapter 5 steps to the stamp while the sources are still being read", async ({
 		page,
 	}) => {
 		let release: () => void = () => {}
@@ -301,11 +304,13 @@ test.describe("states", () => {
 			CHAPTERS.findIndex((entry) => entry.id === "contradiction"),
 		)
 		const screen = page.getByTestId("screen")
-		await expect(screen.getByTestId("contradiction-stamp")).toBeVisible()
+		await expect(screen.getByTestId("beat-stepper")).toBeVisible()
 		await expect(screen.getByTestId("contradiction-claim")).toHaveCount(2)
 		await expect(screen.locator('article[data-status="loading"]')).toHaveCount(
 			2,
 		)
+		await showBeat(page, 2)
+		await expect(screen.getByTestId("contradiction-stamp")).toBeVisible()
 		release()
 		await expect(screen.locator('article[data-status="resolved"]')).toHaveCount(
 			2,
@@ -387,7 +392,7 @@ test.describe("states", () => {
 	test("a source with no business time says it is missing, and keeps ingestion time", async ({
 		page,
 	}) => {
-		await installDemoProxy(page, {
+		const proxy = await installDemoProxy(page, {
 			rewrite: (url, body) => {
 				if (url.pathname !== "/api/demo/v1/cite") return body
 				const cite = body as { event: Record<string, unknown> }
@@ -398,6 +403,8 @@ test.describe("states", () => {
 		await openDemo(page)
 		await mapReady(page)
 		await goto(page, 4)
+		await settleContradiction(page, proxy)
+		await showBeat(page, 2)
 		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
 		const missing = page.locator(
 			'article[data-status="resolved"] [data-time-kind="business"][data-missing="true"]',

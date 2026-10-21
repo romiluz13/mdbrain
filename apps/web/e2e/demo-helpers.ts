@@ -353,11 +353,31 @@ export async function expectNoSeriousAccessibilityViolations(
 
 const NONE_YET = /none is recorded in this run yet/i
 
+/** Steps chapter 5's walk-through with its own buttons to a beat: 0 is the first
+ * claim, 1 the second, 2 what mdbrain recorded. */
+export async function showBeat(page: Page, index: number): Promise<void> {
+	const stepper = page.getByTestId("beat-stepper")
+	await expect(stepper).toBeVisible()
+	for (let press = 0; press < 3; press += 1) {
+		const at = Number(await stepper.getAttribute("data-beat"))
+		if (at === index) {
+			return
+		}
+		await stepper
+			.getByRole("button", {
+				name: at < index ? /^Next beat/ : /Previous beat$/,
+			})
+			.click()
+	}
+	await expect(stepper).toHaveAttribute("data-beat", String(index))
+}
+
 /** Waits for chapter 5 to settle and says which case the run is. The proxy's
  * own lint answer decides: a run with no unresolved contradiction (a seeded
  * slot before its agent run) must show the honest not-yet state and nothing
- * that reads as an error; one with a record must show the stamp. Anything
- * else, an error panel included, fails here rather than skipping. */
+ * that reads as an error; one with a record must show its walk-through, on the
+ * first claim, with the stamp held for the last beat. Anything else, an error
+ * panel included, fails here rather than skipping. */
 export async function settleContradiction(
 	page: Page,
 	proxy: DemoProxy,
@@ -365,17 +385,20 @@ export async function settleContradiction(
 	const screen = page.getByTestId("screen")
 	const stamp = screen.getByTestId("contradiction-stamp")
 	const honest = screen.getByText(NONE_YET)
-	await expect(stamp.or(honest)).toBeVisible(SLOW_READ)
+	const stepper = screen.getByTestId("beat-stepper")
+	await expect(stepper.or(honest)).toBeVisible(SLOW_READ)
 	await proxy.flush()
 	const lint = bodyOf<{ unresolvedContradictions: unknown[] }>(
 		proxy.latest("wiki/lint"),
 		"lint",
 	)
 	if (lint.unresolvedContradictions.length > 0) {
-		await expect(stamp).toBeVisible()
+		await expect(stepper).toBeVisible()
+		await expect(stamp).toHaveCount(1)
 		return "recorded"
 	}
 	await expect(honest).toBeVisible()
+	await expect(stepper).toHaveCount(0)
 	await expect(stamp).toHaveCount(0)
 	await expect(screen.locator('[data-state="error"]')).toHaveCount(0)
 	await expect(screen.getByRole("alert")).toHaveCount(0)
@@ -390,6 +413,7 @@ export async function openAnyCitation(
 ): Promise<void> {
 	await goto(page, chapterIndex("contradiction"))
 	if ((await settleContradiction(page, proxy)) === "recorded") {
+		await showBeat(page, 0)
 		await page
 			.getByRole("button", { name: "Open citation for claim one" })
 			.click()

@@ -15,7 +15,7 @@ import {
 	mapReady,
 	openDemo,
 	settleContradiction,
-	sourcesSettled,
+	showBeat,
 	storedBody,
 	stat,
 	type StoredClaim,
@@ -286,12 +286,18 @@ test.describe("values on screen equal the proxy's responses", () => {
 			}
 		}
 		const record = overview.contradictions.items[0]
-		await sourcesSettled(page.getByTestId("screen"))
 		await proxy.flush()
 		const cards = page.locator('li:has([data-testid="contradiction-claim"])')
 		for (const [at, entry] of (record?.claims ?? []).entries()) {
+			await showBeat(page, at)
 			await expectSourcesMatchEvidence(cards.nth(at), entry.claim)
+			await expect(
+				page.getByRole("button", {
+					name: `Open citation for claim ${["one", "two"][at]}`,
+				}),
+			).toHaveText(entry.claim.marker ?? "Open citation")
 		}
+		await showBeat(page, 2)
 		await expect(page.getByTestId("business-time-note")).toHaveCount(1)
 		await expect(
 			page.locator(
@@ -301,13 +307,6 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await expect(page.getByTestId("contradiction-claim")).toHaveText(
 			record?.claims.map((entry) => entry.claim.text) ?? [],
 		)
-		for (const [at, entry] of (record?.claims ?? []).entries()) {
-			await expect(
-				page.getByRole("button", {
-					name: `Open citation for claim ${["one", "two"][at]}`,
-				}),
-			).toHaveText(entry.claim.marker ?? "Open citation")
-		}
 		const stamp = page.getByTestId("contradiction-stamp")
 		await expect(stamp.locator("time")).toHaveText(
 			formatUtc(holder.contradiction.detectedAt),

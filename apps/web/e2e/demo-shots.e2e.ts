@@ -9,6 +9,7 @@ import {
 	openDemo,
 	settleContradiction,
 	settled,
+	showBeat,
 } from "./demo-helpers"
 import { installDemoProxy } from "./demo-proxy"
 
@@ -21,6 +22,7 @@ for (const [index, chapter] of CHAPTERS.entries()) {
 		const proxy = await installDemoProxy(page)
 		await openDemo(page)
 		await mapReady(page)
+		await page.addStyleTag({ content: "nextjs-portal{display:none!important}" })
 		if (index > 0) {
 			await goto(page, index)
 		}
@@ -43,14 +45,26 @@ for (const [index, chapter] of CHAPTERS.entries()) {
 				"matches",
 			)
 		} else if (chapter.id === "contradiction") {
-			await settleContradiction(page, proxy)
+			if ((await settleContradiction(page, proxy)) === "recorded") {
+				// The walk-through is the chapter: one shot per beat before the
+				// final one every chapter gets.
+				for (const beat of [0, 1]) {
+					await showBeat(page, beat)
+					await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+					await settled(page)
+					await page.screenshot({
+						path: `${DIR}/${testInfo.project.name}-${String(index + 1).padStart(2, "0")}-${chapter.id}-beat${beat + 1}.png`,
+						fullPage: true,
+					})
+				}
+				await showBeat(page, 2)
+			}
 		}
 		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
 		const canvas = page.locator('canvas[data-layer="static"]').first()
 		if ((await canvas.count()) > 0) {
 			await expect(canvas).toHaveAttribute("data-draws", /[1-9]/)
 		}
-		await page.addStyleTag({ content: "nextjs-portal{display:none!important}" })
 		await settled(page)
 		await page.screenshot({
 			path: `${DIR}/${testInfo.project.name}-${String(index + 1).padStart(2, "0")}-${chapter.id}.png`,

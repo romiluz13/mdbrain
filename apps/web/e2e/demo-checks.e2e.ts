@@ -12,6 +12,7 @@ import {
 	openDemo,
 	settleContradiction,
 	settled,
+	showBeat,
 	sourcesSettled,
 } from "./demo-helpers"
 import { GENERATED, installDemoProxy, SLOW_READ } from "./demo-proxy"
@@ -215,6 +216,7 @@ test("chapter 5's claim cards are as tall as their own content, not stretched to
 	if ((await settleContradiction(page, proxy)) === "none") {
 		return
 	}
+	await showBeat(page, 2)
 	await sourcesSettled(page.getByTestId("screen"))
 	const stretched = await page.evaluate(() => {
 		const cards = [

@@ -242,6 +242,17 @@
 	align-items: start;
 }
 
+.beats {
+	display: grid;
+	gap: 16px;
+	scroll-margin-top: calc(var(--target) + 16px);
+}
+
+.caseStep[hidden],
+.stamp[hidden] {
+	display: none;
+}
+
 .caseStep {
 	display: grid;
 	gap: 12px;
@@ -312,6 +323,19 @@
 	line-height: 1.1;
 }
 
+/* Only the beat just reached eases in: a past beat that leaves and returns with
+ * the window's width must not replay it. */
+.caseStep[data-current="true"] {
+	animation: beat-in var(--dur-2) ease-out;
+}
+
+@keyframes beat-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+}
+
 @keyframes stamp {
 	from {
 		opacity: 0;
@@ -320,9 +344,65 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.stamp {
+	.stamp,
+	.caseStep[data-current="true"] {
 		animation: none;
 	}
+}
+
+@media (max-width: 999px) {
+	.caseSteps > [data-past="true"] {
+		display: none;
+	}
+}
+
+.stepper {
+	margin: 0;
+	min-inline-size: 0;
+	position: sticky;
+	top: calc(var(--target) + 12px);
+	z-index: 5;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px 12px;
+	padding: 8px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r2);
+	background: var(--panel);
+}
+
+.stepButton {
+	min-height: var(--target);
+	min-width: var(--target);
+	padding: 0 16px;
+	border: 1px solid var(--ink-2);
+	border-radius: var(--r1);
+	background: transparent;
+	color: var(--ink);
+	font-size: var(--t13);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.stepButton:hover {
+	background: var(--inset);
+}
+
+.stepButton[aria-disabled="true"] {
+	color: var(--ink-2);
+	border-style: dashed;
+	cursor: default;
+}
+
+.beatStatus {
+	flex: 1;
+	min-width: 12ch;
+	text-align: center;
+	color: var(--ink-2);
+	font-size: var(--t13);
+	font-weight: 600;
 }
 
 @media (min-width: 1000px) {

@@ -151,6 +151,11 @@ export async function journey(
 			page.getByRole("button", { name: "Open citation for claim one" }),
 			how,
 		)
+		const stepper = page.getByTestId("beat-stepper")
+		await act(stepper.getByRole("button", { name: /^Next beat/ }))
+		await expect(page.getByTestId("contradiction-claim").nth(1)).toBeVisible()
+		await act(stepper.getByRole("button", { name: /^Next beat/ }))
+		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
 	}
 
 	// 6 Governed growth.
