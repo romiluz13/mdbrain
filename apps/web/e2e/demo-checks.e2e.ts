@@ -334,6 +334,9 @@ test("the desktop rail runs the full height of the page and keeps its chapters i
 test("no chapter scrolls sideways, keeps the synthetic label in view, and passes axe", async ({
 	page,
 }) => {
+	// Nine chapters, each scanned by axe: about 20 s alone on the phone profile,
+	// which a loaded machine pushes past the default 30 s.
+	test.slow()
 	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
