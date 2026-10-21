@@ -122,6 +122,21 @@ export type AgentRunChecks = {
 	proposal?: PageCheck
 }
 
+/** What a role card calls the page Support wrote: the title the wiki read
+ * returned. Null while that read is out, so a slug is never shown for a moment
+ * and then replaced; the slug stands in only when the wiki has no title to give. */
+export function reusedPageName(
+	run: AgentRunRecord,
+	checks: AgentRunChecks | null,
+): string | null {
+	const slug = run.reusedPage?.slug
+	const found = checks?.reusedPage
+	if (slug === undefined || found === undefined) {
+		return null
+	}
+	return found.kind === "stored" ? found.title : slug
+}
+
 async function checkPage(
 	upstream: DemoDataUpstream,
 	slug: string,

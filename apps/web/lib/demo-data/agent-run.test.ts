@@ -5,6 +5,7 @@ import {
 	agentStage,
 	formatWallTime,
 	loadAgentRunChecks,
+	reusedPageName,
 	roleStories,
 	totalTokens,
 	wallTimeMs,
@@ -281,5 +282,48 @@ describe("loadAgentRunChecks", () => {
 			),
 		).toEqual({})
 		expect(calls).toHaveLength(0)
+	})
+})
+
+describe("reusedPageName", () => {
+	const stored = {
+		kind: "stored" as const,
+		title: "Halvorsen renewal: support view",
+		revision: 2,
+		state: "published",
+		updatedAt: "2026-10-20T09:57:00.000Z",
+	}
+	const run = agentRun({
+		reusedPage: {
+			slug: "risks/halvorsen-renewal-support-view",
+			writtenBy: "support",
+			readBy: "account",
+		},
+	})
+
+	it("names the page by the title the wiki read returned, never by its slug", () => {
+		expect(reusedPageName(run, { reusedPage: stored })).toBe(
+			"Halvorsen renewal: support view",
+		)
+	})
+
+	it("names nothing while the wiki read is still out, rather than showing a slug for a moment", () => {
+		expect(reusedPageName(run, null)).toBeNull()
+		expect(reusedPageName(run, {})).toBeNull()
+	})
+
+	it("falls back to the slug only when the wiki has no title to give", () => {
+		expect(reusedPageName(run, { reusedPage: { kind: "absent" } })).toBe(
+			"risks/halvorsen-renewal-support-view",
+		)
+		expect(
+			reusedPageName(run, {
+				reusedPage: { kind: "unreadable", code: "X", message: "x" },
+			}),
+		).toBe("risks/halvorsen-renewal-support-view")
+	})
+
+	it("has no name when the run recorded no page", () => {
+		expect(reusedPageName(agentRun({ reusedPage: undefined }), {})).toBeNull()
 	})
 })

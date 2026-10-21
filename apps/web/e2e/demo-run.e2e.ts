@@ -3,7 +3,14 @@
 // to what the proxy served, and each chapter 4 state to its honest copy. They
 // run on the generated fixture, which plants a run for every state.
 import { expect, test, type Page } from "@playwright/test"
-import { chapterTitle, goto, mapReady, openDemo, stat } from "./demo-helpers"
+import {
+	chapterTitle,
+	goto,
+	listPages,
+	mapReady,
+	openDemo,
+	stat,
+} from "./demo-helpers"
 import { GENERATED, installDemoProxy, type ProxyOptions } from "./demo-proxy"
 
 test.skip(!GENERATED, "the states are planted in the generated fixture")
@@ -55,6 +62,63 @@ test.describe("chapter 3: sources in arrival order", () => {
 		await expect(
 			uncited.first().getByRole("button", { name: /^Open source / }),
 		).toHaveCount(0)
+	})
+
+	test("says an agent wrote an event the record does not list when the record shows it, and leaves the rest unexplained", async ({
+		page,
+	}) => {
+		const proxy = await open(page, { run: { arrivals: 6 } }, 2)
+		await expect(page.getByTestId("source-row")).toHaveCount(6)
+		await proxy.flush()
+		const run = proxy.latest("run")?.body as Run
+		const listed = new Set(run.arrivals.map((arrival) => arrival.eventId))
+		const wrote = run.agentRun?.reusedPage?.slug
+		const seen = new Set<string>()
+		const outside: string[] = []
+		for (const stored of listPages(proxy)) {
+			for (const claim of stored.claims) {
+				for (const evidence of claim.evidence) {
+					if (evidence.kind === "event" && !seen.has(evidence.sourceId)) {
+						seen.add(evidence.sourceId)
+						if (!listed.has(evidence.sourceId)) {
+							outside.push(stored.slug)
+						}
+					}
+				}
+			}
+		}
+		const byAgent = outside.filter((slug) => slug === wrote).length
+		expect(
+			byAgent,
+			"the fixture plants one for an agent to have written",
+		).toBeGreaterThan(0)
+		const summary = page.getByTestId("arrivals-summary")
+		await expect(summary).toContainText(
+			`${outside.length} stored source event${outside.length === 1 ? "" : "s"} cited by claims ${outside.length === 1 ? "is" : "are"} not in this record.`,
+		)
+		await expect(summary).toContainText(
+			byAgent === outside.length
+				? `${outside.length === 1 ? "It was" : "They were"} written by an agent during the run.`
+				: `${byAgent} of them ${byAgent === 1 ? "was" : "were"} written by an agent during the run.`,
+		)
+	})
+
+	test("never says an agent wrote it when the run's steps were not indexed", async ({
+		page,
+	}) => {
+		const proxy = await open(
+			page,
+			{ run: { arrivals: 6, variant: "no-steps" } },
+			2,
+		)
+		await expect(page.getByTestId("source-row")).toHaveCount(6)
+		await proxy.flush()
+		await expect(page.getByTestId("arrivals-summary")).toContainText(
+			"not in this record.",
+		)
+		await expect(page.getByTestId("arrivals-summary")).not.toContainText(
+			"written by an agent",
+		)
 	})
 
 	test("tallies the rows it has confirmed", async ({ page }) => {
@@ -173,6 +237,7 @@ test.describe("chapter 4: agents at work", () => {
 		const reused = run.agentRun?.reusedPage?.slug ?? ""
 		const stored = proxy.latest(`wiki/${encodeURIComponent(reused)}`)?.body as {
 			revision: number
+			title: string
 		}
 		const support = page.locator(
 			'[data-testid="agent-role"][data-role="support"]',
@@ -182,6 +247,11 @@ test.describe("chapter 4: agents at work", () => {
 		)
 		await expect(support.getByTestId("agent-check")).toContainText(
 			`revision ${stored.revision}`,
+		)
+		// The card names the page by the wiki read's title; the slug is only a
+		// fallback for a page the wiki cannot name.
+		await expect(support.getByText(/^Wrote the page/)).toHaveText(
+			`Wrote the page “${stored.title}”.`,
 		)
 		const proposal = run.agentRun?.pendingProposal?.slug ?? ""
 		expect(proxy.latest(`wiki/${encodeURIComponent(proposal)}`)?.status).toBe(

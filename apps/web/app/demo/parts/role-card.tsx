@@ -1,10 +1,11 @@
 "use client"
 
 import type { EventConfirmation } from "../../../lib/demo-data/confirm-event.js"
-import type {
-	AgentRunChecks,
-	PageCheck,
-	RoleStory,
+import {
+	type AgentRunChecks,
+	type PageCheck,
+	type RoleStory,
+	reusedPageName,
 } from "../../../lib/demo-data/agent-run.js"
 import { countOf } from "../../../lib/demo-data/plural.js"
 import type {
@@ -28,19 +29,23 @@ function didOf(
 	run: AgentRunRecord,
 	checks: AgentRunChecks | null,
 ): string {
-	const reused = checks?.reusedPage
 	const yet = run.state === "running" ? " yet" : ""
-	const name =
-		reused?.kind === "stored" ? reused.title : (run.reusedPage?.slug ?? "")
+	const name = reusedPageName(run, checks)
 	switch (role) {
 		case "support":
-			return run.reusedPage
-				? `Wrote the page “${name}”.`
-				: `No page write is recorded for this role${yet}.`
+			if (!run.reusedPage) {
+				return `No page write is recorded for this role${yet}.`
+			}
+			return name === null
+				? "Wrote a page to the wiki."
+				: `Wrote the page “${name}”.`
 		case "account":
-			return run.reusedPage
-				? `Read Support's completed revision of “${name}”.`
-				: `No page read is recorded for this role${yet}.`
+			if (!run.reusedPage) {
+				return `No page read is recorded for this role${yet}.`
+			}
+			return name === null
+				? "Read the page Support wrote."
+				: `Read Support's completed revision of “${name}”.`
 		case "product":
 			return run.pendingProposal
 				? `Proposed “${run.pendingProposal.title}”. It is pending review.`

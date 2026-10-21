@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import {
 	ARRIVALS_PAGE,
 	arrivalRows,
+	outsideRecordNote,
 	summarizeArrivals,
 } from "../../../lib/demo-data/arrivals.js"
 import {
@@ -98,7 +99,7 @@ export function ArrivalList({
 					source files, in the order they arrived. Each one shown is checked by
 					its id through the API; stored claims cite {summary.cited} of them.
 					{summary.citedOutsideRecord > 0
-						? ` ${countOf(summary.citedOutsideRecord, "stored source event")} cited by claims ${summary.citedOutsideRecord === 1 ? "is" : "are"} not in this record.`
+						? ` ${outsideRecordNote(summary)}`
 						: ""}
 				</p>
 				<p className={chapter.note} data-testid="arrivals-tally">

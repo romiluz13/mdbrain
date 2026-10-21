@@ -407,6 +407,21 @@ export function unexplainedBrowserErrors(
 	})
 }
 
+/** Every read the open chapter makes has come back: no map, row, step or page
+ * check still says it is loading. A role's steps are read only once opened, so
+ * a closed list is not waiting on anything. A screenshot taken before this shows
+ * a placeholder where the answer will be. */
+export async function readsSettled(page: Page): Promise<void> {
+	for (const pending of [
+		'[data-state="loading"]',
+		'[data-testid="source-row"][data-status="loading"]',
+		'details[open] [data-testid="agent-step"][data-status="loading"]',
+		'[data-testid="agent-check"][data-check="checking"]',
+	]) {
+		await expect(page.locator(pending)).toHaveCount(0, SLOW_READ)
+	}
+}
+
 /** Lets the finite CSS animations and transitions finish, so a contrast check
  * does not read a half-faded frame. */
 export async function settled(page: Page): Promise<void> {
