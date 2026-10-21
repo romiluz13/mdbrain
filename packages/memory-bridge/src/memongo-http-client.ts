@@ -60,6 +60,8 @@ export type MemongoRequest = {
 	signal?: AbortSignal
 	timeoutMs?: number
 	validate: (value: unknown) => boolean
+	/** A 404 whose error code equals this resolves to null instead of throwing. */
+	notFoundCode?: string
 }
 
 type OpenApiDocument = {
@@ -477,6 +479,12 @@ export class MemongoHttpClient {
 				signal: controller.signal,
 			})
 			if (!response.ok) {
+				if (response.status === 404 && request.notFoundCode) {
+					const body = (await response.json().catch(() => null)) as {
+						error?: { code?: unknown }
+					} | null
+					if (body?.error?.code === request.notFoundCode) return null as T
+				}
 				if (response.status === 409 && isWrite(policy)) {
 					const body = (await response.json().catch(() => null)) as {
 						error?: { code?: unknown }

@@ -50,6 +50,17 @@ export type MemorySearchDegradation = {
 	retryAfterMs: number
 }
 
+/** One event read by id inside the caller's agentId, scope and scopeRef. */
+export type MemoryEventRecord = {
+	eventId: string
+	role: string
+	body: string
+	timestamp: string
+	scope: MemoryScope
+	scopeRef: string
+	validAt?: string
+}
+
 export type MemorySearchResponse = {
 	results: MemorySearchResult[]
 	degradation?: MemorySearchDegradation
@@ -120,6 +131,15 @@ export type MemoryGatewayOperations = {
 		Body & { handle: unknown },
 		Array<Record<string, unknown>>
 	>
+	eventGet: Operation<
+		{
+			eventId: string
+			agentId: string
+			scope?: MemoryScope
+			scopeRef?: string
+		},
+		MemoryEventRecord | null
+	>
 	procedureOutcome: Operation<
 		Body & { handle: unknown; success: boolean },
 		Record<string, unknown>
@@ -139,6 +159,8 @@ export type GatewayOperationDefinition = {
 	transport: "body" | "query"
 	validate: (value: unknown) => boolean
 	adapt: (value: unknown) => unknown
+	/** A 404 carrying this Memongo error code is an answer (null), not a failure. */
+	notFoundCode?: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -337,6 +359,29 @@ function isLifecycleHistory(value: unknown): boolean {
 	)
 }
 
+const MEMORY_SCOPES = new Set([
+	"session",
+	"user",
+	"agent",
+	"workspace",
+	"tenant",
+	"global",
+])
+
+function isEventRecord(value: unknown): value is MemoryEventRecord {
+	return (
+		isRecord(value) &&
+		typeof value.eventId === "string" &&
+		typeof value.role === "string" &&
+		typeof value.body === "string" &&
+		typeof value.timestamp === "string" &&
+		typeof value.scope === "string" &&
+		MEMORY_SCOPES.has(value.scope) &&
+		typeof value.scopeRef === "string" &&
+		optionalString(value.validAt)
+	)
+}
+
 function isStatus(value: unknown): boolean {
 	return (
 		isRecord(value) &&
@@ -441,6 +486,12 @@ export const RETAINED_OPERATION_DEFINITIONS = {
 		transport: "body",
 		validate: isLifecycleHistory,
 		adapt: passthrough,
+	},
+	eventGet: {
+		transport: "body",
+		validate: isEventRecord,
+		adapt: passthrough,
+		notFoundCode: "EVENT_NOT_FOUND",
 	},
 	procedureOutcome: {
 		transport: "body",

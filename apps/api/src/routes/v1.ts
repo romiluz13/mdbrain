@@ -16,6 +16,7 @@ import {
 	mdbrainBridgeGetLifecycleHistory,
 	mdbrainBridgeGetLifecycleItem,
 	mdbrainBridgeGetState,
+	mdbrainBridgeGetEvent,
 	mdbrainBridgeSearch,
 	mdbrainBridgeSearchDetailed,
 	mdbrainBridgeSearchKB,
@@ -58,9 +59,9 @@ import {
 	type WikiPageInput,
 	type GovernanceContext,
 } from "@mdbrain/wiki-engine"
-import { parseCitationMarker } from "@mdbrain/client"
+import { type CitationMarker, parseCitationMarker } from "@mdbrain/client"
 import {
-	CitationRecallError,
+	CitationLookupError,
 	resolveClaimMarker,
 	resolveEventMarker,
 	uncitableClaimError,
@@ -3163,8 +3164,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 	// Citation resolver: GET /v1/cite?marker=...  Scope comes from the request
 	// like every other read; the marker carries none. A revision that is missing,
 	// lacks the claim, or is hidden by its own permissions all answer the same
-	// 404 without content. An event marker also needs citedBy, the claim marker
-	// that cites it (decision D9).
+	// 404 without content. An event marker resolves by id (decision D21); an
+	// optional citedBy names a claim that must be readable and cite it.
 	v1.get("/cite", async (c) => {
 		const parsed = parseCitationMarker(c.req.query("marker") ?? "")
 		if (!parsed.ok) return jsonError(c, 400, "INVALID_MARKER", parsed.reason)
@@ -3196,55 +3197,48 @@ export function createV1Router(): Hono<ApiEnvironment> {
 					? c.json(resolved)
 					: jsonError(c, 404, "CITATION_NOT_FOUND", "citation not found")
 			}
-			const citedBy = parseCitationMarker(c.req.query("citedBy") ?? "")
-			if (!citedBy.ok)
-				return jsonError(c, 400, "INVALID_MARKER", `citedBy: ${citedBy.reason}`)
-			if (citedBy.marker.kind !== "wiki")
-				return jsonError(
-					c,
-					400,
-					"INVALID_MARKER",
-					"citedBy must be the wiki marker of the claim that cites the event",
-				)
-			const handle = await readWikiDbHandle(authorizedScope.agentId)
+			const rawCitedBy = c.req.query("citedBy")
+			let citedBy: Extract<CitationMarker, { kind: "wiki" }> | undefined
+			if (rawCitedBy !== undefined) {
+				const parsedCitedBy = parseCitationMarker(rawCitedBy)
+				if (!parsedCitedBy.ok)
+					return jsonError(
+						c,
+						400,
+						"INVALID_MARKER",
+						`citedBy: ${parsedCitedBy.reason}`,
+					)
+				if (parsedCitedBy.marker.kind !== "wiki")
+					return jsonError(
+						c,
+						400,
+						"INVALID_MARKER",
+						"citedBy must be the wiki marker of the claim that cites the event",
+					)
+				citedBy = parsedCitedBy.marker
+			}
+			const handle = citedBy
+				? await readWikiDbHandle(authorizedScope.agentId)
+				: undefined
 			const outcome = await resolveEventMarker(
 				handle,
 				parsed.marker,
-				citedBy.marker,
+				citedBy,
 				request,
-				(params) => mdbrainBridgeSearch(params),
+				(params) => mdbrainBridgeGetEvent(params),
 			)
 			if (outcome.outcome === "resolved") return c.json(outcome.body)
 			if (outcome.outcome === "claim-not-found")
 				return jsonError(c, 404, "CITATION_NOT_FOUND", "citation not found")
-			if (outcome.outcome === "degraded") {
-				if (outcome.retryAfterMs !== undefined)
-					c.header(
-						"Retry-After",
-						String(Math.max(1, Math.ceil(outcome.retryAfterMs / 1000))),
-					)
-				return jsonError(
-					c,
-					503,
-					"CITATION_RECALL_DEGRADED",
-					"recall was throttled, so the source could not be checked; retry",
-					{
-						retryable: true,
-						...(outcome.retryAfterMs !== undefined
-							? { retryAfterMs: outcome.retryAfterMs }
-							: {}),
-					},
-				)
-			}
 			return jsonError(
 				c,
 				404,
 				"CITATION_UNRESOLVED",
-				"the source could not be confirmed through governed recall",
+				"the source could not be confirmed in the request's scope",
 			)
 		} catch (err) {
-			if (err instanceof CitationRecallError)
-				return bridgeJsonError(c, "CITATION_RECALL_FAILED", err.original)
+			if (err instanceof CitationLookupError)
+				return bridgeJsonError(c, "CITATION_LOOKUP_FAILED", err.original)
 			const message = err instanceof Error ? err.message : String(err)
 			return jsonError(c, 500, "CITATION_FAILED", message)
 		}

@@ -1048,6 +1048,31 @@ describe("wiki MCP tools", () => {
 		expect("isError" in out ? out.isError : undefined).toBeUndefined()
 	})
 
+	it("cite resolves an event marker by id without a citing claim", async () => {
+		const cite = vi.fn().mockResolvedValue({
+			status: "resolved",
+			kind: "event",
+			marker: "[[event:evt-1]]",
+			event: { eventId: "evt-1", canonicalId: "event:evt-1" },
+		})
+
+		await handleToolCall(
+			"mdbrain_cite",
+			{ marker: "[[event:evt-1]]", scope: "workspace", scopeRef: "ws-1" },
+			{ cite } as any,
+		)
+
+		expect(cite).toHaveBeenCalledWith({
+			marker: "[[event:evt-1]]",
+			citedBy: undefined,
+			scope: "workspace",
+			scopeRef: "ws-1",
+			agentId: undefined,
+		})
+		const tool = toolList.find((entry) => entry.name === "mdbrain_cite")
+		expect(tool?.description).not.toContain("only in the context of a citing")
+	})
+
 	it("cite passes an unresolved citation through as a coded error with no content", async () => {
 		const cite = vi.fn().mockRejectedValue(
 			new MdbrainClientError(

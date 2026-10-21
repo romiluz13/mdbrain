@@ -1,5 +1,6 @@
 import type { MemoryScope } from "@mdbrain/lib/types/memory"
 import {
+	type GatewayOperationDefinition,
 	RETAINED_OPERATION_DEFINITIONS,
 	type MemoryGatewayOperations,
 	type MemorySearchResult,
@@ -10,6 +11,7 @@ import { MemongoHttpClient } from "./memongo-http-client.js"
 export type {
 	MemoryBatchReceipt,
 	MemoryDetailedSearchResult,
+	MemoryEventRecord,
 	MemoryGatewayOperations,
 	MemorySearchResult,
 	MemoryStateResult,
@@ -180,7 +182,8 @@ export class MemongoMemoryGateway implements MemoryGateway {
 		input: MemoryGatewayOperations[Operation]["input"],
 		options: MemoryGatewayRequestOptions = {},
 	): Promise<MemoryGatewayOperations[Operation]["output"]> {
-		const definition = RETAINED_OPERATION_DEFINITIONS[operation]
+		const definition: GatewayOperationDefinition =
+			RETAINED_OPERATION_DEFINITIONS[operation]
 		const wireValue = await this.client.request<unknown>({
 			operation,
 			...(definition.transport === "query"
@@ -191,7 +194,11 @@ export class MemongoMemoryGateway implements MemoryGateway {
 			signal: options.signal,
 			timeoutMs: options.timeoutMs,
 			validate: definition.validate,
+			notFoundCode: definition.notFoundCode,
 		})
+		if (wireValue === null && definition.notFoundCode) {
+			return null as MemoryGatewayOperations[Operation]["output"]
+		}
 		return definition.adapt(
 			wireValue,
 		) as MemoryGatewayOperations[Operation]["output"]
