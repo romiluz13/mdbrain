@@ -4,6 +4,13 @@
 	"private": true,
 	"type": "module",
 	"description": "MCP server for Mdbrain (stdio; calls Mdbrain HTTP API)",
+	"main": "./dist/server.js",
+	"exports": {
+		".": {
+			"types": "./dist/server.d.ts",
+			"default": "./dist/server.js"
+		}
+	},
 	"scripts": {
 		"start": "node --import tsx src/server.ts",
 		"build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit false --rootDir src --outDir dist",

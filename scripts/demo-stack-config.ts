@@ -46,6 +46,11 @@ export const DEMO_SLOT_KEYS_SECRET = "MDBRAIN_DEMO_SLOT_KEYS"
  * and nothing else. */
 export const DEMO_PROPOSER_KEYS_SECRET = "MDBRAIN_DEMO_PROPOSER_KEYS"
 
+/** Secrets-file key holding the JSON array of ticket-10 role-agent API key
+ * pairs ([support, account]), in slot order: pair i-1 serves slot i. The
+ * product lead borrows the slot's proposer key instead of a third pair. */
+export const DEMO_AGENT_KEYS_SECRET = "MDBRAIN_DEMO_AGENT_KEYS"
+
 /** Secrets-file key holding the per-IP request-start budget (per minute) for
  * the demo API. The default stack limit (100) is too low for corpus seeding. */
 export const DEMO_API_RATE_LIMIT_SECRET = "MDBRAIN_DEMO_API_RATE_LIMIT"
@@ -126,6 +131,83 @@ export function buildDemoProposerScopedKeys(
 	return policies
 }
 
+export type DemoAgentScopedKeyPolicy = {
+	subjectId: string
+	displayName: string
+	grants: Array<{ scope: "workspace"; scopeRef: string }>
+	agentIds: string[]
+}
+
+/** Scoped-key policies for the ticket-10 role-agent keys. Support and
+ * account hold an exact workspace grant on one slot with read+write (the
+ * default capabilities), and the API pins their writes to the run's shared
+ * agentId, so a role key cannot pose as any other principal. */
+export function buildDemoAgentScopedKeys(
+	pairs: ReadonlyArray<readonly [support: string, account: string]>,
+): Record<string, DemoAgentScopedKeyPolicy> {
+	const policies: Record<string, DemoAgentScopedKeyPolicy> = {}
+	pairs.forEach(([support, account], index) => {
+		const slot = index + 1
+		const grants: Array<{ scope: "workspace"; scopeRef: string }> = [
+			{ scope: "workspace", scopeRef: `demo-run-${slot}` },
+		]
+		policies[support] = {
+			subjectId: `demo-agent-support-${slot}`,
+			displayName: `Demo support agent ${slot}`,
+			grants,
+			agentIds: [`demo-run-${slot}`],
+		}
+		policies[account] = {
+			subjectId: `demo-agent-account-${slot}`,
+			displayName: `Demo account agent ${slot}`,
+			grants,
+			agentIds: [`demo-run-${slot}`],
+		}
+	})
+	return policies
+}
+
+function parseAgentKeyPairs(
+	secrets: Record<string, string>,
+): Array<[string, string]> | undefined {
+	const raw = secrets[DEMO_AGENT_KEYS_SECRET]?.trim()
+	if (!raw) return undefined
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(raw) as unknown
+	} catch {
+		throw new Error(
+			`${DEMO_AGENT_KEYS_SECRET} must be a JSON array of [support, account] key pairs`,
+		)
+	}
+	const invalid = () =>
+		new Error(
+			`${DEMO_AGENT_KEYS_SECRET} must be a non-empty array of unique [support, account] key pairs`,
+		)
+	if (!Array.isArray(parsed) || parsed.length === 0) throw invalid()
+	const pairs: Array<[string, string]> = []
+	const seen = new Set<string>()
+	for (const entry of parsed) {
+		if (
+			!Array.isArray(entry) ||
+			entry.length !== 2 ||
+			!entry.every((key) => typeof key === "string" && key.trim())
+		) {
+			throw invalid()
+		}
+		const pair: [string, string] = [
+			String(entry[0]).trim(),
+			String(entry[1]).trim(),
+		]
+		for (const key of pair) {
+			if (seen.has(key)) throw invalid()
+			seen.add(key)
+		}
+		pairs.push(pair)
+	}
+	return pairs
+}
+
 function parseRateLimitMax(
 	secrets: Record<string, string>,
 ): number | undefined {
@@ -161,6 +243,41 @@ export function buildDemoStackEnv(
 	const home = path.join(options.stackDir, "home")
 	const slotTokens = parseTokenList(secrets, DEMO_SLOT_KEYS_SECRET)
 	const proposerTokens = parseTokenList(secrets, DEMO_PROPOSER_KEYS_SECRET)
+	const agentPairs = parseAgentKeyPairs(secrets)
+	if (agentPairs) {
+		if (!slotTokens) {
+			throw new Error(
+				`${DEMO_AGENT_KEYS_SECRET} requires the slot tokens from ${DEMO_SLOT_KEYS_SECRET}: one pair per slot`,
+			)
+		}
+		if (!proposerTokens) {
+			throw new Error(
+				`${DEMO_AGENT_KEYS_SECRET} requires the proposer keys from ${DEMO_PROPOSER_KEYS_SECRET}: the product lead proposes through them`,
+			)
+		}
+		if (agentPairs.length !== slotTokens.length) {
+			throw new Error(
+				`${DEMO_AGENT_KEYS_SECRET} must hold exactly one pair per slot (${agentPairs.length} pairs, ${slotTokens.length} slots)`,
+			)
+		}
+		for (const key of agentPairs.flat()) {
+			if (slotTokens.includes(key)) {
+				throw new Error(
+					`${DEMO_AGENT_KEYS_SECRET} must not reuse a slot token from ${DEMO_SLOT_KEYS_SECRET}`,
+				)
+			}
+			if (proposerTokens.includes(key)) {
+				throw new Error(
+					`${DEMO_AGENT_KEYS_SECRET} must not reuse a proposer token from ${DEMO_PROPOSER_KEYS_SECRET}`,
+				)
+			}
+			if (key === apiKey) {
+				throw new Error(
+					`${DEMO_AGENT_KEYS_SECRET} must not reuse the admin API key`,
+				)
+			}
+		}
+	}
 	// The object form keys policies by token, so a repeated token would silently
 	// replace the earlier policy, and the API refuses its own admin token as a
 	// scoped one.
@@ -208,13 +325,14 @@ export function buildDemoStackEnv(
 			MDBRAIN_API_KEY: apiKey,
 			MDBRAIN_API_HOST: "127.0.0.1",
 			MDBRAIN_API_PORT: String(DEMO_API_PORT),
-			...(slotTokens || proposerTokens
+			...(slotTokens || proposerTokens || agentPairs
 				? {
 						MDBRAIN_API_SCOPED_KEYS: JSON.stringify({
 							...(slotTokens ? buildDemoSlotScopedKeys(slotTokens) : {}),
 							...(proposerTokens
 								? buildDemoProposerScopedKeys(proposerTokens)
 								: {}),
+							...(agentPairs ? buildDemoAgentScopedKeys(agentPairs) : {}),
 						}),
 					}
 				: {}),

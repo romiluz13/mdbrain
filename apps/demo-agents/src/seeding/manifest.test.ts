@@ -98,3 +98,71 @@ describe("createRunManifests", () => {
 		expect(raw).not.toMatch(/apiKey|token|secret/i)
 	})
 })
+
+describe("agent runs", () => {
+	const summary = {
+		usage: { uncachedInput: 10, cacheRead: 2, cacheWrite: 1, output: 3 },
+		stepsRecorded: 9,
+		reusedPage: {
+			slug: "risks/halvorsen-renewal-support-view",
+			writtenBy: "support",
+			readBy: "account",
+		},
+		pendingProposal: {
+			title: "Silent ETA drift",
+			slug: "syntheses/silent-eta-drift",
+		},
+	}
+
+	it("marks started -> complete with the outcome summary, one-way", async () => {
+		const { manifests } = makeStore()
+		await manifests.createRun(init)
+		await manifests.markReady("run-a")
+		const started = await manifests.markAgentRunStarted("run-a")
+		expect(started?.agentRun).toEqual({
+			state: "running",
+			startedAt: NOW,
+		})
+		expect(await manifests.markAgentRunStarted("run-a")).toBeNull()
+		const done = await manifests.markAgentRunComplete("run-a", summary)
+		expect(done?.agentRun).toEqual({
+			state: "complete",
+			startedAt: NOW,
+			endedAt: NOW,
+			...summary,
+		})
+		expect(await manifests.markAgentRunComplete("run-a", summary)).toBeNull()
+		expect(await manifests.markAgentRunIncomplete("run-a", "late")).toBeNull()
+		await manifests.markUsed("run-a")
+		const doc = await manifests.get("run-a")
+		expect(doc?.state).toBe("used")
+		expect(doc?.agentRun?.state).toBe("complete")
+	})
+
+	it("marks incomplete with a reason and leaves the slot unconsumed", async () => {
+		const { manifests } = makeStore()
+		await manifests.createRun(init)
+		await manifests.markReady("run-a")
+		await manifests.markAgentRunStarted("run-a")
+		const reason =
+			"staging: account could not read risks/halvorsen-renewal-support-view within 5000ms"
+		const done = await manifests.markAgentRunIncomplete("run-a", reason)
+		expect(done?.agentRun).toMatchObject({
+			state: "incomplete",
+			failureReason: reason,
+		})
+		expect(await manifests.markAgentRunComplete("run-a", summary)).toBeNull()
+		const doc = await manifests.get("run-a")
+		expect(doc?.state).toBe("ready")
+	})
+
+	it("refuses to start an agent run outside a ready run", async () => {
+		const { manifests } = makeStore()
+		await manifests.createRun(init)
+		expect(await manifests.markAgentRunStarted("run-a")).toBeNull()
+		const failedStore = makeStore()
+		await failedStore.manifests.createRun({ ...init, runId: "run-b" })
+		await failedStore.manifests.markFailed("run-b", "seeding died")
+		expect(await failedStore.manifests.markAgentRunStarted("run-b")).toBeNull()
+	})
+})

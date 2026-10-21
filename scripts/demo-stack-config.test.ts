@@ -251,3 +251,140 @@ describe("demo proposers", () => {
 		)
 	})
 })
+
+describe("demo role agents", () => {
+	const stackDir = "/tmp/demo-stack"
+	const base = {
+		...secrets,
+		MDBRAIN_DEMO_SLOT_KEYS: '["slot-token-one", "slot-token-two"]',
+		MDBRAIN_DEMO_PROPOSER_KEYS: '["proposer-token-one", "proposer-token-two"]',
+	}
+	const withAgents = {
+		...base,
+		MDBRAIN_DEMO_AGENT_KEYS: JSON.stringify([
+			["agent-support-one", "agent-account-one"],
+			["agent-support-two", "agent-account-two"],
+		]),
+	}
+	const policiesOf = (all: Record<string, string>) =>
+		JSON.parse(
+			buildDemoStackEnv(all, { stackDir }).api.MDBRAIN_API_SCOPED_KEYS ?? "",
+		)
+
+	it("pins each role key to the run agentId and exactly one slot scope", () => {
+		const policies = policiesOf(withAgents)
+		expect(Object.keys(policies)).toEqual([
+			"slot-token-one",
+			"slot-token-two",
+			"proposer-token-one",
+			"proposer-token-two",
+			"agent-support-one",
+			"agent-account-one",
+			"agent-support-two",
+			"agent-account-two",
+		])
+		expect(policies["agent-support-one"]).toEqual({
+			subjectId: "demo-agent-support-1",
+			displayName: "Demo support agent 1",
+			grants: [{ scope: "workspace", scopeRef: "demo-run-1" }],
+			agentIds: ["demo-run-1"],
+		})
+		expect(policies["agent-account-two"]).toEqual({
+			subjectId: "demo-agent-account-2",
+			displayName: "Demo account agent 2",
+			grants: [{ scope: "workspace", scopeRef: "demo-run-2" }],
+			agentIds: ["demo-run-2"],
+		})
+	})
+
+	it("produces principals the API pins to one agentId with read+write", () => {
+		const credentials = parseScopedApiKeyPolicies(
+			buildDemoStackEnv(withAgents, { stackDir }).api.MDBRAIN_API_SCOPED_KEYS,
+		)
+		const support = credentials.find(
+			(credential) => credential.principal.subjectId === "demo-agent-support-1",
+		)
+		expect(support?.principal.allowedAgentIds).toEqual(["demo-run-1"])
+		expect(support?.principal.allowedScopes).toEqual([
+			{ scope: "workspace", scopeRef: "demo-run-1" },
+		])
+		expect(support?.principal.capabilities).toEqual(["read", "write"])
+	})
+
+	it("adds nothing when no agent keys are configured", () => {
+		const policies = policiesOf(base)
+		expect(Object.keys(policies)).toHaveLength(4)
+	})
+
+	it("rejects malformed, empty or duplicate pairs", () => {
+		const bad = (value: string) =>
+			buildDemoStackEnv(
+				{ ...base, MDBRAIN_DEMO_AGENT_KEYS: value },
+				{ stackDir },
+			)
+		expect(() => bad("not-json")).toThrow(/MDBRAIN_DEMO_AGENT_KEYS/)
+		expect(() => bad("[]")).toThrow(/MDBRAIN_DEMO_AGENT_KEYS/)
+		expect(() => bad('["a"]')).toThrow(/MDBRAIN_DEMO_AGENT_KEYS/)
+		expect(() => bad('[["a"]]')).toThrow(/MDBRAIN_DEMO_AGENT_KEYS/)
+		expect(() => bad('[["a", "b", "c"]]')).toThrow(/MDBRAIN_DEMO_AGENT_KEYS/)
+		expect(() => bad('[["a", "a"]]')).toThrow(/MDBRAIN_DEMO_AGENT_KEYS/)
+		expect(() => bad('[["a", "b"], ["c", "b"]]')).toThrow(
+			/MDBRAIN_DEMO_AGENT_KEYS/,
+		)
+		expect(() => bad('[["a", 1]]')).toThrow(/MDBRAIN_DEMO_AGENT_KEYS/)
+	})
+
+	it("requires one pair per slot and the proposer list", () => {
+		const short = {
+			...base,
+			MDBRAIN_DEMO_AGENT_KEYS: JSON.stringify([
+				["agent-support-one", "agent-account-one"],
+			]),
+		}
+		expect(() => buildDemoStackEnv(short, { stackDir })).toThrow(
+			/MDBRAIN_DEMO_AGENT_KEYS.*pair per slot/,
+		)
+		const noProposers = {
+			...secrets,
+			MDBRAIN_DEMO_SLOT_KEYS: '["slot-token-one"]',
+			MDBRAIN_DEMO_AGENT_KEYS: JSON.stringify([
+				["agent-support-one", "agent-account-one"],
+			]),
+		}
+		expect(() => buildDemoStackEnv(noProposers, { stackDir })).toThrow(
+			/MDBRAIN_DEMO_PROPOSER_KEYS/,
+		)
+		const noSlots = {
+			...secrets,
+			MDBRAIN_DEMO_PROPOSER_KEYS: '["proposer-token-one"]',
+			MDBRAIN_DEMO_AGENT_KEYS: JSON.stringify([
+				["agent-support-one", "agent-account-one"],
+			]),
+		}
+		expect(() => buildDemoStackEnv(noSlots, { stackDir })).toThrow(
+			/MDBRAIN_DEMO_SLOT_KEYS/,
+		)
+	})
+
+	it("refuses a role key that is also a slot, proposer or admin key", () => {
+		const clash = (support: string, account: string) =>
+			buildDemoStackEnv(
+				{
+					...secrets,
+					MDBRAIN_DEMO_SLOT_KEYS: '["slot-token-one"]',
+					MDBRAIN_DEMO_PROPOSER_KEYS: '["proposer-token-one"]',
+					MDBRAIN_DEMO_AGENT_KEYS: JSON.stringify([[support, account]]),
+				},
+				{ stackDir },
+			)
+		expect(() => clash("slot-token-one", "agent-account-one")).toThrow(
+			/MDBRAIN_DEMO_AGENT_KEYS.*slot/,
+		)
+		expect(() => clash("agent-support-one", "proposer-token-one")).toThrow(
+			/MDBRAIN_DEMO_AGENT_KEYS.*proposer/,
+		)
+		expect(() => clash("demo-local-api", "agent-account-one")).toThrow(
+			/MDBRAIN_DEMO_AGENT_KEYS.*admin/,
+		)
+	})
+})

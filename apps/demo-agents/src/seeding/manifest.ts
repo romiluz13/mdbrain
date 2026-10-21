@@ -29,6 +29,40 @@ export type RunManifestDoc = {
 	readyAt?: string
 	usedAt?: string
 	failedAt?: string
+	/** Flat guard for the agent-run state machine: "" from insert until an
+	 * agent run starts, so "not yet running" is a plain equality filter
+	 * (a missing field would never match). */
+	agentRunState?: "" | "running" | "complete" | "incomplete"
+	agentRun?: AgentRunDoc
+}
+
+export type AgentRunUsage = {
+	uncachedInput: number
+	cacheRead: number
+	cacheWrite: number
+	output: number
+}
+
+/** Agent-run state machine (ticket 10). Started only from a ready run,
+ * then complete (with the outcome summary) or incomplete (with a
+ * reason); both terminal states are one-way. The doc's own state stays
+ * "ready" throughout; a complete agent run is followed by markUsed. */
+export type AgentRunDoc = {
+	state: "running" | "complete" | "incomplete"
+	startedAt: string
+	endedAt?: string
+	usage?: AgentRunUsage
+	stepsRecorded?: number
+	failureReason?: string
+	reusedPage?: { slug: string; writtenBy: string; readBy: string }
+	pendingProposal?: { title: string; slug: string }
+}
+
+export type AgentRunSummaryInput = {
+	usage: AgentRunUsage
+	stepsRecorded: number
+	reusedPage?: { slug: string; writtenBy: string; readBy: string }
+	pendingProposal?: { title: string; slug: string }
 }
 
 /** get() view: the stored doc plus the derived logical event id map the
@@ -82,6 +116,7 @@ export function createRunManifests(
 					limitSources: input.limitSources ?? null,
 					eventsWritten: [] as ManifestEventRef[],
 					pagesWritten: [] as string[],
+					agentRunState: "" as const,
 					createdAt: now(),
 					updatedAt: now(),
 				},
@@ -162,6 +197,75 @@ export function createRunManifests(
 		)
 	}
 
+	/** Starts the agent-run state machine. Valid only on a ready run
+	 * that has not started one yet; one-way: a second start is refused. */
+	async function markAgentRunStarted(
+		runId: string,
+	): Promise<RunManifestDoc | null> {
+		return store.findOneAndUpdate(
+			{ _id: runId, state: "ready", agentRunState: "" },
+			{
+				$set: {
+					agentRunState: "running",
+					agentRun: { state: "running", startedAt: now() },
+					updatedAt: now(),
+				},
+			},
+			{ returnDocument: "after" },
+		)
+	}
+
+	async function markAgentRunComplete(
+		runId: string,
+		summary: AgentRunSummaryInput,
+	): Promise<RunManifestDoc | null> {
+		const doc = await store.findOne({ _id: runId, agentRunState: "running" })
+		if (doc?.agentRun?.state !== "running") return null
+		return store.findOneAndUpdate(
+			{ _id: runId, agentRunState: "running" },
+			{
+				$set: {
+					agentRunState: "complete",
+					agentRun: {
+						state: "complete",
+						startedAt: doc.agentRun.startedAt,
+						endedAt: now(),
+						usage: summary.usage,
+						stepsRecorded: summary.stepsRecorded,
+						reusedPage: summary.reusedPage,
+						pendingProposal: summary.pendingProposal,
+					},
+					updatedAt: now(),
+				},
+			},
+			{ returnDocument: "after" },
+		)
+	}
+
+	async function markAgentRunIncomplete(
+		runId: string,
+		reason: string,
+	): Promise<RunManifestDoc | null> {
+		const doc = await store.findOne({ _id: runId, agentRunState: "running" })
+		if (doc?.agentRun?.state !== "running") return null
+		return store.findOneAndUpdate(
+			{ _id: runId, agentRunState: "running" },
+			{
+				$set: {
+					agentRunState: "incomplete",
+					agentRun: {
+						state: "incomplete",
+						startedAt: doc.agentRun.startedAt,
+						endedAt: now(),
+						failureReason: reason,
+					},
+					updatedAt: now(),
+				},
+			},
+			{ returnDocument: "after" },
+		)
+	}
+
 	async function markFailed(
 		runId: string,
 		reason: string,
@@ -198,6 +302,9 @@ export function createRunManifests(
 		orderEvents,
 		markReady,
 		markUsed,
+		markAgentRunStarted,
+		markAgentRunComplete,
+		markAgentRunIncomplete,
 		markFailed,
 		get,
 	}
