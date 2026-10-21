@@ -92,10 +92,8 @@ export function matchOperation(rawParts: string[]): MatchedOperation | null {
 			operation: "cite",
 			upstreamPath: "/v1/cite",
 			query: {
-				required: {
-					marker: { kind: "citation", markerKind: "event" },
-					citedBy: { kind: "citation", markerKind: "wiki" },
-				},
+				required: { marker: { kind: "citation", markerKind: "event" } },
+				optional: { citedBy: { kind: "citation", markerKind: "wiki" } },
 			},
 		}
 	}

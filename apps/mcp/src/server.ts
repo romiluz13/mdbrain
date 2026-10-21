@@ -1154,7 +1154,7 @@ export const toolList = [
 	{
 		name: "mdbrain_cite",
 		description:
-			"Resolve a citation marker to what it names. Wiki claims show markers like [[wiki:SLUG#CLAIM_ID@rREVISION]]: this returns the claim text and evidence as stored at exactly that revision, even after later edits. An event marker [[event:EVENT_ID]] is confirmed only in the context of a citing claim: pass that claim's wiki marker as citedBy. Scope comes from scope/scopeRef, never from the marker. A missing, hidden or unconfirmed citation returns a coded error (CITATION_NOT_FOUND, CITATION_UNRESOLVED) with no content; CITATION_RECALL_DEGRADED means retry.",
+			"Resolve a citation marker to what it names. Wiki claims show markers like [[wiki:SLUG#CLAIM_ID@rREVISION]]: this returns the claim text and evidence as stored at exactly that revision, even after later edits. An event marker [[event:EVENT_ID]] resolves by id to the event's text and business timestamp, only within the request's agent, scope and scopeRef; citedBy is optional, and when given that claim must be readable and cite the event. Scope comes from scope/scopeRef, never from the marker. A missing, hidden or unconfirmed citation returns a coded error (CITATION_NOT_FOUND, CITATION_UNRESOLVED) with no content.",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -1166,7 +1166,7 @@ export const toolList = [
 				citedBy: {
 					type: "string",
 					description:
-						"Required for an event marker: the wiki marker of the claim that cites the event.",
+						"Optional for an event marker: the wiki marker of a claim that cites the event. When given, that claim must be readable and cite the event.",
 				},
 				scope: { type: "string" },
 				scopeRef: { type: "string" },

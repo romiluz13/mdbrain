@@ -18,6 +18,7 @@ export type MemongoOperationName =
 	| "lifecycleUpdate"
 	| "lifecycleDelete"
 	| "lifecycleHistory"
+	| "eventGet"
 	| "procedureOutcome"
 	| "memoryFeedback"
 	| "status"
@@ -124,6 +125,7 @@ export const MEMONGO_OPERATION_POLICIES = {
 		method: "POST",
 		path: "/v1/lifecycle/history",
 	},
+	eventGet: { ...READ, method: "POST", path: "/v1/events/get" },
 	procedureOutcome: {
 		...WRITE,
 		method: "POST",

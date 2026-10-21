@@ -1,7 +1,7 @@
 // A screenshot of every /demo chapter for the project it runs on, for review.
 //   DEMO_SHOTS_DIR=/some/dir bunx playwright test e2e/demo-shots.e2e.ts
 // Set DEMO_E2E_LIVE=1 to shoot a live stack instead of the fixture.
-import { expect, test } from "@playwright/test"
+import { expect, type Page, test } from "@playwright/test"
 import { CHAPTERS } from "../app/demo/chapters"
 import { proxyError } from "../lib/demo-data/proxy-errors"
 import {
@@ -78,12 +78,31 @@ for (const [index, chapter] of CHAPTERS.entries()) {
 }
 
 // The states a live slot shows that the plain fixture does not: a run before its
-// agent run, a claim stored with no evidence, and sources recall cannot confirm.
+// agent run, a claim stored with no evidence, sources the API cannot confirm,
+// and chapters 3 and 4 in every state of the run.
+const openSteps = async (page: Page) => {
+	for (const summary of await page
+		.getByTestId("agent-role")
+		.locator("summary")
+		.all()) {
+		await summary.click()
+	}
+	await expect(
+		page.locator('[data-testid="agent-step"][data-status="loading"]'),
+	).toHaveCount(0)
+}
+const showMoreSources = async (page: Page) => {
+	const more = page.getByRole("button", { name: "Show ten more" })
+	for (let asked = 0; asked < 3; asked += 1) {
+		await more.click()
+	}
+}
 const STATES: Array<{
 	name: string
 	chapter: string
 	options: ProxyOptions
 	beat?: number
+	act?: (page: Page) => Promise<void>
 }> = [
 	{
 		name: "ch5-none",
@@ -105,10 +124,38 @@ const STATES: Array<{
 					? proxyError(
 							404,
 							"CITATION_UNRESOLVED",
-							"The source could not be confirmed through governed recall.",
+							"The source could not be confirmed in this run.",
 						)
 					: undefined,
 		},
+	},
+	{ name: "ch3-more", chapter: "sources", options: {}, act: showMoreSources },
+	{ name: "ch4-steps-open", chapter: "agents", options: {}, act: openSteps },
+	{
+		name: "ch4-step-missed",
+		chapter: "agents",
+		options: { run: { missedSteps: [2] } },
+		act: openSteps,
+	},
+	{
+		name: "ch4-no-steps",
+		chapter: "agents",
+		options: { run: { variant: "no-steps" } },
+	},
+	{
+		name: "ch4-running",
+		chapter: "agents",
+		options: { run: { variant: "running" } },
+	},
+	{
+		name: "ch4-incomplete",
+		chapter: "agents",
+		options: { run: { variant: "incomplete" } },
+	},
+	{
+		name: "ch4-none",
+		chapter: "agents",
+		options: { run: { variant: "none" } },
 	},
 ]
 
@@ -129,11 +176,13 @@ for (const state of STATES) {
 				await showBeat(page, state.beat)
 			}
 		}
+		await state.act?.(page)
 		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
 		await expect(
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
 		).toHaveCount(0)
 		await settled(page)
+		await page.evaluate(() => window.scrollTo(0, 0))
 		await page.screenshot({
 			path: `${DIR}/${testInfo.project.name}-state-${state.name}.png`,
 			fullPage: true,

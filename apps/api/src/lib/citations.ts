@@ -4,6 +4,7 @@
 
 import { type CitationMarker, formatCitationMarker } from "@mdbrain/client"
 import type { MemoryScope } from "@mdbrain/lib"
+import type { MemoryEventRecord } from "@mdbrain/memory-bridge"
 import {
 	type GovernanceContext,
 	type WikiChange,
@@ -283,12 +284,12 @@ export type ResolvedEvent = {
 	status: "resolved"
 	kind: "event"
 	marker: string
-	citedBy: string
+	citedBy?: string
 	event: {
 		eventId: string
 		canonicalId: string
-		text: string | undefined
-		timestamp: string | undefined
+		text: string
+		timestamp: string
 		scope: string
 		scopeRef: string
 	}
@@ -298,132 +299,87 @@ export type EventCitationOutcome =
 	| { outcome: "resolved"; body: ResolvedEvent }
 	| { outcome: "claim-not-found" }
 	| { outcome: "unresolved" }
-	| { outcome: "degraded"; retryAfterMs: number | undefined }
 
-export type RecallEvents = (params: {
-	query: string
+export type GetEvent = (params: {
+	eventId: string
 	agentId: string | undefined
-	maxResults: number
 	scope: MemoryScope
 	scopeRef: string
-}) => Promise<unknown>
+}) => Promise<MemoryEventRecord | null>
 
-export class CitationRecallError extends Error {
+export class CitationLookupError extends Error {
 	constructor(readonly original: unknown) {
-		super("governed recall failed")
-		this.name = "CitationRecallError"
+		super("governed event lookup failed")
+		this.name = "CitationLookupError"
 	}
 }
 
-// How much of the citing evidence's excerpt is sent as the recall query. The
-// opening goes first: Memongo routes a long, document-shaped query toward
-// structured facts that can crowd the raw event out of the results, while a
-// short one finds it (24 of 40 live cites resolved with 1000 characters,
-// 37 of 40 with 80). The full excerpt is the fallback.
-const RECALL_OPENING_CHARS = 80
-const RECALL_QUERY_CHARS = 1000
-const RECALL_MAX_RESULTS = 10
-
-// Memongo has no get-event-by-id route (decision D9), so an event marker is
-// confirmed only in the context of a claim that cites it: that claim's
-// evidence for the event carries a verbatim excerpt in `note`, governed recall
-// under the request's agent and scope is queried with it, and only a hit whose
-// canonicalId is exactly `event:EVENT_ID` counts. No hit means unresolved.
+// An event marker resolves through Memongo's governed by-id read under the
+// request's agent, scope and scopeRef (decision D21). A citing claim is
+// optional; when given it must be readable and must cite the event, or the
+// marker is refused before any lookup.
 export async function resolveEventMarker(
-	handle: WikiDbHandle,
+	handle: WikiDbHandle | undefined,
 	marker: EventMarker,
-	citedBy: WikiMarker,
+	citedBy: WikiMarker | undefined,
 	request: {
 		agentId: string | undefined
 		scope: MemoryScope
 		scopeRef: string
 		governance: GovernanceContext
 	},
-	recall: RecallEvents,
+	getEvent: GetEvent,
 ): Promise<EventCitationOutcome> {
-	const citing = await resolveClaimMarker(handle, citedBy, request)
-	if (!citing) return { outcome: "claim-not-found" }
-	const evidence = Array.isArray(citing.claim.evidence)
-		? citing.claim.evidence
-		: []
-	const note = evidence
-		.map((entry: unknown) =>
-			isRecord(entry) &&
-			entry.kind === "event" &&
-			entry.sourceId === marker.eventId &&
-			typeof entry.note === "string"
-				? entry.note.trim()
-				: "",
+	if (citedBy) {
+		const citing = handle
+			? await resolveClaimMarker(handle, citedBy, request)
+			: undefined
+		if (!citing) return { outcome: "claim-not-found" }
+		const evidence = Array.isArray(citing.claim.evidence)
+			? citing.claim.evidence
+			: []
+		const cites = evidence.some(
+			(entry: unknown) =>
+				isRecord(entry) &&
+				entry.kind === "event" &&
+				entry.sourceId === marker.eventId,
 		)
-		.find((excerpt) => excerpt !== "")
-	if (!note) return { outcome: "unresolved" }
-
-	const canonicalId = `event:${marker.eventId}`
-	const queries = [
-		...new Set([
-			note.slice(0, RECALL_OPENING_CHARS),
-			note.slice(0, RECALL_QUERY_CHARS),
-		]),
-	]
-	let hit: Record<string, unknown> | undefined
-	for (const query of queries) {
-		let response: unknown
-		try {
-			response = await recall({
-				query,
-				agentId: request.agentId,
-				maxResults: RECALL_MAX_RESULTS,
-				scope: request.scope,
-				scopeRef: request.scopeRef,
-			})
-		} catch (error) {
-			throw new CitationRecallError(error)
-		}
-		const results =
-			isRecord(response) && Array.isArray(response.results)
-				? response.results
-				: []
-		hit = results.find(
-			(result): result is Record<string, unknown> =>
-				isRecord(result) &&
-				result.canonicalId === canonicalId &&
-				(result.scope === undefined || result.scope === request.scope) &&
-				(result.scopeRef === undefined || result.scopeRef === request.scopeRef),
-		)
-		if (hit) break
-		const degradation = isRecord(response) ? response.degradation : undefined
-		if (isRecord(degradation) && degradation.kind === "throttled") {
-			return {
-				outcome: "degraded",
-				retryAfterMs:
-					typeof degradation.retryAfterMs === "number"
-						? degradation.retryAfterMs
-						: undefined,
-			}
-		}
+		if (!cites) return { outcome: "unresolved" }
 	}
-	if (!hit) return { outcome: "unresolved" }
-	const text =
-		typeof hit.text === "string"
-			? hit.text
-			: typeof hit.snippet === "string"
-				? hit.snippet
-				: undefined
+
+	let event: MemoryEventRecord | null
+	try {
+		event = await getEvent({
+			eventId: marker.eventId,
+			agentId: request.agentId,
+			scope: request.scope,
+			scopeRef: request.scopeRef,
+		})
+	} catch (error) {
+		throw new CitationLookupError(error)
+	}
+	if (
+		!event ||
+		event.eventId !== marker.eventId ||
+		event.scope !== request.scope ||
+		event.scopeRef !== request.scopeRef
+	) {
+		return { outcome: "unresolved" }
+	}
 	return {
 		outcome: "resolved",
 		body: {
 			status: "resolved",
 			kind: "event",
 			marker: formatCitationMarker(marker),
-			citedBy: formatCitationMarker(citedBy),
+			...(citedBy ? { citedBy: formatCitationMarker(citedBy) } : {}),
 			event: {
-				eventId: marker.eventId,
-				canonicalId,
-				text,
-				timestamp:
-					typeof hit.timestamp === "string" ? hit.timestamp : undefined,
-				scope: request.scope,
-				scopeRef: request.scopeRef,
+				eventId: event.eventId,
+				canonicalId: `event:${event.eventId}`,
+				text: event.body,
+				timestamp: event.timestamp,
+				scope: event.scope,
+				scopeRef: event.scopeRef,
 			},
 		},
 	}

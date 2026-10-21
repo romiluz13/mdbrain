@@ -78,7 +78,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		)
 	})
 
-	test("sources arrive leads each row with a label read from its stored source, the id second", async ({
+	test("sources arrive lists the run's record in its order, and leads a confirmed row with a label read from its stored source", async ({
 		page,
 	}) => {
 		const proxy = await installDemoProxy(page)
@@ -91,6 +91,13 @@ test.describe("values on screen equal the proxy's responses", () => {
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
 		).toHaveCount(0, SLOW_LIST)
 		await proxy.flush()
+		const run = proxy.latest("run")?.body as
+			| { arrivals: Array<{ sourceId: string; eventId: string }> }
+			| undefined
+		if (run === undefined) {
+			test.skip(true, "this server has no run record")
+			return
+		}
 		const stored = new Map<string, string>()
 		const refused = new Set<string>()
 		for (const entry of proxy.responses) {
@@ -105,11 +112,17 @@ test.describe("values on screen equal the proxy's responses", () => {
 			}
 		}
 		const count = await rows.count()
-		expect(count).toBeGreaterThan(0)
-		expect(count).toBeLessThanOrEqual(8)
+		expect(count).toBe(Math.min(10, run.arrivals.length))
+		await expect(page.getByTestId("source-event-id")).toHaveText(
+			run.arrivals.slice(0, count).map((arrival) => arrival.eventId),
+		)
+		await expect(page.getByTestId("source-id")).toHaveText(
+			run.arrivals.slice(0, count).map((arrival) => arrival.sourceId),
+		)
 		for (let at = 0; at < count; at += 1) {
 			const row = rows.nth(at)
-			const id = (await row.getByTestId("source-id").textContent()) ?? ""
+			const eventId =
+				(await row.getByTestId("source-event-id").textContent()) ?? ""
 			const label = (await row.getByTestId("source-label").textContent()) ?? ""
 			const order = await row.evaluate((element) =>
 				[...element.querySelectorAll("[data-testid]")].map((node) =>
@@ -119,19 +132,20 @@ test.describe("values on screen equal the proxy's responses", () => {
 			expect(order.indexOf("source-label")).toBeLessThan(
 				order.indexOf("source-id"),
 			)
-			const text = stored.get(id)
+			const status = await row.getAttribute("data-status")
+			const text = stored.get(eventId)
 			if (text === undefined) {
-				// A source the proxy refused is an unavailable row that still names it.
-				await expect(row).toHaveAttribute("data-status", "unavailable")
-				expect(
-					[...refused].some((marker) => marker.includes(id)),
-					`a refused cite for ${id}`,
-				).toBe(true)
+				// A source the proxy refused is a row that still names it.
 				expect(label).toMatch(/could not/)
+				expect(
+					[...refused].some((marker) => marker.includes(eventId)),
+					`a refused cite for ${eventId}`,
+				).toBe(true)
 				continue
 			}
+			expect(status).toBe("confirmed")
 			expect(label).not.toBe("")
-			expect(label).not.toContain(id)
+			expect(label).not.toContain(eventId)
 			// A label is taken from the stored source, never made up.
 			expect(wordsOf(storedBody(text))).toContain(
 				wordsOf(label.replace(/…$/, "")),

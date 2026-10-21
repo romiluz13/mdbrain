@@ -270,7 +270,7 @@ export async function sourcesSettled(scope: Locator): Promise<void> {
 }
 
 /** The cite reads the proxy refused for a claim, each as the stored event it
- * asked about. A source recall cannot confirm, or a recall that is busy, is an
+ * asked about. A source the API cannot confirm, or a read that fails, is an
  * answer the page shows as an unavailable slip; the fixture never refuses one. */
 function refusedCites(
 	proxy: DemoProxy,
@@ -383,7 +383,7 @@ export function refusedReads(proxy: DemoProxy): string[] {
 
 /** The console and page errors that no refused read accounts for. The browser
  * logs one "Failed to load resource" line for each non-2xx answer; a source
- * recall cannot confirm is such an answer, and the page shows it as an
+ * the API cannot confirm is such an answer, and the page shows it as an
  * unavailable slip. Every other error, and any such line the proxy did not
  * serve, stays an error. */
 export function unexplainedBrowserErrors(

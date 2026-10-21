@@ -3,13 +3,13 @@
 // The route and the engine's real revision lookup and governance run against a
 // fake revisions collection, so "hidden by that revision's own permissions" is
 // decided by the shipped filter, not by a mock. Only the store handle and the
-// memory bridge's recall are replaced.
+// memory bridge's event read are replaced.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const prevEnv = { ...process.env }
 
-const bridge = vi.hoisted(() => ({ mdbrainBridgeSearch: vi.fn() }))
+const bridge = vi.hoisted(() => ({ mdbrainBridgeGetEvent: vi.fn() }))
 const store = vi.hoisted(() => ({
 	getWikiStoreHandle: vi.fn(),
 	withWikiTransaction: vi.fn(),
@@ -149,7 +149,7 @@ beforeEach(() => {
 	process.env = { ...prevEnv }
 	revisions = []
 	lookups = []
-	bridge.mdbrainBridgeSearch.mockReset()
+	bridge.mdbrainBridgeGetEvent.mockReset()
 	store.getWikiStoreHandle.mockReset()
 	store.getWikiStoreHandle.mockResolvedValue({ db: fakeDb, prefix: "t_" })
 })
@@ -381,15 +381,15 @@ describe("GET /v1/cite for a claim marker", () => {
 })
 
 describe("GET /v1/cite for an event marker", () => {
-	const NOTE =
-		"Tobias asked for a written ETA recovery plan before the November signature."
 	const citing = marker("accounts/halvorsen", "renewal", 1)
-	const recalled = (extra: Record<string, unknown> = {}) => ({
-		canonicalId: "event:evt-1",
-		text: `User: ${NOTE}`,
+	const stored = (extra: Record<string, unknown> = {}) => ({
+		eventId: "evt-1",
+		role: "user",
+		body: "Tobias asked for a written ETA recovery plan before the November signature.",
 		timestamp: "2026-09-28T08:30:00.000Z",
 		scope: "workspace",
 		scopeRef: "ws-1",
+		validAt: "2026-09-28T08:30:00.000Z",
 		...extra,
 	})
 
@@ -397,213 +397,102 @@ describe("GET /v1/cite for an event marker", () => {
 		revisions.push(
 			revision("ws-1", 1, [
 				claim("renewal", "The renewal is at risk.", [
-					{ kind: "event", sourceId: "evt-1", note: NOTE },
+					{ kind: "event", sourceId: "evt-1", note: "An excerpt." },
 					{ kind: "event", sourceId: "evt-2" },
 					{ kind: "manual", sourceId: "evt-3", note: "A manual note." },
 				]),
 			]),
-			revision("ws-1", 2, [
-				claim("renewal", "The renewal is at risk.", [
-					{
-						kind: "event",
-						sourceId: "evt-1",
-						note: "A later, different excerpt.",
-					},
-				]),
-			]),
 		)
-		bridge.mdbrainBridgeSearch.mockResolvedValue({ results: [recalled()] })
+		bridge.mdbrainBridgeGetEvent.mockResolvedValue(stored())
 	})
 
-	it("resolves through governed recall under the request's agent and scope, queried with the evidence excerpt", async () => {
-		const res = await cite("[[event:evt-1]]", {
-			citedBy: citing,
-			agentId: "agent-7",
-		})
+	it("resolves by id under the request's agent, scope and scopeRef, with no citing claim", async () => {
+		const res = await cite("[[event:evt-1]]", { agentId: "agent-7" })
 
 		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({
+		const body = (await res.json()) as CiteBody
+		expect(body).toEqual({
 			status: "resolved",
 			kind: "event",
 			marker: "[[event:evt-1]]",
-			citedBy: citing,
 			event: {
 				eventId: "evt-1",
 				canonicalId: "event:evt-1",
-				text: `User: ${NOTE}`,
+				text: "Tobias asked for a written ETA recovery plan before the November signature.",
 				timestamp: "2026-09-28T08:30:00.000Z",
-			},
-		})
-		expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledTimes(1)
-		expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledWith(
-			expect.objectContaining({
-				query: NOTE,
-				agentId: "agent-7",
 				scope: "workspace",
 				scopeRef: "ws-1",
-			}),
-		)
+			},
+		})
+		expect(bridge.mdbrainBridgeGetEvent).toHaveBeenCalledExactlyOnceWith({
+			eventId: "evt-1",
+			agentId: "agent-7",
+			scope: "workspace",
+			scopeRef: "ws-1",
+		})
+		expect(store.getWikiStoreHandle).not.toHaveBeenCalled()
 	})
 
-	it("uses the excerpt recorded at the revision the citing marker names", async () => {
-		await cite("[[event:evt-1]]", {
-			citedBy: marker("accounts/halvorsen", "renewal", 2),
-		})
-
-		expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledWith(
-			expect.objectContaining({ query: "A later, different excerpt." }),
-		)
-	})
-
-	it("accepts only a result whose canonicalId is exactly event:ID", async () => {
-		bridge.mdbrainBridgeSearch.mockResolvedValue({
-			results: [
-				recalled({ canonicalId: "event:evt-10", text: "Other event ten" }),
-				recalled({ canonicalId: "event:evt-1x", text: "Other event x" }),
-				recalled({ canonicalId: "evt-1", text: "Bare id" }),
-				recalled({ canonicalId: "event:evt-1 ", text: "Trailing space" }),
-				recalled({ canonicalId: "Event:evt-1", text: "Wrong case" }),
-			],
-		})
-
+	it("resolves by id after confirming the citing claim, and names that claim", async () => {
 		const res = await cite("[[event:evt-1]]", { citedBy: citing })
 
-		expect(res.status).toBe(404)
-		const raw = await res.text()
-		expect(JSON.parse(raw).error.code).toBe("CITATION_UNRESOLVED")
-		for (const leaked of ["Other event", "Bare id", "Trailing", "Wrong case"]) {
-			expect(raw).not.toContain(leaked)
-		}
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			marker: "[[event:evt-1]]",
+			citedBy: citing,
+			event: { eventId: "evt-1", timestamp: "2026-09-28T08:30:00.000Z" },
+		})
+		expect(lookups).toHaveLength(1)
 	})
 
-	it("picks the exact match out of near misses", async () => {
-		bridge.mdbrainBridgeSearch.mockResolvedValue({
-			results: [
-				recalled({ canonicalId: "event:evt-10", text: "Other event ten" }),
-				recalled(),
-			],
-		})
+	it("no longer needs an excerpt on the citing evidence", async () => {
+		bridge.mdbrainBridgeGetEvent.mockResolvedValue(stored({ eventId: "evt-2" }))
 
-		const body = (await (
-			await cite("[[event:evt-1]]", { citedBy: citing })
-		).json()) as CiteBody
+		const res = await cite("[[event:evt-2]]", { citedBy: citing })
 
-		expect(body.event?.text).toBe(`User: ${NOTE}`)
+		expect(res.status).toBe(200)
 	})
 
-	describe("with an excerpt longer than the opening recall query", () => {
-		const LONG =
-			"Ticket: NS-4294: rate-limit errors at Lowfield Logistics. Requester: Yara Lind, Fleet Manager. The dispatch board has shown rate-limit errors on every refresh since the carrier API change on Monday."
-		const longCiting = marker("accounts/lowfield", "rate-limits", 1)
+	it("leaves an event outside the request's agent, scope or scopeRef unresolved, with no content", async () => {
+		bridge.mdbrainBridgeGetEvent.mockResolvedValue(null)
 
-		beforeEach(() => {
-			revisions.push(
-				revision(
-					"ws-1",
-					1,
-					[
-						claim("rate-limits", "Lowfield hits rate limits.", [
-							{ kind: "event", sourceId: "evt-1", note: LONG },
-						]),
-					],
-					{},
-					"accounts/lowfield",
-				),
-			)
-		})
-
-		it("first recalls with the excerpt's opening, and stops there when it finds the event", async () => {
-			const res = await cite("[[event:evt-1]]", { citedBy: longCiting })
-
-			expect(res.status).toBe(200)
-			expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledTimes(1)
-			expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledWith(
-				expect.objectContaining({ query: LONG.slice(0, 80) }),
-			)
-		})
-
-		it("falls back to the full excerpt when the opening misses", async () => {
-			bridge.mdbrainBridgeSearch
-				.mockResolvedValueOnce({ results: [] })
-				.mockResolvedValueOnce({ results: [recalled()] })
-
-			const res = await cite("[[event:evt-1]]", { citedBy: longCiting })
-
-			expect(res.status).toBe(200)
-			expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledTimes(2)
-			expect(bridge.mdbrainBridgeSearch).toHaveBeenLastCalledWith(
-				expect.objectContaining({ query: LONG }),
-			)
-		})
-
-		it("stays unresolved when neither query finds the event", async () => {
-			bridge.mdbrainBridgeSearch.mockResolvedValue({ results: [] })
-
-			const res = await cite("[[event:evt-1]]", { citedBy: longCiting })
-
-			expect(res.status).toBe(404)
-			expect(bridge.mdbrainBridgeSearch).toHaveBeenCalledTimes(2)
-		})
-	})
-
-	it("leaves a deleted source unresolved", async () => {
-		bridge.mdbrainBridgeSearch.mockResolvedValue({ results: [] })
-
-		const res = await cite("[[event:evt-1]]", { citedBy: citing })
+		const res = await cite("[[event:evt-1]]", { scopeRef: "ws-2" })
 
 		expect(res.status).toBe(404)
 		expect(((await res.json()) as CiteBody).error?.code).toBe(
 			"CITATION_UNRESOLVED",
 		)
+		expect(bridge.mdbrainBridgeGetEvent).toHaveBeenCalledWith(
+			expect.objectContaining({ scopeRef: "ws-2" }),
+		)
 	})
 
-	it("ignores an exact match that recall reports from another scope", async () => {
-		bridge.mdbrainBridgeSearch.mockResolvedValue({
-			results: [recalled({ scopeRef: "ws-2", text: "Other scope text" })],
-		})
+	it.each([
+		["another event id", { eventId: "evt-10" }],
+		["another scope", { scope: "tenant" }],
+		["another scopeRef", { scopeRef: "ws-2" }],
+	])("does not trust a record that reports %s", async (_label, extra) => {
+		bridge.mdbrainBridgeGetEvent.mockResolvedValue(
+			stored({ ...extra, body: "Leaked body" }),
+		)
 
-		const res = await cite("[[event:evt-1]]", { citedBy: citing })
+		const res = await cite("[[event:evt-1]]")
 
 		expect(res.status).toBe(404)
 		const raw = await res.text()
 		expect(JSON.parse(raw).error.code).toBe("CITATION_UNRESOLVED")
-		expect(raw).not.toContain("Other scope text")
+		expect(raw).not.toContain("Leaked body")
 	})
 
-	it("reports a throttled recall as retryable, not as a missing source", async () => {
-		bridge.mdbrainBridgeSearch.mockResolvedValue({
-			results: [],
-			degradation: { kind: "throttled", scope: "denied", retryAfterMs: 2500 },
-		})
+	it("does not call a lookup failure unresolved", async () => {
+		bridge.mdbrainBridgeGetEvent.mockRejectedValue(new Error("memongo down"))
 
-		const res = await cite("[[event:evt-1]]", { citedBy: citing })
-
-		expect(res.status).toBe(503)
-		const body = (await res.json()) as CiteBody & {
-			error: { retryable?: boolean }
-		}
-		expect(body.error.code).toBe("CITATION_RECALL_DEGRADED")
-		expect(body.error.retryable).toBe(true)
-	})
-
-	it("does not call a recall failure unresolved", async () => {
-		bridge.mdbrainBridgeSearch.mockRejectedValue(new Error("memongo down"))
-
-		const res = await cite("[[event:evt-1]]", { citedBy: citing })
+		const res = await cite("[[event:evt-1]]")
 
 		expect(res.status).toBeGreaterThanOrEqual(500)
 		expect(((await res.json()) as CiteBody).error?.code).not.toBe(
 			"CITATION_UNRESOLVED",
 		)
-	})
-
-	it("needs the claim that cites it", async () => {
-		const res = await cite("[[event:evt-1]]")
-
-		expect(res.status).toBe(400)
-		expect(((await res.json()) as CiteBody).error?.code).toBe("INVALID_MARKER")
-		expect(bridge.mdbrainBridgeSearch).not.toHaveBeenCalled()
-		expect(store.getWikiStoreHandle).not.toHaveBeenCalled()
 	})
 
 	it.each([
@@ -615,24 +504,23 @@ describe("GET /v1/cite for an event marker", () => {
 
 		expect(res.status).toBe(400)
 		expect(((await res.json()) as CiteBody).error?.code).toBe("INVALID_MARKER")
-		expect(bridge.mdbrainBridgeSearch).not.toHaveBeenCalled()
+		expect(bridge.mdbrainBridgeGetEvent).not.toHaveBeenCalled()
 	})
 
 	it.each([
 		["a claim that does not cite the event", "[[event:evt-9]]"],
-		["evidence without an excerpt", "[[event:evt-2]]"],
 		["evidence that is not an event", "[[event:evt-3]]"],
-	])("leaves %s unresolved without searching", async (_name, eventMarker) => {
+	])("leaves %s unresolved without a lookup", async (_name, eventMarker) => {
 		const res = await cite(eventMarker, { citedBy: citing })
 
 		expect(res.status).toBe(404)
 		expect(((await res.json()) as CiteBody).error?.code).toBe(
 			"CITATION_UNRESOLVED",
 		)
-		expect(bridge.mdbrainBridgeSearch).not.toHaveBeenCalled()
+		expect(bridge.mdbrainBridgeGetEvent).not.toHaveBeenCalled()
 	})
 
-	it("answers a citing claim that is missing or hidden like any missing citation, without searching", async () => {
+	it("refuses a citing claim that is missing, without a lookup", async () => {
 		const missing = await cite("[[event:evt-1]]", {
 			citedBy: marker("accounts/halvorsen", "renewal", 9),
 		})
@@ -641,6 +529,46 @@ describe("GET /v1/cite for an event marker", () => {
 		expect(((await missing.json()) as CiteBody).error?.code).toBe(
 			"CITATION_NOT_FOUND",
 		)
-		expect(bridge.mdbrainBridgeSearch).not.toHaveBeenCalled()
+		expect(bridge.mdbrainBridgeGetEvent).not.toHaveBeenCalled()
+	})
+
+	it("refuses a citing claim the caller cannot read, exactly like a missing one", async () => {
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			{
+				token: "plain",
+				scopes: ["workspace"],
+				scopeRefs: ["ws-1"],
+				trustTier: "standard",
+				capabilities: ["read"],
+			},
+		])
+		revisions.push(
+			revision(
+				"ws-1",
+				2,
+				[
+					claim("renewal", "Confidential draft text.", [
+						{ kind: "event", sourceId: "evt-1" },
+					]),
+				],
+				{
+					permissions: { privacyTier: "confidential", allowedRoles: ["exec"] },
+				},
+			),
+		)
+
+		const hidden = await cite("[[event:evt-1]]", {
+			citedBy: marker("accounts/halvorsen", "renewal", 2),
+			token: "plain",
+		})
+		const missing = await cite("[[event:evt-1]]", {
+			citedBy: marker("accounts/halvorsen", "renewal", 9),
+			token: "plain",
+		})
+
+		const hiddenBody = await notFoundBody(hidden)
+		expect(hiddenBody).toBe(await notFoundBody(missing))
+		expect(hiddenBody).not.toContain("Confidential")
+		expect(bridge.mdbrainBridgeGetEvent).not.toHaveBeenCalled()
 	})
 })

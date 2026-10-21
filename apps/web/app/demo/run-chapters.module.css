@@ -1,0 +1,348 @@
+/* Chapters 3 and 4: the run's own record. Tokens come from the shell (.root in
+   demo.module.css); nothing here sets a color of its own. */
+
+.button {
+	composes: button from "./chapters.module.css";
+}
+
+.linkButton {
+	composes: linkButton from "./chapters.module.css";
+}
+
+.arrivalSummary {
+	display: grid;
+	gap: 4px;
+}
+
+.arrivalList {
+	composes: sourceList from "./chapters.module.css";
+}
+
+.arrivalList li {
+	scroll-margin-block: 80px;
+}
+
+.arrivalList li:focus-visible {
+	outline-offset: -2px;
+}
+
+.position {
+	flex: none;
+	align-self: flex-start;
+	min-width: 4ch;
+	padding-top: 2px;
+	color: var(--ink-2);
+	font-family: var(--font-mono);
+	font-size: var(--t13);
+	text-align: right;
+}
+
+.ids {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 12px;
+	font-family: var(--font-mono);
+	font-size: var(--t12);
+	color: var(--ink-2);
+	overflow-wrap: anywhere;
+}
+
+.label {
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.tag {
+	justify-self: start;
+	padding: 1px 8px;
+	border-radius: var(--r1);
+	background: var(--inset);
+	color: var(--ink);
+	font-size: var(--t12);
+	font-weight: 600;
+}
+
+.tag[data-tone="ok"] {
+	background: var(--ok-tint);
+	color: var(--ok-ink);
+}
+
+.tag[data-tone="signal"] {
+	background: var(--signal-tint);
+	color: var(--signal-ink);
+}
+
+.more {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 16px;
+}
+
+/* Chapter 4 */
+
+.strip {
+	display: grid;
+	gap: 16px;
+}
+
+.stripHead {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+}
+
+.stripFacts {
+	display: grid;
+	gap: 16px;
+}
+
+@media (min-width: 720px) {
+	.stripFacts {
+		grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+		align-items: start;
+	}
+}
+
+.fact {
+	display: grid;
+	gap: 2px;
+}
+
+.factLabel {
+	color: var(--ink-2);
+	font-size: var(--t13);
+}
+
+.factValue {
+	font-size: var(--t26);
+	font-weight: 800;
+	font-stretch: 112%;
+	line-height: 1.1;
+	font-variant-numeric: tabular-nums;
+}
+
+.factOf {
+	color: var(--ink-2);
+	font-size: var(--t15);
+	font-weight: 400;
+	font-stretch: 100%;
+}
+
+.meter {
+	width: 100%;
+	height: 12px;
+	border: 0;
+	border-radius: 6px;
+	background: var(--inset);
+	appearance: none;
+}
+
+.meter::-webkit-meter-bar {
+	height: 12px;
+	border: 0;
+	border-radius: 6px;
+	background: var(--inset);
+}
+
+.meter::-webkit-meter-optimum-value,
+.meter::-webkit-meter-suboptimum-value,
+.meter::-webkit-meter-even-less-good-value {
+	border-radius: 6px;
+	background: var(--scope);
+}
+
+.meter::-moz-meter-bar {
+	border-radius: 6px;
+	background: var(--scope);
+}
+
+.breakdown {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 20px;
+	color: var(--ink-2);
+	font-size: var(--t13);
+}
+
+.breakdown dt {
+	display: inline;
+}
+
+.breakdown dd {
+	display: inline;
+	margin: 0 0 0 4px;
+	color: var(--ink);
+	font-variant-numeric: tabular-nums;
+}
+
+.sectionHeading {
+	font-size: var(--t17);
+	font-weight: 700;
+	font-stretch: 112%;
+}
+
+.handoff {
+	display: grid;
+	gap: 12px;
+}
+
+@media (min-width: 1000px) {
+	.handoff {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 20px;
+		align-items: start;
+	}
+}
+
+.role {
+	position: relative;
+	display: grid;
+	gap: 8px;
+	align-content: start;
+	padding: 16px;
+	border-radius: var(--r3);
+	background: var(--panel);
+	min-width: 0;
+}
+
+/* The hand-off arrow: down between stacked cards, right between columns. */
+.role + .role::before {
+	content: "↓";
+	position: absolute;
+	top: -12px;
+	left: 24px;
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 12px;
+	background: var(--scope);
+	color: var(--scope-ink);
+	font-size: var(--t13);
+	line-height: 1;
+}
+
+@media (min-width: 1000px) {
+	.role + .role::before {
+		content: "→";
+		top: 24px;
+		left: -22px;
+	}
+}
+
+.roleHead {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.roleOrder {
+	flex: none;
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 12px;
+	background: var(--scope);
+	color: var(--scope-ink);
+	font-size: var(--t13);
+	font-weight: 700;
+}
+
+.roleName {
+	font-size: var(--t17);
+	font-weight: 700;
+	font-stretch: 112%;
+}
+
+.did {
+	font-family: var(--font-serif);
+	font-size: var(--t17);
+	line-height: 1.4;
+}
+
+.check {
+	display: grid;
+	gap: 2px;
+	padding: 8px 12px;
+	border-left: 3px solid var(--line);
+	background: var(--inset);
+	border-radius: 0 var(--r1) var(--r1) 0;
+	font-size: var(--t13);
+}
+
+.check[data-check="stored"] {
+	border-left-color: var(--ok);
+}
+
+.check[data-check="absent-pending"] {
+	border-left-color: var(--signal);
+}
+
+.checkTitle {
+	font-weight: 600;
+}
+
+.steps summary {
+	min-height: var(--target);
+	display: flex;
+	align-items: center;
+	cursor: pointer;
+	font-size: var(--t13);
+	font-weight: 600;
+}
+
+.stepList {
+	display: grid;
+	gap: 8px;
+	padding-top: 4px;
+}
+
+.stepList li {
+	display: grid;
+	grid-template-columns: 3ch minmax(0, 1fr);
+	gap: 0 8px;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--line);
+	font-size: var(--t13);
+}
+
+.stepNumber {
+	color: var(--ink-2);
+	font-family: var(--font-mono);
+	text-align: right;
+}
+
+.stepName {
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.stepMeta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 12px;
+}
+
+.stepStatus {
+	color: var(--ink-2);
+	overflow-wrap: anywhere;
+}
+
+.bridge {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px 16px;
+	padding: 16px;
+	border: 2px solid var(--signal-ink);
+	border-radius: var(--r2);
+	background: var(--panel);
+}
+
+.bridge p {
+	flex: 1;
+	min-width: min(100%, 28ch);
+}

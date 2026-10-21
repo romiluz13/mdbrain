@@ -87,6 +87,20 @@ export function forbiddenFromEnv(
 			// not a URL; the whole string is already listed
 		}
 	}
+	const control = env.MDBRAIN_DEMO_CONTROL_URI
+	if (control) {
+		forbidden.push(control)
+		try {
+			const parsed = new URL(control)
+			for (const part of [parsed.host, parsed.username, parsed.password]) {
+				if (part) {
+					forbidden.push(decodeURIComponent(part))
+				}
+			}
+		} catch {
+			// not a URL the platform parses; the whole string is already listed
+		}
+	}
 	return forbidden
 }
 
@@ -95,9 +109,11 @@ export function forbiddenFromEnv(
 export function identityFromEnv(
 	env: Record<string, string | undefined> = process.env,
 ): string[] {
-	return [env.MDBRAIN_DEMO_SCOPE_REF, env.MDBRAIN_DEMO_AGENT_ID].filter(
-		(value): value is string => value !== undefined && value !== "",
-	)
+	return [
+		env.MDBRAIN_DEMO_SCOPE_REF,
+		env.MDBRAIN_DEMO_AGENT_ID,
+		env.MDBRAIN_DEMO_RUN_ID,
+	].filter((value): value is string => value !== undefined && value !== "")
 }
 
 function collectIdentity(value: unknown, into: Set<string>): void {
@@ -290,4 +306,36 @@ export function createRecordedUpstream(recording: Recording): typeof fetch {
 		return read ? answer(read) : missing(key)
 	}
 	return replay as typeof fetch
+}
+
+const RUN_READ = "/v1/run"
+
+/** The run read of a recording, as the page asked it. The run's record is
+ * the proxy's own answer, not an upstream read, so a replay serves it as
+ * recorded instead of running it through the proxy again. A recording made
+ * before the run read existed has none, and replays as a server with no run
+ * configured, which is what it was. */
+export function createRecordedRun(
+	recording: Recording,
+): (url: URL) => Response | undefined {
+	const answer = (status: number, body: unknown): Response =>
+		new Response(JSON.stringify(body), {
+			status,
+			headers: { "content-type": "application/json" },
+		})
+	return (url) => {
+		if (url.pathname === `${PROXY_PREFIX}${RUN_READ}`) {
+			const read = recording.reads.find((entry) => entry.path === RUN_READ)
+			return read
+				? answer(read.status, read.body)
+				: answer(503, {
+						error: {
+							code: "RUN_NOT_CONFIGURED",
+							message:
+								"The pinned run's record is not configured on this server.",
+						},
+					})
+		}
+		return undefined
+	}
 }

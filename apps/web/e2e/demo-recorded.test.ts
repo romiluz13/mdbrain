@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { handleDemoRead } from "../lib/demo-data/proxy.js"
 import {
+	createRecordedRun,
 	createRecordedUpstream,
 	forbiddenFromEnv,
 	identityFromEnv,
@@ -157,6 +158,29 @@ describe("forbiddenFromEnv", () => {
 		).toEqual(["k-123456", "http://127.0.0.1:3857", "127.0.0.1:3857"])
 		expect(forbiddenFromEnv({})).toEqual([])
 	})
+
+	it("lists the control database's connection string, its host, user and password", () => {
+		expect(
+			forbiddenFromEnv({
+				MDBRAIN_DEMO_CONTROL_URI:
+					"mongodb+srv://ctl-user:p%40ss-9@cluster0.example.net/?retryWrites=true",
+			}),
+		).toEqual([
+			"mongodb+srv://ctl-user:p%40ss-9@cluster0.example.net/?retryWrites=true",
+			"cluster0.example.net",
+			"ctl-user",
+			"p@ss-9",
+		])
+	})
+
+	it("makes a recording refuse an answer that holds the control string", () => {
+		const forbidden = forbiddenFromEnv({
+			MDBRAIN_DEMO_CONTROL_URI: "mongodb://ctl-user:pw-123456@db.example.net/",
+		})
+		expect(() =>
+			toRecording([seen("/v1/run", { note: "db.example.net" })], forbidden),
+		).toThrow(/forbidden/)
+	})
 })
 
 describe("identityFromEnv", () => {
@@ -168,6 +192,12 @@ describe("identityFromEnv", () => {
 			}),
 		).toEqual(["demo-run-8", "demo-run-8"])
 		expect(identityFromEnv({ MDBRAIN_DEMO_SCOPE_REF: "" })).toEqual([])
+	})
+
+	it("lists the pinned run id too", () => {
+		expect(identityFromEnv({ MDBRAIN_DEMO_RUN_ID: "demo-run-8" })).toEqual([
+			"demo-run-8",
+		])
 	})
 })
 
@@ -246,5 +276,32 @@ describe("createRecordedUpstream", () => {
 		expect(warn).toHaveBeenCalledWith(
 			expect.stringContaining("no recorded read for /v1/wiki/lint?limit=100"),
 		)
+	})
+})
+
+describe("createRecordedRun", () => {
+	const url = (path: string) => new URL(`http://127.0.0.1:3040/api/demo${path}`)
+	const recording = toRecording(
+		[seen("/v1/run", { state: "used", arrivals: [] })],
+		[],
+	)
+	const replay = createRecordedRun(recording)
+
+	it("serves the run's record as recorded", async () => {
+		const record = replay(url("/v1/run"))
+		expect(await record?.json()).toEqual({ state: "used", arrivals: [] })
+	})
+
+	it("replays a recording from before the run read as a server with no run configured", async () => {
+		const older = createRecordedRun(toRecording([seen("/v1/wiki", {})], []))
+		const record = older(url("/v1/run"))
+		expect(record?.status).toBe(503)
+		expect(await record?.json()).toMatchObject({
+			error: { code: "RUN_NOT_CONFIGURED" },
+		})
+	})
+
+	it("leaves every other read to the proxy", () => {
+		expect(replay(url("/v1/wiki"))).toBeUndefined()
 	})
 })

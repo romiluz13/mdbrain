@@ -170,9 +170,16 @@ test("the map stays in view beside a long list on a wide screen", async ({
 		await expect(stage).toBeVisible()
 		const before = await stage.boundingBox()
 		expect(before?.y ?? Number.NaN).toBeGreaterThan(0)
-		await page.mouse.wheel(0, 700)
+		// A list shows before its rows have all filled in, and a wheel on a page
+		// that is still shorter scrolls only to that page's end, so wheel again.
 		await expect
-			.poll(() => page.evaluate(() => window.scrollY), { timeout: 5_000 })
+			.poll(
+				async () => {
+					await page.mouse.wheel(0, 700)
+					return page.evaluate(() => window.scrollY)
+				},
+				{ timeout: 10_000 },
+			)
 			.toBeGreaterThan(500)
 		const after = await stage.boundingBox()
 		const height = page.viewportSize()?.height ?? 0
@@ -292,9 +299,44 @@ test("every interactive control on every chapter is at least 44 px", async ({
 	expect(await small(), "the citation dialog").toEqual([])
 })
 
+test("the desktop rail runs the full height of the page and keeps its chapters in reach", async ({
+	page,
+	isMobile,
+}) => {
+	test.skip(isMobile, "on a phone the rail is a bar across the top")
+	await installDemoProxy(page)
+	await openDemo(page)
+	await mapReady(page)
+	await goto(page, 2)
+	const more = page.getByRole("button", { name: "Show ten more" })
+	await expect(more).toBeVisible(SLOW_READ)
+	for (let asked = 0; asked < 3 && (await more.isVisible()); asked += 1) {
+		await more.click()
+	}
+	const rail = page.getByTestId("rail")
+	const heights = await rail.evaluate((element) => ({
+		rail: element.getBoundingClientRect().height,
+		page: document.documentElement.scrollHeight,
+		view: window.innerHeight,
+	}))
+	expect(heights.page, "the page is taller than the window").toBeGreaterThan(
+		heights.view,
+	)
+	expect(heights.rail).toBeGreaterThanOrEqual(heights.page - 1)
+	await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+	const nav = await page
+		.getByRole("navigation", { name: "Chapters" })
+		.boundingBox()
+	expect(nav?.y, "the chapter list stays in view").toBeGreaterThanOrEqual(0)
+	expect((nav?.y ?? 0) + (nav?.height ?? 0)).toBeLessThanOrEqual(heights.view)
+})
+
 test("no chapter scrolls sideways, keeps the synthetic label in view, and passes axe", async ({
 	page,
 }) => {
+	// Nine chapters, each scanned by axe: about 20 s alone on the phone profile,
+	// which a loaded machine pushes past the default 30 s.
+	test.slow()
 	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)

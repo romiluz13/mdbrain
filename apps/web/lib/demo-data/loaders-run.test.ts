@@ -1,159 +1,105 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import type { MdbrainCitationEventResponse } from "@mdbrain/client"
-import { json, pageView, stubUpstream } from "./test-upstream.js"
-import type { DemoDataUpstream, RunManifestView } from "./loaders.js"
-import { loadRunSources } from "./loaders-run.js"
+import { loadRunRecord } from "./loaders-run.js"
+import { json, runRecord, stubUpstream } from "./test-upstream.js"
 
-const baseUpstream = {
-	apiBaseUrl: "http://upstream.test",
-	readKey: "test-read-key-123",
-	scope: "workspace",
-	scopeRef: "demo-run-2",
+const proxy = {
+	apiBaseUrl: "http://demo-proxy.local/api/demo",
+	readKey: "loader-placeholder-key",
 }
+
+const RUN = "/api/demo/v1/run"
+
+const refusal = (status: number, code: string) =>
+	json({ error: { code, message: `fixed message for ${code}` } }, status)
 
 afterEach(() => {
 	vi.unstubAllGlobals()
 })
 
-describe("loadRunSources (D19 shape)", () => {
-	function citeResponse(url: URL): Response {
-		const marker = url.searchParams.get("marker") ?? ""
-		const eventId = marker.replaceAll("[[event:", "").replaceAll("]]", "")
-		const response: MdbrainCitationEventResponse = {
-			status: "resolved",
-			kind: "event",
-			marker,
-			citedBy: url.searchParams.get("citedBy") ?? "",
-			event: {
-				eventId,
-				canonicalId: eventId,
-				text: "Havnor renews the facility.",
-				timestamp: "2026-11-16T08:00:00.000Z",
-				scope: "workspace",
-				scopeRef: "demo-run-2",
-			},
-		}
-		return json(response)
-	}
-	function manifest(state: string, eventsWritten: string[]): RunManifestView {
-		return {
-			runId: "run-1",
-			slotIndex: 1,
-			scopeRef: "demo-run-2",
-			agentId: "demo-run-2",
-			state,
-			eventsWritten,
-		}
-	}
-
-	it("cites each manifest event in order through the pinned claim", async () => {
-		const calls = stubUpstream({ "/v1/cite": citeResponse })
-		const upstream: DemoDataUpstream = {
-			...baseUpstream,
-			getRunManifest: async () =>
-				manifest("ready", ["evt-3", "evt-1", "evt-2"]),
-			pinnedPage: {
-				slug: "halvorsen-renewal",
-				revision: 3,
-				claims: [{ id: "claim-eta" }],
-			},
-		}
-		const result = await loadRunSources(upstream)
-		expect(result.kind).toBe("ready")
-		if (result.kind !== "ready") return
-		expect(result.data.runId).toBe("run-1")
-		expect(result.data.state).toBe("ready")
-		expect(result.data.events.map((event) => event.id)).toEqual([
-			"evt-3",
-			"evt-1",
-			"evt-2",
-		])
-		expect(
-			result.data.events.every(
-				(event) => event.timestamp === "2026-11-16T08:00:00.000Z",
-			),
-		).toBe(true)
-		expect(result.data.unresolvedEventIds).toEqual([])
-		const citeCalls = calls.filter((url) => url.pathname === "/v1/cite")
-		expect(citeCalls).toHaveLength(3)
-		expect(citeCalls.map((url) => url.searchParams.get("marker"))).toEqual([
-			"[[event:evt-3]]",
-			"[[event:evt-1]]",
-			"[[event:evt-2]]",
-		])
-		const citedBys = citeCalls.map((url) => url.searchParams.get("citedBy"))
-		expect(citedBys[0]).toBe("[[wiki:halvorsen-renewal#claim-eta@r3]]")
-		expect(citedBys.every((citedBy) => citedBy?.startsWith("[[wiki:"))).toBe(
-			true,
-		)
-	})
-
-	it("falls back to the first listed page's first claim when no page is pinned", async () => {
-		const calls = stubUpstream({
-			"/v1/wiki": () => json({ pages: [pageView()], total: 1 }),
-			"/v1/wiki/halvorsen-renewal": () => json(pageView()),
-			"/v1/cite": citeResponse,
+describe("loadRunRecord", () => {
+	it.each([
+		["an empty object", {}],
+		["no arrivals list", { ...runRecord(), arrivals: undefined }],
+		["a state it does not know", { ...runRecord(), state: "exploded" }],
+		["no plan count", { ...runRecord(), eventsPlanned: undefined }],
+	])("shows an error, not a crash, when the answer is %s", async (_, body) => {
+		stubUpstream({ [RUN]: () => json(body) })
+		const result = await loadRunRecord(proxy)
+		expect(result).toMatchObject({
+			kind: "error",
+			code: "RUN_RECORD_MALFORMED",
 		})
-		const upstream: DemoDataUpstream = {
-			...baseUpstream,
-			getRunManifest: async () => manifest("ready", ["evt-1"]),
-		}
-		const result = await loadRunSources(upstream)
-		expect(result.kind).toBe("ready")
-		if (result.kind !== "ready") return
-		expect(result.data.events).toHaveLength(1)
-		const cite = calls.find((url) => url.pathname === "/v1/cite")
-		expect(cite?.searchParams.get("citedBy")).toBe(
-			"[[wiki:halvorsen-renewal#claim-1@r3]]",
-		)
 	})
 
-	it("reports incomplete when the manifest state is not ready", async () => {
-		const upstream: DemoDataUpstream = {
-			...baseUpstream,
-			getRunManifest: async () => manifest("seeding", ["evt-1"]),
-		}
-		const result = await loadRunSources(upstream)
-		expect(result.kind).toBe("incomplete")
-		if (result.kind !== "incomplete") return
-		expect(result.state).toBe("seeding")
-		expect(result.reason).toBe("RUN_NOT_READY")
+	it("reads the run through the proxy's one fixed path, with no parameters", async () => {
+		const calls = stubUpstream({ [RUN]: () => json(runRecord()) })
+		const result = await loadRunRecord(proxy)
+		expect(result).toEqual({ kind: "ready", data: runRecord() })
+		expect(calls.map((url) => url.pathname + url.search)).toEqual([RUN])
 	})
 
-	it("reports the run manifest gap when no manifest source exists", async () => {
-		const result = await loadRunSources(baseUpstream)
-		expect(result.kind).toBe("incomplete")
-		if (result.kind !== "incomplete") return
-		expect(result.reason).toBe("RUN_MANIFEST_NOT_EXPOSED")
-		expect(result.state).toBeNull()
-	})
-
-	it("keeps the events whose cite resolves and names the rest unresolved", async () => {
+	it("shows a run still being seeded as incomplete, with what has arrived", async () => {
 		stubUpstream({
-			"/v1/cite": (url) => {
-				const marker = url.searchParams.get("marker") ?? ""
-				if (marker === "[[event:evt-1]]") {
-					return citeResponse(url)
-				}
-				return json(
-					{ error: { code: "CITE_NOT_FOUND", message: "no such event" } },
-					404,
-				)
-			},
+			[RUN]: () => json(runRecord({ state: "seeding", readyAt: undefined })),
 		})
-		const upstream: DemoDataUpstream = {
-			...baseUpstream,
-			getRunManifest: async () => manifest("ready", ["evt-1", "evt-2"]),
-			pinnedPage: {
-				slug: "halvorsen-renewal",
-				revision: 3,
-				claims: [{ id: "claim-eta" }],
-			},
+		const result = await loadRunRecord(proxy)
+		expect(result).toMatchObject({
+			kind: "incomplete",
+			reason: "RUN_NOT_READY",
+			state: "seeding",
+		})
+		if (result.kind === "incomplete") {
+			expect(result.data?.arrivals).toHaveLength(3)
 		}
-		const result = await loadRunSources(upstream)
-		expect(result.kind).toBe("ready")
-		if (result.kind !== "ready") return
-		expect(result.data.events.map((event) => event.id)).toEqual(["evt-1"])
-		expect(result.data.unresolvedEventIds).toEqual(["evt-2"])
+	})
+
+	it("shows a failed seeding as incomplete, with the fixed label from the record", async () => {
+		stubUpstream({
+			[RUN]: () =>
+				json(
+					runRecord({
+						state: "failed",
+						failedLabel: "Seeding stopped before the run was ready.",
+					}),
+				),
+		})
+		expect(await loadRunRecord(proxy)).toMatchObject({
+			kind: "incomplete",
+			reason: "RUN_FAILED",
+			state: "failed",
+		})
+	})
+
+	it("reports a server with no run configured as a state of its own, not an error", async () => {
+		stubUpstream({ [RUN]: () => refusal(503, "RUN_NOT_CONFIGURED") })
+		expect(await loadRunRecord(proxy)).toEqual({
+			kind: "incomplete",
+			reason: "RUN_NOT_CONFIGURED",
+			state: null,
+		})
+	})
+
+	it.each([
+		[404, "RUN_NOT_FOUND"],
+		[502, "RUN_RECORD_MISMATCH"],
+		[502, "RUN_RECORD_MALFORMED"],
+		[502, "RUN_UNREACHABLE"],
+	])("keeps %i %s as an error with its code", async (status, code) => {
+		stubUpstream({ [RUN]: () => refusal(status, code) })
+		expect(await loadRunRecord(proxy)).toMatchObject({
+			kind: "error",
+			code,
+			status,
+		})
+	})
+
+	it("reports a direct API upstream, which has no run route, as an error", async () => {
+		const result = await loadRunRecord({
+			apiBaseUrl: "http://upstream.test",
+			readKey: "test-read-key-123",
+			scope: "workspace",
+			scopeRef: "demo-run-2",
+		})
+		expect(result).toMatchObject({ kind: "error" })
 	})
 })

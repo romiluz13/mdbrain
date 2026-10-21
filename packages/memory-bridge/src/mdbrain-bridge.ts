@@ -14,7 +14,10 @@ import type {
 	StructuredMemoryLifecyclePatch,
 	StructuredMemoryEntry,
 } from "./memory-contract-types.js"
-import type { MemongoReadinessReport } from "./memongo-memory-gateway.js"
+import type {
+	MemoryEventRecord,
+	MemongoReadinessReport,
+} from "./memongo-memory-gateway.js"
 import { checkMemongoReadiness, getMemongoGateway } from "./memongo-runtime.js"
 
 export function mdbrainBridgeCheckReadiness(): Promise<
@@ -447,6 +450,20 @@ export async function mdbrainBridgeRecallConversation(params: {
 	}) as Promise<ConversationRecallResponse>
 }
 
+export async function mdbrainBridgeGetEvent(params: {
+	eventId: string
+	agentId?: string
+	scope?: MemoryScope
+	scopeRef?: string
+}): Promise<MemoryEventRecord | null> {
+	return getMemongoGateway().execute("eventGet", {
+		eventId: params.eventId,
+		agentId: resolveAgentId(params.agentId),
+		scope: params.scope,
+		scopeRef: params.scopeRef,
+	})
+}
+
 export async function mdbrainBridgeGetLifecycleItem(params: {
 	handle: MemoryStableHandle
 }): Promise<MemoryLifecycleItem | null> {
@@ -600,6 +617,7 @@ export async function mdbrainBridgeGetState(params: {
 	}) as Promise<MemoryStateFamily & { partial?: boolean }>
 }
 
+export type { MemoryEventRecord } from "./memongo-memory-gateway.js"
 export type {
 	MemoryLifecycleHistoryEntry,
 	MemoryLifecycleItem,

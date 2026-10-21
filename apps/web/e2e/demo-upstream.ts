@@ -519,12 +519,12 @@ export function createDemoUpstream(
 		}
 		if (path === "/v1/cite") {
 			const marker = url.searchParams.get("marker") ?? ""
-			const citedBy = url.searchParams.get("citedBy") ?? ""
+			const citedBy = url.searchParams.get("citedBy")
 			const parsed = parseCitationMarker(marker)
 			if (
 				!parsed.ok ||
 				parsed.marker.kind !== "event" ||
-				!parseCitationMarker(citedBy).ok
+				(citedBy !== null && !parseCitationMarker(citedBy).ok)
 			) {
 				return failure(
 					400,
@@ -532,59 +532,58 @@ export function createDemoUpstream(
 					"the marker or citedBy is not a citation marker",
 				)
 			}
-			// The real API confirms an event through recall as the request's agent
-			// (the default "main" when none is sent); the run's events live under
-			// the run's own agent, so any other agent finds nothing.
+			// The real route resolves the event in the caller's scope as the
+			// caller's agent (the default "main" when none is sent); the run's
+			// events live under the run's own agent, so any other agent finds
+			// nothing.
 			if (url.searchParams.get("agentId") !== FIXTURE_ENV.agentId) {
 				return failure(
 					404,
 					"CITATION_UNRESOLVED",
-					"the source could not be confirmed through governed recall",
+					"the source could not be confirmed in this scope",
 				)
 			}
-			// The real route reads the citing claim first, and only a claim that
-			// cites the event can have it confirmed.
 			const eventId = parsed.marker.eventId
-			const citing = parseCitationMarker(citedBy)
-			const citingMarker = citing.ok ? citing.marker : undefined
-			const owner =
-				citingMarker?.kind === "wiki"
-					? bySlug
-							.get(citingMarker.slug)
-							?.claims.find((claim) => claim.id === citingMarker.claimId)
-					: undefined
-			if (!owner) {
-				return failure(404, "CITATION_NOT_FOUND", "citation not found")
+			// With a citing claim the route reads that claim first, and only a
+			// claim that lists the event can have it confirmed.
+			if (citedBy !== null) {
+				const citing = parseCitationMarker(citedBy)
+				const citingMarker = citing.ok ? citing.marker : undefined
+				const owner =
+					citingMarker?.kind === "wiki"
+						? bySlug
+								.get(citingMarker.slug)
+								?.claims.find((claim) => claim.id === citingMarker.claimId)
+						: undefined
+				if (!owner) {
+					return failure(404, "CITATION_NOT_FOUND", "citation not found")
+				}
+				if (
+					!owner.evidence.some(
+						(evidence) =>
+							evidence.kind === "event" && evidence.sourceId === eventId,
+					)
+				) {
+					return failure(
+						404,
+						"CITATION_UNRESOLVED",
+						"the source could not be confirmed in this scope",
+					)
+				}
 			}
-			if (
-				!owner.evidence.some(
-					(evidence) =>
-						evidence.kind === "event" && evidence.sourceId === eventId,
-				)
-			) {
-				return failure(
-					404,
-					"CITATION_UNRESOLVED",
-					"the source could not be confirmed through governed recall",
-				)
-			}
-			const sourceId = data.sourceOf.get(parsed.marker.eventId) ?? ""
+			const sourceId = data.sourceOf.get(eventId) ?? ""
 			const body = data.bodies.get(sourceId)
 			if (body === undefined)
-				return failure(
-					404,
-					"CITATION_UNRESOLVED",
-					`no event ${parsed.marker.eventId}`,
-				)
+				return failure(404, "CITATION_UNRESOLVED", `no event ${eventId}`)
 			const timestamp = data.dates.get(sourceId)
 			return reply({
 				status: "resolved",
 				kind: "event",
 				marker,
-				citedBy,
+				...(citedBy !== null ? { citedBy } : {}),
 				event: {
-					eventId: parsed.marker.eventId,
-					canonicalId: parsed.marker.eventId,
+					eventId,
+					canonicalId: `event:${eventId}`,
 					text: `${ROLE_LABEL}${body}`,
 					...(timestamp !== undefined ? { timestamp } : {}),
 					scope: FIXTURE_ENV.scope,

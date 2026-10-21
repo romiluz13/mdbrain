@@ -30,7 +30,7 @@ export type SourceView = {
 	eventId: string
 	marker: string
 	status: "resolved" | "unavailable"
-	/** Set when recall answered and could not confirm the source, which is not
+	/** Set when the API answered and could not confirm the source, which is not
 	 * the same as a read that failed and may work on the next try. */
 	reason?: "unconfirmed"
 	text?: string
@@ -107,21 +107,23 @@ const UNCONFIRMED_CODES: ReadonlySet<string> = new Set([
 	"CITATION_NOT_FOUND",
 ])
 
-/** One source of a claim, read through the governed cite route. A source that
- * cannot be cited is marked unavailable; this never throws. */
+/** One source event, read through the cite route. With the claim that cites
+ * it, the API confirms it only if that claim lists it; with no claim it
+ * confirms the event by its id in the run's own scope. A source that cannot be
+ * cited is marked unavailable; this never throws. */
 export async function loadSource(
 	upstream: DemoDataUpstream,
-	claim: MdbrainWikiClaim,
+	claim: MdbrainWikiClaim | undefined,
 	ref: SourceRef,
 ): Promise<SourceView> {
 	const { eventId, marker } = ref
-	if (claim.marker === undefined) {
+	if (claim !== undefined && claim.marker === undefined) {
 		return { eventId, marker, status: "unavailable" }
 	}
 	try {
 		const response = await readsFor(upstream).cite({
 			marker,
-			citedBy: claim.marker,
+			...(claim?.marker !== undefined ? { citedBy: claim.marker } : {}),
 		})
 		if (response.kind !== "event") {
 			return { eventId, marker, status: "unavailable" }
@@ -286,16 +288,5 @@ export async function loadWikiSearch(
 		)
 	} catch (error) {
 		return errorState(error, upstream.readKey)
-	}
-}
-
-/** The agents-at-work chapter. No stored read carries agent activity yet
- * (ticket 10 is not merged), so this reports "not yet in this run" instead
- * of presenting the seeder's writer ids as agents at work. */
-export function loadAgentActivity(): DataState<never> {
-	return {
-		kind: "incomplete",
-		reason: "AGENT_ACTIVITY_NOT_EXPOSED",
-		state: null,
 	}
 }

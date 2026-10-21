@@ -14,7 +14,8 @@ import {
 	type DemoProxy,
 	unexplainedBrowserErrors,
 } from "./demo-helpers"
-import { GENERATED, SLOW_READ } from "./demo-proxy"
+import { GENERATED, SLOW_LIST, SLOW_READ } from "./demo-proxy"
+import { PENDING_PROPOSAL } from "./demo-run"
 
 export type Act = (target: Locator) => Promise<void>
 
@@ -51,6 +52,20 @@ async function citeAndReturn(
 	}
 	await expect(dialog).toBeHidden()
 	await expect(opener).toBeFocused()
+}
+
+/** Shows rows until one has a stored claim behind it: a live run's first
+ * arrivals may be sources no claim cites, which have no source to open. */
+async function showAnOpenableSource(page: Page): Promise<void> {
+	const open = page.getByRole("button", { name: /^Open source / })
+	const more = page.getByRole("button", { name: "Show ten more" })
+	for (let asked = 0; asked < 8; asked += 1) {
+		if ((await open.count()) > 0 || !(await more.isVisible())) {
+			break
+		}
+		await more.click()
+	}
+	await expect(open.first()).toBeVisible(SLOW_READ)
 }
 
 async function nextChapter(page: Page, act: Act, from: number): Promise<void> {
@@ -117,13 +132,15 @@ export async function journey(
 		how,
 	)
 
-	// 3 Sources arrive: an honest not-yet state, plus the sources that are stored.
+	// 3 Sources arrive: the run's record in arrival order, or an honest note that
+	// this server has no run record, and a source opened down to its text.
 	await nextChapter(page, act, 1)
 	await expect(
 		page.locator(
-			'[data-state="incomplete"][data-reason="RUN_MANIFEST_NOT_EXPOSED"]',
+			'[data-testid="arrivals-summary"], [data-state="incomplete"][data-reason="RUN_NOT_CONFIGURED"]',
 		),
-	).toBeVisible()
+	).toBeVisible(SLOW_READ)
+	await showAnOpenableSource(page)
 	await citeAndReturn(
 		page,
 		proxy,
@@ -132,13 +149,25 @@ export async function journey(
 		how,
 	)
 
-	// 4 Agents at work: not yet in this run, and not an error.
+	// 4 Agents at work: the run's agents with their steps confirmed, or an honest
+	// not-yet state, and never an error.
 	await nextChapter(page, act, 2)
 	await expect(
-		page.locator(
-			'[data-state="incomplete"][data-reason="AGENT_ACTIVITY_NOT_EXPOSED"]',
-		),
-	).toBeVisible()
+		page
+			.locator(
+				'[data-testid="agent-run"], [data-state="incomplete"], [data-state="empty"]',
+			)
+			.first(),
+	).toBeVisible(SLOW_READ)
+	for (const summary of await page
+		.getByTestId("agent-role")
+		.locator("summary")
+		.all()) {
+		await act(summary)
+	}
+	await expect(
+		page.locator('[data-testid="agent-step"][data-status="loading"]'),
+	).toHaveCount(0, SLOW_LIST)
 	await expect(page.locator('[data-state="error"]')).toHaveCount(0)
 
 	// 5 A contradiction caught: both claims, both sources, the recorded stamp.
@@ -195,7 +224,10 @@ export async function journey(
 		}),
 	).toBeVisible()
 	await proxy.flush()
-	const refused = refusedReads(proxy)
+	// A pending proposal is not a page until a person approves it, so chapter 4
+	// reads its absence and 404 is the answer it expects.
+	const proposalAbsent = `404 WIKI_NOT_FOUND /api/demo/v1/wiki/${encodeURIComponent(PENDING_PROPOSAL.slug)}`
+	const refused = refusedReads(proxy).filter((read) => read !== proposalAbsent)
 	if (refused.length > 0) {
 		console.log(`[demo-e2e] reads the proxy refused:\n${refused.join("\n")}`)
 	}

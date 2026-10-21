@@ -2686,7 +2686,7 @@ const openApiDocument = {
 			get: {
 				summary: "Resolve a citation marker to the claim or event it names",
 				description:
-					"Markers are `[[wiki:SLUG#CLAIM_ID@rREVISION]]` and `[[event:EVENT_ID]]`, with reserved characters percent-encoded. Wiki claims and their event evidence carry their markers (`marker`) in wiki responses. Scope and agent come from the request, never from the marker. A wiki marker resolves to the claim text and evidence as stored at that exact revision under that revision's own governance; it never falls back to newer content, and a missing, hidden or claim-less revision gets the same 404 CITATION_NOT_FOUND with no content. There is no get-event-by-id route, so an event marker resolves only in the context of a citing claim (`citedBy`, a wiki marker): the claim's `evidence` entry with `kind: event` and `sourceId` equal to the event id must carry a verbatim excerpt in `note`, which is used as the governed recall query under the request's agentId and scope; only a result whose canonicalId is exactly `event:EVENT_ID` resolves, otherwise CITATION_UNRESOLVED.",
+					"Markers are `[[wiki:SLUG#CLAIM_ID@rREVISION]]` and `[[event:EVENT_ID]]`, with reserved characters percent-encoded. Wiki claims and their event evidence carry their markers (`marker`) in wiki responses. Scope and agent come from the request, never from the marker. A wiki marker resolves to the claim text and evidence as stored at that exact revision under that revision's own governance; it never falls back to newer content, and a missing, hidden or claim-less revision gets the same 404 CITATION_NOT_FOUND with no content. An event marker resolves through Memongo's governed get-event-by-id read under the request's agentId, scope and scopeRef, and only while the event is unexpired; the response carries the event's text and business timestamp. An event that is missing, expired, or held by another agent, scope or scopeRef gets CITATION_UNRESOLVED with no content. `citedBy` (a wiki marker) is optional: when given, the citing claim must be readable at that revision (otherwise CITATION_NOT_FOUND) and must carry `evidence` with `kind: event` and `sourceId` equal to the event id (otherwise CITATION_UNRESOLVED), both decided before the event is read, and the response names it in `citedBy`.",
 				parameters: [
 					{
 						name: "marker",
@@ -2698,7 +2698,7 @@ const openApiDocument = {
 						name: "citedBy",
 						in: "query",
 						description:
-							"Required for an event marker: the wiki marker of the claim that cites the event.",
+							"Optional for an event marker: the wiki marker of a claim that cites the event. When given, that claim must be readable and cite the event.",
 						schema: { type: "string", maxLength: 2048 },
 					},
 					{
@@ -2722,26 +2722,26 @@ const openApiDocument = {
 					},
 					"400": {
 						description:
-							"Malformed marker or a missing citedBy on an event marker (INVALID_MARKER), or a missing scope or scopeRef (VALIDATION_ERROR)",
+							"Malformed marker or citedBy (INVALID_MARKER), or a missing scope or scopeRef (VALIDATION_ERROR)",
 					},
 					"403": {
 						description: "The key has no grant for the requested scope",
 					},
 					"404": {
 						description:
-							"CITATION_NOT_FOUND (revision or claim missing, hidden, or the citing claim of an event marker is not found) or CITATION_UNRESOLVED (the event could not be confirmed through governed recall). Neither carries content.",
+							"CITATION_NOT_FOUND (revision or claim missing, hidden, or the given citing claim of an event marker is not found) or CITATION_UNRESOLVED (the event is not in the request's scope, or the given citing claim does not cite it). Neither carries content.",
 					},
 					"500": {
 						description:
-							"Citation resolution failed (CITATION_FAILED), or governed recall failed with a non-Memongo error (CITATION_RECALL_FAILED)",
+							"Citation resolution failed (CITATION_FAILED), or the event read failed with a non-Memongo error (CITATION_LOOKUP_FAILED)",
 					},
 					"502": {
 						description:
-							"Governed recall failed upstream; the Memongo failure code passes through. The event is not confirmed: retry rather than treating it as unresolved",
+							"The event read failed upstream; the Memongo failure code passes through. The event is not confirmed: retry rather than treating it as unresolved",
 					},
 					"503": {
 						description:
-							"Governed recall was throttled (CITATION_RECALL_DEGRADED, retryable with Retry-After) or Memongo was unavailable; the event is not confirmed, retry rather than treating it as unresolved",
+							"Memongo was unavailable; the event is not confirmed, retry rather than treating it as unresolved",
 					},
 				},
 			},

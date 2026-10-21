@@ -1063,8 +1063,8 @@ export type MdbrainWikiRevisionRecord = MdbrainWikiRevisionSummary & {
 }
 
 /** Input for GET /v1/cite. Scope and agent are the caller's, never read from
- *  the marker. An event marker needs `citedBy`, the wiki marker of a claim
- *  whose evidence cites the event. */
+ *  the marker. For an event marker, `citedBy` is optional: the wiki marker of
+ *  a claim whose evidence cites the event, which must then be readable. */
 export type MdbrainCiteInput = {
 	marker: string
 	citedBy?: string
@@ -1087,12 +1087,13 @@ export type MdbrainCitationClaimResponse = {
 	claim: MdbrainWikiClaim
 }
 
-/** An event marker resolved through governed recall in the context of a citing claim. */
+/** An event marker resolved by id in the caller's scope. `citedBy` echoes the
+ *  citing claim's marker when the request named one. */
 export type MdbrainCitationEventResponse = {
 	status: "resolved"
 	kind: "event"
 	marker: string
-	citedBy: string
+	citedBy?: string
 	event: {
 		eventId: string
 		canonicalId: string

@@ -132,6 +132,23 @@ describe("allowlist forwarding", () => {
 		expect(url.searchParams.get("citedBy")).toBe(citedBy)
 	})
 
+	it("forwards a citation by id with its marker alone, as the pinned agent", async () => {
+		const upstream = stubUpstream(() => json({ kind: "event" }))
+		const marker = "[[event:evt-42]]"
+		const response = await handleDemoRead(
+			request(`/api/demo/v1/cite?marker=${encodeURIComponent(marker)}`),
+			env,
+			upstream.fetch,
+		)
+		expect(response.status).toBe(200)
+		const { url } = upstream.calls[0]
+		expect(url.pathname).toBe("/v1/cite")
+		expect(url.searchParams.get("marker")).toBe(marker)
+		expect(url.searchParams.has("citedBy")).toBe(false)
+		expect(url.searchParams.get("agentId")).toBe(env.agentId)
+		expect(url.searchParams.get("scopeRef")).toBe(env.scopeRef)
+	})
+
 	it("passes a success through unchanged and a known failure with the proxy's own message", async () => {
 		const found = await handleDemoRead(
 			request("/api/demo/v1/wiki/halvorsen-renewal"),
@@ -393,7 +410,6 @@ describe("refusals", () => {
 			["/api/demo/v1/wiki/changes", "since=not-a-date"],
 			["/api/demo/v1/wiki/changes", "cursor=has%20spaces"],
 			["/api/demo/v1/cite", "marker=[[bogus:thing]]"],
-			["/api/demo/v1/cite", "marker=[[event:evt-1]]"],
 			["/api/demo/v1/cite", "marker=[[event:evt-1]]&citedBy=[[event:evt-2]]"],
 		]
 		for (const [path, query] of cases) {
