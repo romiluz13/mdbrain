@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import type { MotionSeam } from "./motion.js"
 
 type Listener = (event: { matches: boolean }) => void
 
@@ -125,5 +126,37 @@ describe("the reduced-motion store", () => {
 		stop()
 		change(true)
 		expect(heard).not.toHaveBeenCalled()
+	})
+})
+
+describe("the motion seam", () => {
+	beforeEach(() => {
+		vi.useFakeTimers()
+	})
+	afterEach(() => {
+		vi.useRealTimers()
+		vi.unstubAllGlobals()
+	})
+
+	it("counts the tweens that are still to run, so a test can tell when the page has settled", async () => {
+		const { motion, window } = await load(false)
+		motion.motionReduced()
+		const seam = Reflect.get(window, motion.MOTION_SEAM) as MotionSeam
+		expect(seam.reduced()).toBe(false)
+		const idle = seam.tweens()
+		const gsap = (await import("gsap")).default
+		const tween = gsap.to({ value: 0 }, { value: 1, duration: 1 })
+		expect(seam.tweens()).toBe(idle + 1)
+		tween.progress(1)
+		vi.advanceTimersByTime(100)
+		expect(seam.tweens()).toBe(idle)
+	})
+
+	it("reports a reduced-motion setting that changes", async () => {
+		const { motion, window, change } = await load(false)
+		motion.motionReduced()
+		const seam = Reflect.get(window, motion.MOTION_SEAM) as MotionSeam
+		change(true)
+		expect(seam.reduced()).toBe(true)
 	})
 })

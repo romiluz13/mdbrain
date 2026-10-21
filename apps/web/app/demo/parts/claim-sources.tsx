@@ -50,7 +50,7 @@ export function ClaimSources({
 					) : null}
 					<ol className={listClassName}>
 						{view.slots.map((slot) => (
-							<li key={slot.eventId}>
+							<li key={slot.eventId} data-testid="claim-slip">
 								<SourceSlip source={slot} claimText={claim.text} />
 							</li>
 						))}

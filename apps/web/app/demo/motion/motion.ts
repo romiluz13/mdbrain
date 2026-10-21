@@ -5,6 +5,15 @@
 
 import gsap from "gsap"
 
+/** Where tests and the bounds check read how much motion is still to run. */
+export const MOTION_SEAM = Symbol.for("mdbrain.demo.motion")
+
+export type MotionSeam = {
+	/** Tweens GSAP has yet to finish, nested ones included. */
+	tweens: () => number
+	reduced: () => boolean
+}
+
 const listeners = new Set<() => void>()
 let reduced = false
 let started = false
@@ -14,6 +23,11 @@ function start(): void {
 		return
 	}
 	started = true
+	const seam: MotionSeam = {
+		tweens: () => gsap.globalTimeline.getChildren(true, true, false).length,
+		reduced: () => reduced,
+	}
+	Reflect.set(window, MOTION_SEAM, seam)
 	gsap.matchMedia().add(
 		{
 			full: "(prefers-reduced-motion: no-preference)",

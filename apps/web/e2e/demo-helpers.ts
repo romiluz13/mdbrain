@@ -33,7 +33,8 @@ export async function openDemo(page: Page, hash = ""): Promise<void> {
 	await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
 }
 
-/** The map has its data and both canvas layers have drawn. */
+/** The map has its data, both canvas layers have drawn, and the headline
+ * numbers have finished counting up to the API's values. */
 export async function mapReady(page: Page): Promise<void> {
 	await expect(page.locator('[data-stat="pages"]')).not.toHaveText(
 		"—",
@@ -44,6 +45,7 @@ export async function mapReady(page: Page): Promise<void> {
 		/[1-9]/,
 		SLOW_READ,
 	)
+	await settled(page)
 }
 
 /** Presses Tab until the target holds focus; fails with where focus is. */
@@ -422,9 +424,16 @@ export async function readsSettled(page: Page): Promise<void> {
 	}
 }
 
-/** Lets the finite CSS animations and transitions finish, so a contrast check
- * does not read a half-faded frame. */
+/** Lets the finite CSS animations and transitions and every GSAP move finish,
+ * so a contrast check or a one-shot read does not meet a half-faded frame or a
+ * number still counting. */
 export async function settled(page: Page): Promise<void> {
+	await page.waitForFunction(() => {
+		const seam = Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as
+			| { tweens: () => number }
+			| undefined
+		return seam === undefined || seam.tweens() === 0
+	}, undefined)
 	await page.evaluate(() =>
 		Promise.all(
 			document

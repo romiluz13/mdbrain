@@ -122,6 +122,23 @@ function stepStatus(answer: EventConfirmation | undefined) {
 	}
 }
 
+/** The hand-off arrow into this card, drawn by the chapter as the run reads
+ * left to right. It points down between stacked cards and right between
+ * columns. */
+function HandoffArrow() {
+	return (
+		<svg
+			className={styles.handoffArrow}
+			data-testid="handoff-arrow"
+			viewBox="0 0 24 24"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path pathLength={1} d="M12 6.5V17M7.5 12.5L12 17L16.5 12.5" />
+		</svg>
+	)
+}
+
 type Props = {
 	story: RoleStory
 	order: number
@@ -142,6 +159,7 @@ export function RoleCard({
 	const check = checkOf(story.role, run, checks)
 	return (
 		<li className={styles.role} data-testid="agent-role" data-role={story.role}>
+			{order > 1 ? <HandoffArrow /> : null}
 			<div className={styles.roleHead}>
 				<span className={styles.roleOrder} aria-hidden="true">
 					{order}

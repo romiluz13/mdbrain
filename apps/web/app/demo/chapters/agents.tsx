@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
 	TOKEN_CEILING,
 	agentRunState,
@@ -20,6 +20,10 @@ import type {
 import { formatUtc } from "../../../lib/demo-data/views.js"
 import chapter from "../chapters.module.css"
 import { useDemo } from "../demo-context.js"
+import { gsap, useGSAP } from "../motion/gsap-react.js"
+import { DURATION, EASE } from "../motion/tokens.js"
+import { useCountUp } from "../motion/use-count-up.js"
+import { useReducedMotion } from "../motion/use-reduced-motion.js"
 import { RoleCard } from "../parts/role-card.js"
 import { StatePanel } from "../parts/state-panel.js"
 import styles from "../run-chapters.module.css"
@@ -72,6 +76,42 @@ function AgentStory({
 	const tag = RUN_TAG[run.state]
 	const wall = wallTimeMs(run)
 	const tokens = run.usage ? totalTokens(run.usage) : null
+
+	// The token count climbs with the meter, then the hand-off arrows are drawn
+	// Support to Account to Product. Both end where the record says they are.
+	const reduced = useReducedMotion()
+	const figure = useRef<HTMLSpanElement>(null)
+	const meter = useRef<HTMLMeterElement>(null)
+	const handoff = useRef<HTMLOListElement>(null)
+	useCountUp(figure, tokens, number.format, (shown) => {
+		if (meter.current) {
+			meter.current.value = Math.min(shown, TOKEN_CEILING)
+		}
+	})
+	useGSAP(
+		() => {
+			const arrows = handoff.current?.querySelectorAll(
+				'[data-testid="handoff-arrow"]',
+			)
+			if (reduced || !arrows?.length) {
+				return
+			}
+			const draw = gsap.timeline({
+				delay: 0.3,
+				defaults: { clearProps: "opacity,strokeDashoffset" },
+			})
+			arrows.forEach((arrow, at) => {
+				const start = at * DURATION.arrow
+				draw.from(arrow, { opacity: 0, duration: 0.15, ease: EASE.out }, start)
+				draw.from(
+					arrow.querySelector("path"),
+					{ strokeDashoffset: 1, duration: DURATION.arrow, ease: EASE.inOut },
+					start,
+				)
+			})
+		},
+		{ scope: handoff, dependencies: [reduced], revertOnUpdate: true },
+	)
 	const meetsContradiction =
 		run.reusedPage !== undefined &&
 		data.contradiction.kind === "ready" &&
@@ -114,7 +154,11 @@ function AgentStory({
 							<span className={styles.factValue}>—</span>
 						) : (
 							<>
-								<span className={styles.factValue} data-stat="agent-tokens">
+								<span
+									ref={figure}
+									className={styles.factValue}
+									data-stat="agent-tokens"
+								>
 									{number.format(tokens)}
 									<span className={styles.factOf}>
 										{" "}
@@ -122,6 +166,7 @@ function AgentStory({
 									</span>
 								</span>
 								<meter
+									ref={meter}
 									className={styles.meter}
 									aria-label="Tokens used against the ceiling"
 									min={0}
@@ -157,7 +202,11 @@ function AgentStory({
 				<h2 id="handoff-heading" className={styles.sectionHeading}>
 					The hand-off
 				</h2>
-				<ol className={styles.handoff} aria-label="The hand-off, in order">
+				<ol
+					ref={handoff}
+					className={styles.handoff}
+					aria-label="The hand-off, in order"
+				>
 					{stories.map((story, at) => (
 						<RoleCard
 							key={story.role}

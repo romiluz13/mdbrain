@@ -313,7 +313,6 @@
 	background: var(--panel);
 	color: var(--signal-ink);
 	transform: rotate(-0.6deg);
-	animation: stamp var(--dur-2) ease-out;
 }
 
 .stamp h2 {
@@ -321,33 +320,6 @@
 	font-size: var(--t26);
 	font-weight: 800;
 	line-height: 1.1;
-}
-
-/* Only the beat just reached eases in: a past beat that leaves and returns with
- * the window's width must not replay it. */
-.caseStep[data-current="true"] {
-	animation: beat-in var(--dur-2) ease-out;
-}
-
-@keyframes beat-in {
-	from {
-		opacity: 0;
-		transform: translateY(8px);
-	}
-}
-
-@keyframes stamp {
-	from {
-		opacity: 0;
-		transform: rotate(-0.6deg) scale(1.06);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.stamp,
-	.caseStep[data-current="true"] {
-		animation: none;
-	}
 }
 
 @media (max-width: 999px) {
