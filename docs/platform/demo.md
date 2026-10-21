@@ -23,7 +23,7 @@ The proxy forwards one fixed list of reads and refuses everything else (other me
 | Variable | Meaning |
 |---|---|
 | `MDBRAIN_DEMO_API_BASE_URL` | The Mdbrain API to read from |
-| `MDBRAIN_DEMO_READ_KEY` | A read-capable key the proxy sends upstream |
+| `MDBRAIN_DEMO_READ_KEY` | A read-only key the proxy sends upstream. On the local demo stack it is slot i's entry in `MDBRAIN_DEMO_READ_KEYS`: read capability only, granted exactly that slot's scope (`scripts/demo-stack-config.ts`) |
 | `MDBRAIN_DEMO_SCOPE_REF` | The pinned run's scope reference |
 | `MDBRAIN_DEMO_AGENT_ID` | The agent the pinned run's events were written under, `demo-run-<slot>` for a seeded slot |
 | `MDBRAIN_DEMO_SCOPE` | The scope, default `workspace` |

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { parseScopedApiKeyPolicies } from "../apps/api/src/principal.js"
+import {
+	authorizePrincipalRequest,
+	parseScopedApiKeyPolicies,
+} from "../apps/api/src/principal.js"
 import {
 	DEMO_DATABASES,
 	assertDemoDatabase,
@@ -385,6 +388,121 @@ describe("demo role agents", () => {
 		)
 		expect(() => clash("demo-local-api", "agent-account-one")).toThrow(
 			/MDBRAIN_DEMO_AGENT_KEYS.*admin/,
+		)
+	})
+})
+
+describe("demo read keys", () => {
+	const stackDir = "/tmp/demo-stack"
+	const base = {
+		...secrets,
+		MDBRAIN_DEMO_SLOT_KEYS: '["slot-token-one", "slot-token-two"]',
+		MDBRAIN_DEMO_PROPOSER_KEYS: '["proposer-token-one", "proposer-token-two"]',
+		MDBRAIN_DEMO_AGENT_KEYS: JSON.stringify([
+			["agent-support-one", "agent-account-one"],
+			["agent-support-two", "agent-account-two"],
+		]),
+	}
+	const withReaders = {
+		...base,
+		MDBRAIN_DEMO_READ_KEYS: '["reader-token-one", "reader-token-two"]',
+	}
+	const policiesOf = (all: Record<string, string>) =>
+		JSON.parse(
+			buildDemoStackEnv(all, { stackDir }).api.MDBRAIN_API_SCOPED_KEYS ?? "",
+		)
+
+	it("gives reader i read-only access to slot i and nothing else", () => {
+		const policies = policiesOf(withReaders)
+		expect(policies["reader-token-two"]).toEqual({
+			subjectId: "demo-reader-2",
+			displayName: "Demo reader 2",
+			grants: [{ scope: "workspace", scopeRef: "demo-run-2" }],
+			capabilities: ["read"],
+		})
+		expect(Object.keys(policies)).toHaveLength(10)
+	})
+
+	it("produces principals the API holds to reads in one scope, with or without an agentId", () => {
+		const credentials = parseScopedApiKeyPolicies(
+			buildDemoStackEnv(withReaders, { stackDir }).api.MDBRAIN_API_SCOPED_KEYS,
+		)
+		const reader = credentials.find(
+			(credential) => credential.principal.subjectId === "demo-reader-1",
+		)
+		if (!reader) throw new Error("reader 1 missing")
+		expect(reader.principal.capabilities).toEqual(["read"])
+		expect(reader.principal.allowedScopes).toEqual([
+			{ scope: "workspace", scopeRef: "demo-run-1" },
+		])
+		const own = { scope: "workspace", scopeRef: "demo-run-1" } as const
+		expect(
+			authorizePrincipalRequest(reader.principal, {
+				...own,
+				capability: "read",
+			}),
+		).toBeNull()
+		expect(
+			authorizePrincipalRequest(reader.principal, {
+				...own,
+				agentId: "demo-run-1",
+				capability: "read",
+			}),
+		).toBeNull()
+		expect(
+			authorizePrincipalRequest(reader.principal, {
+				...own,
+				capability: "write",
+			}),
+		).not.toBeNull()
+		expect(
+			authorizePrincipalRequest(reader.principal, {
+				scope: "workspace",
+				scopeRef: "demo-run-2",
+				capability: "read",
+			}),
+		).not.toBeNull()
+	})
+
+	it("adds nothing when no read keys are configured", () => {
+		expect(Object.keys(policiesOf(base))).toHaveLength(8)
+	})
+
+	it("requires one read key per slot", () => {
+		expect(() =>
+			buildDemoStackEnv(
+				{ ...base, MDBRAIN_DEMO_READ_KEYS: '["reader-token-one"]' },
+				{ stackDir },
+			),
+		).toThrow(/MDBRAIN_DEMO_READ_KEYS.*per slot/)
+		expect(() =>
+			buildDemoStackEnv(
+				{ ...secrets, MDBRAIN_DEMO_READ_KEYS: '["reader-token-one"]' },
+				{ stackDir },
+			),
+		).toThrow(/MDBRAIN_DEMO_READ_KEYS.*MDBRAIN_DEMO_SLOT_KEYS/)
+	})
+
+	it("refuses a read key that is also a slot, proposer, agent or admin key", () => {
+		const clash = (token: string) =>
+			buildDemoStackEnv(
+				{
+					...base,
+					MDBRAIN_DEMO_READ_KEYS: JSON.stringify([token, "reader-token-two"]),
+				},
+				{ stackDir },
+			)
+		expect(() => clash("slot-token-one")).toThrow(
+			/MDBRAIN_DEMO_READ_KEYS.*slot/,
+		)
+		expect(() => clash("proposer-token-two")).toThrow(
+			/MDBRAIN_DEMO_READ_KEYS.*proposer/,
+		)
+		expect(() => clash("agent-account-two")).toThrow(
+			/MDBRAIN_DEMO_READ_KEYS.*agent/,
+		)
+		expect(() => clash("demo-local-api")).toThrow(
+			/MDBRAIN_DEMO_READ_KEYS.*admin/,
 		)
 	})
 })
