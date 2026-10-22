@@ -31,6 +31,13 @@ export function homeDistance(aspect: number): number {
 	return Math.max(HOME_DISTANCE, SPHERE_MARGIN / (tanHalfFov * width))
 }
 
+/** A copy of the five numbers. A spread would carry the `_gsap` tag GSAP puts
+ * on any object it tweens, which is not a pose and cannot be serialized. */
+export function copyPose(pose: Pose): Pose {
+	const { gx, gy, gz, yaw, d } = pose
+	return { gx, gy, gz, yaw, d }
+}
+
 /** The resting pose: the whole brain, nothing shifted. */
 export function homePose(aspect: number, yaw = 0): Pose {
 	return { gx: 0, gy: 0, gz: 0, yaw, d: homeDistance(aspect) }

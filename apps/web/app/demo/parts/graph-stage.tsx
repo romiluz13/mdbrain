@@ -82,9 +82,12 @@ export function GraphStage({
 					state={data.map}
 					onRetry={reload}
 					waitingForLayout={graph !== null}
+					view3d={view3d}
 				/>
 			)}
-			{graph ? <Legend graph={graph} /> : null}
+			<div className={styles.legendSlot}>
+				{graph ? <Legend graph={graph} /> : null}
+			</div>
 			{caption ? <p className={styles.stageCaption}>{caption}</p> : null}
 		</section>
 	)
@@ -97,13 +100,15 @@ function StageState({
 	state,
 	onRetry,
 	waitingForLayout,
+	view3d,
 }: {
 	state: DataState<unknown>
 	onRetry: () => void
 	waitingForLayout: boolean
+	view3d?: boolean
 }) {
 	return (
-		<div className={styles.stageState}>
+		<div className={styles.stageState} data-view3d={view3d || undefined}>
 			{waitingForLayout ? (
 				<StatePanel state={{ kind: "loading" }} what="the page layout" />
 			) : (

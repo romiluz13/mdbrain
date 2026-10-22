@@ -17,6 +17,7 @@ import {
 	FOV_DEGREES,
 	HOME_DISTANCE,
 	type Vec3,
+	copyPose,
 } from "../../../lib/demo-data/camera-pose.js"
 import { layoutSphere } from "../../../lib/demo-data/graph-layout3.js"
 import {
@@ -228,7 +229,7 @@ function World({
 				edges: edges.getAttribute("position").count / 2,
 				frames: frames.current,
 				link: pair?.link ?? null,
-				pose: { ...store.pose },
+				pose: copyPose(store.pose),
 				drift: store.drift,
 				lit: store.lit,
 				held: store.isHeld(),

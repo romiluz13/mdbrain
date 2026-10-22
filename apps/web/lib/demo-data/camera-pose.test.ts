@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest"
 import {
 	FOV_DEGREES,
-	nearestTurn,
 	HOME_DISTANCE,
 	MIN_DISTANCE,
+	copyPose,
+	homePose,
 	framePair,
 	homeDistance,
+	nearestTurn,
 	type Vec3,
 } from "./camera-pose.js"
 
@@ -161,5 +163,15 @@ describe("nearestTurn", () => {
 
 	it("is the target itself when it is already the nearest", () => {
 		expect(nearestTurn(1, 1.5)).toBeCloseTo(1.5, 9)
+	})
+})
+
+describe("copyPose", () => {
+	it("copies the five numbers and nothing GSAP has tagged the pose with", () => {
+		const tagged = { ...homePose(1, 0.3), _gsap: { id: 1 } }
+		const copy = copyPose(tagged)
+		expect(Object.keys(copy).sort()).toEqual(["d", "gx", "gy", "gz", "yaw"])
+		expect(copy).toEqual(homePose(1, 0.3))
+		expect(copy).not.toBe(tagged)
 	})
 })

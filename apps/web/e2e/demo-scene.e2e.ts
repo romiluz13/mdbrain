@@ -415,6 +415,10 @@ test.describe("chapter 5 in 3D", () => {
 		expect(framed?.link, "the fixture stores a link between the pair").toBe(
 			true,
 		)
+		expect(
+			Object.keys(framed?.pose ?? {}).sort(),
+			"the seam's pose carries no GSAP bookkeeping",
+		).toEqual(["d", "gx", "gy", "gz", "yaw"])
 		await expect.poll(async () => (await sceneState(page))?.lit).toBe(1)
 		await showBeat(page, 1)
 		await expect

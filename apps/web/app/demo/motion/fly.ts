@@ -7,6 +7,7 @@ import gsap from "gsap"
 import {
 	type Pose,
 	type Vec3,
+	copyPose,
 	framePair,
 	nearestTurn,
 } from "../../../lib/demo-data/camera-pose.js"
@@ -41,7 +42,7 @@ export function createFlight(store: SceneStore) {
 		 * them as the camera arrives when there is one. */
 		frame(a: Vec3, b: Vec3, aspect: number, link: boolean) {
 			kill()
-			rest ??= { ...store.pose }
+			rest ??= copyPose(store.pose)
 			store.hold(true)
 			const target = framePair({ a, b, azimuth: store.azimuth, aspect })
 			// The drift is already part of what the viewer sees, so the pose turns
