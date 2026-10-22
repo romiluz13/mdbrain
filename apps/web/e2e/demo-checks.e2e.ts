@@ -310,7 +310,10 @@ test("every interactive control on every chapter is at least 44 px", async ({
 		await expect(
 			page.getByRole("heading", { level: 1, name: chapter.title }),
 		).toBeVisible()
-		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+		await expect(page.locator('[data-state="loading"]')).toHaveCount(
+			0,
+			SLOW_READ,
+		)
 		expect(await small(), `chapter ${chapter.title}`).toEqual([])
 	}
 	await openAnyCitation(page, proxy)
@@ -365,7 +368,10 @@ test("no chapter scrolls sideways, keeps the synthetic label in view, and passes
 		await expect(
 			page.getByRole("heading", { level: 1, name: chapter.title }),
 		).toBeVisible()
-		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+		await expect(page.locator('[data-state="loading"]')).toHaveCount(
+			0,
+			SLOW_READ,
+		)
 		await settled(page)
 		expect(
 			await page.evaluate(
