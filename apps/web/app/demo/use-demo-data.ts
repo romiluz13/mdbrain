@@ -56,6 +56,10 @@ export function useDemoData(upstream: DemoDataUpstream = DEMO_UPSTREAM): {
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` re-runs the reads when the visitor retries
 	useEffect(() => {
+		// React's dev double mount (and any remount) would otherwise leave the
+		// first run's read chain running beside the new one, doubling every
+		// request; the abort retires it with the cleanup.
+		const controller = new AbortController()
 		let live = true
 		const patch = (part: Partial<DemoData>) => {
 			if (live) {
@@ -63,7 +67,10 @@ export function useDemoData(upstream: DemoDataUpstream = DEMO_UPSTREAM): {
 			}
 		}
 		setData(INITIAL)
-		void loadWikiMap(upstream).then(async (map) => {
+		void loadWikiMap(upstream, controller.signal).then(async (map) => {
+			if (!live) {
+				return
+			}
 			patch({ map })
 			if (map.kind !== "ready") {
 				patch({
@@ -84,15 +91,22 @@ export function useDemoData(upstream: DemoDataUpstream = DEMO_UPSTREAM): {
 				changes:
 					first === null
 						? { kind: "empty" }
-						: await loadWikiChanges(upstream, windowStart(first)),
+						: await loadWikiChanges(
+								upstream,
+								windowStart(first),
+								controller.signal,
+							),
 			})
 		})
-		void loadContradictionCase(upstream).then((contradiction) =>
-			patch({ contradiction }),
+		void loadContradictionCase(upstream, controller.signal).then(
+			(contradiction) => patch({ contradiction }),
 		)
-		void loadRunRecord(upstream).then((run) => patch({ run }))
+		void loadRunRecord(upstream, controller.signal).then((run) =>
+			patch({ run }),
+		)
 		return () => {
 			live = false
+			controller.abort()
 		}
 	}, [upstream, attempt])
 

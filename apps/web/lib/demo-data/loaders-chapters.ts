@@ -182,8 +182,9 @@ export type ContradictionCase = {
  *  not readable, never as "none recorded". */
 export async function loadContradictionCase(
 	upstream: DemoDataUpstream,
+	signal?: AbortSignal,
 ): Promise<DataState<ContradictionCase>> {
-	const listed = await loadContradictions(upstream)
+	const listed = await loadContradictions(upstream, signal)
 	if (listed.kind !== "ready") {
 		return listed.kind === "error" || listed.kind === "empty"
 			? listed
@@ -193,7 +194,7 @@ export async function loadContradictionCase(
 	if (entry === undefined) {
 		return { kind: "empty" }
 	}
-	const reads = readsFor(upstream)
+	const reads = readsFor(upstream, signal)
 	try {
 		const overview = await reads.overview(entry.pageSlug)
 		const record = overview.contradictions.items.find(
