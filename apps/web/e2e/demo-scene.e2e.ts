@@ -121,10 +121,19 @@ test.describe("chapter 1 in 3D", () => {
 	test("never loads the 3D code on a chapter that has no 3D map", async ({
 		page,
 	}) => {
-		const chunks: string[] = []
-		page.on("request", (request) => {
-			if (/graph-scene|three/i.test(request.url())) chunks.push(request.url())
+		// A production build names its chunks by hash, and `next dev` preloads the
+		// scene's thin wrapper chunk on every chapter; the 3D code is told by its
+		// content, three's renderer.
+		const scripts: Promise<string>[] = []
+		page.on("response", (response) => {
+			if (response.request().resourceType() === "script") {
+				scripts.push(response.text().catch(() => ""))
+			}
 		})
+		const threeLoaded = async () =>
+			(await Promise.all(scripts)).some((body) =>
+				body.includes("WebGLRenderer"),
+			)
 		await installDemoProxy(page)
 		await openDemo(page, "#ask")
 		await expect(
@@ -132,7 +141,13 @@ test.describe("chapter 1 in 3D", () => {
 		).toBeVisible()
 		await page.waitForTimeout(3000)
 		await expect(page.locator('[data-view="3d"]')).toHaveCount(0)
-		expect(chunks).toEqual([])
+		expect(await threeLoaded()).toBe(false)
+		await goto(page, chapterIndex("brain"))
+		await expect(page.locator(THREE_D)).toBeVisible({ timeout: 60_000 })
+		expect(
+			await threeLoaded(),
+			"the detector sees three once a 3D map shows",
+		).toBe(true)
 	})
 
 	test("names a page on hover and opens the same inspector on a click, as the flat map does", async ({
