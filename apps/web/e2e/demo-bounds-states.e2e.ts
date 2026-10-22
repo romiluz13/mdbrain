@@ -59,6 +59,19 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 					page.evaluate(() =>
 						(window as unknown as { __rafCalls: () => number }).__rafCalls(),
 					)
+				// GSAP's ticker asks for frames for 120 more ticks after its last tween
+				// (`autoSleep`): about 2 s at 60 fps, longer on a slow phone. Rest begins
+				// when it has gone to sleep; a loop that never ends still fails here.
+				await expect
+					.poll(
+						async () => {
+							const first = await read()
+							await page.waitForTimeout(1000)
+							return (await read()) - first
+						},
+						{ timeout: 30_000, intervals: [0] },
+					)
+					.toBe(0)
 				await page.waitForTimeout(1500)
 				const before = await read()
 				await page.waitForTimeout(1500)
