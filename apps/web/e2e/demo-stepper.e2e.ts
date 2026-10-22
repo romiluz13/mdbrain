@@ -2,6 +2,7 @@
 // recorded. Stepped by button, by arrow key and by touch; the reveal moves only
 // when the person does not ask for reduced motion.
 import { expect, test, type Page } from "@playwright/test"
+import type { MotionSeam } from "../app/demo/motion/motion"
 import {
 	expectNoSeriousAccessibilityViolations,
 	goto,
@@ -179,25 +180,38 @@ test.describe("motion", () => {
 			element.setAttribute("hidden", "")
 			return matrix.a
 		})
-		const mid = await page.evaluate(async () => {
+		// Read the stamp in the task that creates its move. On a loaded host the
+		// first frame can arrive after the move has run past its start, and where
+		// the move starts is what this asserts.
+		const start = await page.evaluate(async () => {
+			const seam = Reflect.get(
+				window,
+				Symbol.for("mdbrain.demo.motion"),
+			) as MotionSeam
 			document
 				.querySelector<HTMLButtonElement>(
 					'[data-testid="beat-stepper"] button:last-of-type',
 				)
 				?.click()
-			await new Promise((resolve) => requestAnimationFrame(resolve))
+			for (let turn = 0; turn < 20 && seam.tweens() === 0; turn += 1) {
+				await Promise.resolve()
+			}
 			const element = document.querySelector(
 				'[data-testid="contradiction-stamp"]',
 			)
-			return element
-				? {
-						opacity: Number(getComputedStyle(element).opacity),
-						scale: new DOMMatrixReadOnly(getComputedStyle(element).transform).a,
-					}
-				: null
+			if (!element) {
+				return null
+			}
+			const style = getComputedStyle(element)
+			return {
+				tweens: seam.tweens(),
+				opacity: Number(style.opacity),
+				scale: new DOMMatrixReadOnly(style.transform).a,
+			}
 		})
-		expect(mid?.opacity).toBeLessThan(1)
-		expect(mid?.scale).toBeGreaterThan(rest)
+		expect(start?.tweens, "the stamp's move has started").toBeGreaterThan(0)
+		expect(start?.opacity).toBeLessThan(1)
+		expect(start?.scale).toBeGreaterThan(rest)
 		await settled(page)
 		await expect(stamp).toHaveCSS("opacity", "1")
 		const landed = await stamp.evaluate(
@@ -215,17 +229,27 @@ test.describe("motion", () => {
 		const next = page
 			.getByTestId("beat-stepper")
 			.getByRole("button", { name: NEXT })
-		await next.click()
+		// Both clicks in one page task: no round trip to the browser sits between
+		// seeing the move run and clicking ahead.
+		const underWay = await next.evaluate(async (element) => {
+			const button = element as HTMLButtonElement
+			const seam = Reflect.get(
+				window,
+				Symbol.for("mdbrain.demo.motion"),
+			) as MotionSeam
+			button.click()
+			const deadline = performance.now() + 5000
+			while (seam.tweens() === 0 && performance.now() < deadline) {
+				await new Promise((resolve) => requestAnimationFrame(resolve))
+			}
+			const running = seam.tweens() > 0
+			button.click()
+			return running
+		})
 		expect(
-			await page.evaluate(() =>
-				(
-					Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as {
-						tweens: () => number
-					}
-				).tweens(),
-			),
-		).toBeGreaterThan(0)
-		await next.click()
+			underWay,
+			"the first move is running when the second click lands",
+		).toBe(true)
 		const skipped = page
 			.getByTestId("contradiction-claim")
 			.nth(1)

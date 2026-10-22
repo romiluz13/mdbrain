@@ -50,7 +50,21 @@ const spotsOf = (page: Page, slugs: string[]) =>
 		[SEAM, slugs] as const,
 	) as Promise<Array<[string, { x: number; y: number } | null]>>
 
+/** The scene falls back to the flat map when its frame monitor sees a slow
+ * run, and a host busy with other work trips it. The monitor skips frames
+ * while the page is hidden and is the only reader of `document.hidden` in the
+ * app, so a spec about the map, not about that fallback, reports the page
+ * hidden to it. */
+const silenceSlowFrameMonitor = (page: Page) =>
+	page.addInitScript(() => {
+		Object.defineProperty(document, "hidden", {
+			configurable: true,
+			get: () => true,
+		})
+	})
+
 async function openHero(page: Page) {
+	await silenceSlowFrameMonitor(page)
 	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
@@ -392,11 +406,11 @@ test.describe("the touch path", () => {
 				.locator("> div")
 				.first()
 				.evaluate((outer) => getComputedStyle(outer).touchAction)
-		expect(await touchAction()).toBe("pan-y")
+		await expect.poll(touchAction).toBe("pan-y")
 		await page.getByRole("button", { name: "Turn the map" }).click()
-		expect(await touchAction()).toBe("none")
+		await expect.poll(touchAction).toBe("none")
 		await page.getByRole("button", { name: "Done turning" }).click()
-		expect(await touchAction()).toBe("pan-y")
+		await expect.poll(touchAction).toBe("pan-y")
 		const overflow = await page.evaluate(
 			() => document.documentElement.scrollWidth - window.innerWidth,
 		)
