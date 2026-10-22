@@ -295,7 +295,7 @@ export const flightSample = (page: Page) =>
 		let drawn0 = 0
 		let started = false
 		let still = 0
-		let drawn1 = 0
+		let drawnAtLastMove = 0
 		await new Promise<void>((resolve) => {
 			const tick = (t: number) => {
 				const now = state()
@@ -307,12 +307,12 @@ export const flightSample = (page: Page) =>
 					}
 					still = 0
 					last = key
+					drawnAtLastMove = now.frames
 				} else if (started) {
 					still += 1
 				}
 				if (started) {
 					times.push(t)
-					drawn1 = now.frames
 					if (still >= 10) {
 						resolve()
 						return
@@ -329,7 +329,7 @@ export const flightSample = (page: Page) =>
 		})
 		const moving = times.slice(0, Math.max(1, times.length - 10))
 		const seconds = ((moving.at(-1) ?? 0) - (moving[0] ?? 0)) / 1000
-		const drawn = drawn1 - drawn0
+		const drawn = drawnAtLastMove - drawn0
 		const gaps = moving.slice(1).map((t, at) => t - (moving[at] as number))
 		return {
 			seconds: Math.round(seconds * 100) / 100,
