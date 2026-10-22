@@ -16,6 +16,10 @@ import { journey, withKeyboard, withTouch } from "./demo-journey"
 import { GENERATED, installDemoProxy } from "./demo-proxy"
 
 test.describe("journey", () => {
+	// Each journey walks nine chapters and opens a citation: 17 to 28 s alone, which
+	// a loaded machine pushes past the default 30 s.
+	test.slow()
+
 	test("completes with the keyboard alone, citations returning focus", async ({
 		page,
 		isMobile,
