@@ -65,8 +65,15 @@ async function watchMotion(page: Page): Promise<() => Promise<MotionLog>> {
 		for (const type of ["animationstart", "transitionrun"]) {
 			window.addEventListener(
 				type,
-				(event) =>
-					log.started.push(`${type}:${(event.target as Element).nodeName}`),
+				(event) => {
+					// Next 16's dev tools mount a <nextjs-portal> element whose own
+					// stylesheet runs a 1 µs `all` transition on it. It is framework
+					// tooling, not the app: nothing of it reaches getAnimations().
+					if ((event.target as Element).nodeName === "NEXTJS-PORTAL") {
+						return
+					}
+					log.started.push(`${type}:${(event.target as Element).nodeName}`)
+				},
 				true,
 			)
 		}

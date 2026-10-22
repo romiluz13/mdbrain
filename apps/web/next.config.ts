@@ -11,13 +11,7 @@ const nextConfig: NextConfig = {
 		unoptimized: staticExport,
 	},
 	transpilePackages: ["@mdbrain/client"],
-	webpack: (config) => {
-		config.resolve.extensionAlias = {
-			...(config.resolve.extensionAlias ?? {}),
-			".js": [".ts", ".tsx", ".js", ".jsx"],
-		}
-		return config
-	},
+	allowedDevOrigins: ["127.0.0.1"],
 }
 
 export default nextConfig
