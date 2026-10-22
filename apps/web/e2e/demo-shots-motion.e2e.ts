@@ -70,9 +70,25 @@ async function freeze(page: Page, ready: string) {
 	}
 }
 
-async function brought(page: Page, locator: string) {
-	await page.locator(locator).first().scrollIntoViewIfNeeded()
-	await page.evaluate(() => window.scrollBy(0, -80))
+/** Scrolls the recorded stamp to sit just under the sticky stepper, so the
+ * card's text and the map below it are both in the picture. */
+async function stampUnderBars(page: Page) {
+	await page.evaluate(() => {
+		const bar = document.querySelector('[data-testid="synthetic-label"]')
+		const stepper = document.querySelector('[data-testid="beat-stepper"]')
+		const stamp = document.querySelector('[data-testid="contradiction-stamp"]')
+		if (bar && stepper && stamp) {
+			// Where the stepper's bottom will be once the banner sticks to the top of
+			// the page and the stepper under it.
+			const stuckBottom =
+				bar.getBoundingClientRect().height +
+				stepper.getBoundingClientRect().height
+			window.scrollBy({
+				top: stamp.getBoundingClientRect().top - stuckBottom - 8,
+				behavior: "instant",
+			})
+		}
+	})
 }
 
 /** Centers the stage in the viewport at once: the page's smooth scrolling
@@ -129,7 +145,7 @@ for (const [name, screen] of Object.entries(SCREENS)) {
 		await showBeat(page, 2)
 		await settled(page)
 		await page.waitForTimeout(1500)
-		await brought(page, '[data-testid="scene-layer"]')
+		await stampUnderBars(page)
 		await page.screenshot({ path: `${DIR}/${name}-03-conflict-beat3.png` })
 		await context.close()
 	})
