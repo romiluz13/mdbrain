@@ -9,6 +9,7 @@ import type {
 	MdbrainWikiPageView,
 	MdbrainWikiRevisionSummary,
 } from "@mdbrain/client"
+import { readsFor } from "./reads.js"
 import { claimView, json, pageView, stubUpstream } from "./test-upstream.js"
 import {
 	loadContradictions,
@@ -313,5 +314,80 @@ describe("loadWikiChanges", () => {
 			"2026-11-16T00:00:00.000Z",
 		)
 		expect(result.kind).toBe("empty")
+	})
+})
+
+describe("cancellation", () => {
+	/** One changes window, shaped like the feed's own envelope. */
+	function windowResponse(hasMore: boolean, nextCursor?: string) {
+		return json({
+			window: {
+				since: "2026-11-16T00:00:00.000Z",
+				until: "2026-11-17T00:00:00.000Z",
+				settled: true,
+			},
+			limits: { limit: 50, maxClaims: 10 },
+			changes: [
+				{
+					pageSlug: "halvorsen-renewal",
+					revision: 3,
+					editKind: "update",
+					createdAt: "2026-11-16T10:30:00.000Z",
+					baseline: "previous",
+					baselineRevision: 2,
+					claims: null,
+				},
+			],
+			hasMore,
+			...(nextCursor !== undefined ? { nextCursor } : {}),
+		})
+	}
+
+	it("stops the changes fan-in when the signal aborts after a window", async () => {
+		const controller = new AbortController()
+		const changesCall = vi.fn(() => {
+			controller.abort()
+			return windowResponse(true, "cursor-1")
+		})
+		const calls = stubUpstream({ "/v1/wiki/changes": changesCall })
+		const result = await loadWikiChanges(
+			baseUpstream,
+			"2026-11-16T00:00:00.000Z",
+			controller.signal,
+		)
+		expect(changesCall).toHaveBeenCalledTimes(1)
+		expect(
+			calls.filter((url) => url.pathname === "/v1/wiki/changes"),
+		).toHaveLength(1)
+		expect(result.kind).toBe("error")
+	})
+
+	it("stops the map fan-in when the signal aborts after a page", async () => {
+		const controller = new AbortController()
+		const listCall = vi.fn(() => {
+			controller.abort()
+			return json({ pages: [pageView()], total: 2 })
+		})
+		const calls = stubUpstream({ "/v1/wiki": listCall })
+		const result = await loadWikiMap(baseUpstream, controller.signal)
+		expect(listCall).toHaveBeenCalledTimes(1)
+		expect(calls.filter((url) => url.pathname === "/v1/wiki")).toHaveLength(1)
+		expect(result.kind).toBe("error")
+	})
+
+	it("hands the signal to the proxy reader's fetch", async () => {
+		const controller = new AbortController()
+		let seen: RequestInit | undefined
+		const changesCall = vi.fn((_url: URL, init?: RequestInit) => {
+			seen = init
+			return windowResponse(false)
+		})
+		stubUpstream({ "/v1/wiki/changes": changesCall })
+		const reads = readsFor(
+			{ apiBaseUrl: "http://upstream.test", readKey: "test-read-key-123" },
+			controller.signal,
+		)
+		await reads.changes({ since: "2026-11-16T00:00:00.000Z" })
+		expect(seen?.signal).toBe(controller.signal)
 	})
 })

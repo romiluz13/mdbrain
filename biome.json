@@ -31,7 +31,8 @@
 			"!**/tmp",
 			"!docs/contracts",
 			"!**/docs/contracts",
-			"!apps/demo-agents/corpus"
+			"!apps/demo-agents/corpus",
+			"!apps/web/next-env.d.ts"
 		]
 	},
 	"formatter": {

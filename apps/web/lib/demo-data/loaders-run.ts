@@ -37,9 +37,10 @@ function isRunRecord(value: unknown): value is RunRecord {
  * seeded, or stopped while seeding, shows what arrived next to a notice. */
 export async function loadRunRecord(
 	upstream: DemoDataUpstream,
+	signal?: AbortSignal,
 ): Promise<DataState<RunRecord>> {
 	try {
-		const record = await readsFor(upstream).run()
+		const record = await readsFor(upstream, signal).run()
 		if (!isRunRecord(record)) {
 			return {
 				kind: "error",

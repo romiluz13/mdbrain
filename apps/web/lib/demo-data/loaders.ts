@@ -31,6 +31,12 @@ import {
 	type MdbrainWikiRevisionSummary,
 } from "@mdbrain/client"
 import { readsFor, type DemoReads } from "./reads.js"
+
+/** Thrown when a cancelled chain must not issue its next read: the caller's
+ * effect was cleaned up (a remount, or React's dev double mount), so its
+ * fan-in stops instead of reading beside the replacement run. */
+const cancelled = () =>
+	new DOMException("the read chain was cancelled", "AbortError")
 import { mapWithStatus, type DataState } from "./states.js"
 
 /** Where the loaders read from. */
@@ -177,12 +183,16 @@ function pageSourceIds(page: MdbrainWikiPageView): string[] {
  * contradiction count from the lint read. */
 export async function loadWikiMap(
 	upstream: DemoDataUpstream,
+	signal?: AbortSignal,
 ): Promise<DataState<WikiMapView>> {
-	const reads = readsFor(upstream)
+	const reads = readsFor(upstream, signal)
 	try {
 		const pages: MdbrainWikiPageView[] = []
 		let total = 0
 		for (let call = 0; call < MAX_LIST_CALLS; call++) {
+			if (signal?.aborted) {
+				throw cancelled()
+			}
 			const list = await reads.wikiList({
 				limit: LIST_PAGE_SIZE,
 				skip: pages.length,
@@ -375,8 +385,9 @@ function flattenLintEntry(entry: LintEntry): UnresolvedContradictionView {
 /** The contradiction chapter: the unresolved records from the lint read. */
 export async function loadContradictions(
 	upstream: DemoDataUpstream,
+	signal?: AbortSignal,
 ): Promise<DataState<ContradictionsView>> {
-	const reads = readsFor(upstream)
+	const reads = readsFor(upstream, signal)
 	try {
 		const lint = (await reads.wikiLint({
 			limit: LIST_PAGE_SIZE,
@@ -417,14 +428,18 @@ export type ChangesView = {
 export async function loadWikiChanges(
 	upstream: DemoDataUpstream,
 	since: string | Date,
+	signal?: AbortSignal,
 ): Promise<DataState<ChangesView>> {
-	const reads = readsFor(upstream)
+	const reads = readsFor(upstream, signal)
 	try {
 		let changes: MdbrainWikiChange[] = []
 		let window: { since: string; until: string; settled: boolean } | undefined
 		let hasMore = false
 		let cursor: string | undefined
 		for (let call = 0; call < MAX_CHANGE_CALLS; call++) {
+			if (signal?.aborted) {
+				throw cancelled()
+			}
 			const response = await reads.changes({
 				since,
 				...(cursor !== undefined ? { cursor } : {}),

@@ -112,8 +112,13 @@ function clientReads(upstream: DemoDataUpstream): DemoReads {
  * minus the principal parameters (the proxy injects its own and refuses
  * caller-set ones). One fetch per read, no retries: the demo page wants
  * simple inspectable reads, and the proxy already maps upstream failures
- * to error envelopes. */
-function proxyReads(upstream: DemoDataUpstream): DemoReads {
+ * to error envelopes. A signal cancels the fetch when the owning effect is
+ * cleaned up (a remount, or React's dev double mount), so a retired run
+ * stops reading mid-chain. */
+function proxyReads(
+	upstream: DemoDataUpstream,
+	signal?: AbortSignal,
+): DemoReads {
 	const headers: Record<string, string> = { accept: "application/json" }
 	if (upstream.readKey) {
 		headers.authorization = `Bearer ${upstream.readKey}`
@@ -122,6 +127,7 @@ function proxyReads(upstream: DemoDataUpstream): DemoReads {
 		const response = await fetch(`${upstream.apiBaseUrl}${path}`, {
 			method: "GET",
 			headers,
+			signal,
 		})
 		if (!response.ok) {
 			throw new MdbrainClientError(response.status, await response.text())
@@ -175,8 +181,13 @@ function proxyReads(upstream: DemoDataUpstream): DemoReads {
 }
 
 /** Picks the reader for the upstream: both principal fields set means a
- * direct API upstream; neither means the demo proxy route. */
-export function readsFor(upstream: DemoDataUpstream): DemoReads {
+ * direct API upstream; neither means the demo proxy route. The signal
+ * reaches the proxy reader's fetch; a direct API read keeps the client's
+ * own request lifecycle. */
+export function readsFor(
+	upstream: DemoDataUpstream,
+	signal?: AbortSignal,
+): DemoReads {
 	const direct = upstream.scope !== undefined || upstream.scopeRef !== undefined
 	if (
 		direct &&
@@ -186,5 +197,5 @@ export function readsFor(upstream: DemoDataUpstream): DemoReads {
 			"an upstream sets both scope and scopeRef (direct API) or neither (demo proxy)",
 		)
 	}
-	return direct ? clientReads(upstream) : proxyReads(upstream)
+	return direct ? clientReads(upstream) : proxyReads(upstream, signal)
 }
