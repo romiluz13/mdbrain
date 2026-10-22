@@ -10,7 +10,8 @@
 		"deploy": "bunx opennextjs-cloudflare build && bunx opennextjs-cloudflare deploy",
 		"check-types": "next typegen && node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
 		"test": "vitest run",
-		"test:e2e": "playwright test"
+		"test:e2e": "playwright test",
+		"test:e2e:prod": "bunx turbo run build --filter '@mdbrain/web' && playwright test --config playwright.prod.config.ts e2e/demo"
 	},
 	"dependencies": {
 		"@fontsource-variable/archivo": "5.3.0",
