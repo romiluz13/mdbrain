@@ -276,6 +276,8 @@ test("the stepper sticks flush under the synthetic-company banner, with no gap f
 }) => {
 	await openWalk(page)
 	await showBeat(page, 2)
+	// The chapter's enter motion moves the stepper a few pixels until it ends.
+	await settled(page)
 	await page.evaluate(() => {
 		const stepper = document.querySelector('[data-testid="beat-stepper"]')
 		const top = (stepper?.getBoundingClientRect().top ?? 0) + window.scrollY
