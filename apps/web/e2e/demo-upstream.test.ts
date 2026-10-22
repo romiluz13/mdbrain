@@ -317,6 +317,20 @@ describe("live shapes in the fixture", () => {
 		expect(all.data.changes.length).toBeGreaterThan(page.changes.length)
 	})
 
+	it("serves as many changes as a call asks for", async () => {
+		throughOptions({})
+		const read = async (limit: number) =>
+			(await (
+				await fetch(
+					`http://demo.local/api/demo/v1/wiki/changes?since=${since}&limit=${limit}`,
+				)
+			).json()) as { changes: unknown[]; limits: { limit: number } }
+		const few = await read(5)
+		expect(few.changes).toHaveLength(5)
+		expect(few.limits.limit).toBe(5)
+		expect((await read(100)).limits.limit).toBe(100)
+	})
+
 	it("refuses a cursor read whose since differs from the cursor's window", async () => {
 		throughOptions({})
 		const first = (await (

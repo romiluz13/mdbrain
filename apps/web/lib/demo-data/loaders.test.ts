@@ -15,6 +15,7 @@ import {
 	loadContradictions,
 	loadEntityOverview,
 	loadWikiChanges,
+	loadWikiChangesFromStart,
 	loadWikiMap,
 	type DemoDataUpstream,
 } from "./loaders.js"
@@ -315,6 +316,66 @@ describe("loadWikiChanges", () => {
 		)
 		expect(result.kind).toBe("empty")
 	})
+
+	it("asks for the largest page the API serves, so the cursor is followed fewer times", async () => {
+		const calls = stubUpstream({
+			"/v1/wiki/changes": () =>
+				json(changeResponse([change("havnor", 1)], false)),
+		})
+		await loadWikiChanges(baseUpstream, "2026-11-16T00:00:00.000Z")
+		expect(calls[0]?.searchParams.get("limit")).toBe("100")
+	})
+
+	describe("from the start", () => {
+		it("reads from the epoch without asking for the page list", async () => {
+			const calls = stubUpstream({
+				"/v1/wiki/changes": () =>
+					json(changeResponse([change("havnor", 1)], false)),
+			})
+			await loadWikiChangesFromStart(baseUpstream)
+			expect(calls.map((url) => url.pathname)).toEqual(["/v1/wiki/changes"])
+			expect(calls[0]?.searchParams.get("since")).toBe(
+				"1970-01-01T00:00:00.000Z",
+			)
+		})
+
+		it("reports the window as one second before the first revision", async () => {
+			stubUpstream({
+				"/v1/wiki/changes": () =>
+					json(
+						changeResponse(
+							[change("havnor", 1), change("halvorsen-renewal", 3)],
+							false,
+						),
+					),
+			})
+			const result = await loadWikiChangesFromStart(baseUpstream)
+			expect(result.kind).toBe("ready")
+			if (result.kind !== "ready") return
+			expect(result.data.window).toEqual({
+				since: "2026-11-16T10:29:59.000Z",
+				until: "2026-11-17T00:00:00.000Z",
+				settled: true,
+			})
+			expect(result.data.changes).toHaveLength(2)
+		})
+
+		it("reports empty when nothing is stored", async () => {
+			stubUpstream({
+				"/v1/wiki/changes": () => json(changeResponse([], false)),
+			})
+			expect((await loadWikiChangesFromStart(baseUpstream)).kind).toBe("empty")
+		})
+
+		it("reports an error the way the other reads do", async () => {
+			stubUpstream({
+				"/v1/wiki/changes": () =>
+					json({ error: { code: "UPSTREAM_ERROR", message: "down" } }, 502),
+			})
+			const result = await loadWikiChangesFromStart(baseUpstream)
+			expect(result.kind).toBe("error")
+		})
+	})
 })
 
 describe("cancellation", () => {
@@ -359,6 +420,21 @@ describe("cancellation", () => {
 		expect(
 			calls.filter((url) => url.pathname === "/v1/wiki/changes"),
 		).toHaveLength(1)
+		expect(result.kind).toBe("error")
+	})
+
+	it("stops the from-start changes fan-in when the signal aborts after a window", async () => {
+		const controller = new AbortController()
+		const changesCall = vi.fn(() => {
+			controller.abort()
+			return windowResponse(true, "cursor-1")
+		})
+		stubUpstream({ "/v1/wiki/changes": changesCall })
+		const result = await loadWikiChangesFromStart(
+			baseUpstream,
+			controller.signal,
+		)
+		expect(changesCall).toHaveBeenCalledTimes(1)
 		expect(result.kind).toBe("error")
 	})
 

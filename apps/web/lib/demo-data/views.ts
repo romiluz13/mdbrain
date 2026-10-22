@@ -291,21 +291,6 @@ export function governanceMix(view: WikiMapView): {
 	}
 }
 
-/** The earliest stored page creation time: ingestion time, the only honest
- *  `since` the page can offer without a run-window route. */
-export function earliestIngestion(view: WikiMapView): string | null {
-	let best: string | null = null
-	let bestTime = Number.POSITIVE_INFINITY
-	for (const page of view.pages) {
-		const time = Date.parse(page.createdAt)
-		if (!Number.isNaN(time) && time < bestTime) {
-			bestTime = time
-			best = page.createdAt
-		}
-	}
-	return best
-}
-
 export type ChangesSummary = {
 	revisions: number
 	pages: number

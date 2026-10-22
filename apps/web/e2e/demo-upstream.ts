@@ -482,11 +482,14 @@ export function createDemoUpstream(
 						a.pageSlug.localeCompare(b.pageSlug) ||
 						a.revision - b.revision,
 				)
+			const asked = Number(url.searchParams.get("limit"))
+			const size =
+				Number.isInteger(asked) && asked >= 1 ? asked : CHANGES_PAGE_SIZE
 			const start = cursor?.after ?? 0
-			const end = start + CHANGES_PAGE_SIZE
+			const end = start + size
 			return reply({
 				window: { since, until: FIXTURE_UNTIL, settled: true },
-				limits: { limit: CHANGES_PAGE_SIZE, maxClaims: 50 },
+				limits: { limit: size, maxClaims: 50 },
 				changes: feed.slice(start, end),
 				hasMore: end < feed.length,
 				...(end < feed.length

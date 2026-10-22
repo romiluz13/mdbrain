@@ -4,7 +4,6 @@ import type { ChangesView, WikiMapPage, WikiMapView } from "./loaders.js"
 import {
 	buildGraph,
 	buildSourceIndex,
-	earliestIngestion,
 	formatUtc,
 	governanceMix,
 	flagPages,
@@ -141,20 +140,6 @@ describe("governanceMix", () => {
 			["active", 2],
 			["superseded", 1],
 		])
-	})
-})
-
-describe("earliestIngestion", () => {
-	it("is the earliest page creation time, and null when there are no pages", () => {
-		expect(
-			earliestIngestion(
-				view([
-					page("a", { createdAt: "2026-10-20T09:05:00.000Z" }),
-					page("b", { createdAt: "2026-10-20T08:59:00.000Z" }),
-				]),
-			),
-		).toBe("2026-10-20T08:59:00.000Z")
-		expect(earliestIngestion(view([]))).toBeNull()
 	})
 })
 

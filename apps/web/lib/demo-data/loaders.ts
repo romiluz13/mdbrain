@@ -79,6 +79,9 @@ export function errorState(error: unknown, secret: string): DataState<never> {
 const LIST_PAGE_SIZE = 100
 const MAX_LIST_CALLS = 50
 const MAX_CHANGE_CALLS = 10
+// The most the API serves in one call (its default is 25): the chain of cursor
+// calls is sequential, so each call saved is a round trip off chapter 7.
+const CHANGE_PAGE_SIZE = 100
 
 // The wiki-lint envelope. The SDK types wikiLint as unknown, so the loader
 // keeps its own narrow, guarded view of it. Each entry is the page that holds
@@ -442,6 +445,7 @@ export async function loadWikiChanges(
 			}
 			const response = await reads.changes({
 				since,
+				limit: CHANGE_PAGE_SIZE,
 				...(cursor !== undefined ? { cursor } : {}),
 			})
 			changes = changes.concat(response.changes)
@@ -472,5 +476,35 @@ export async function loadWikiChanges(
 		)
 	} catch (error) {
 		return errorState(error, upstream.readKey)
+	}
+}
+
+const EPOCH = "1970-01-01T00:00:00.000Z"
+
+/** The changes read that waits for no other read: it opens the window at the
+ * epoch, so the page list is not needed first, and reports the window as one
+ * second before the first revision (inside the window whatever the bound's
+ * inclusivity), where the first stored page used to put it. */
+export async function loadWikiChangesFromStart(
+	upstream: DemoDataUpstream,
+	signal?: AbortSignal,
+): Promise<DataState<ChangesView>> {
+	const state = await loadWikiChanges(upstream, EPOCH, signal)
+	if (state.kind !== "ready") {
+		return state
+	}
+	const first = Date.parse(state.data.changes[0]?.createdAt ?? "")
+	if (Number.isNaN(first)) {
+		return state
+	}
+	return {
+		...state,
+		data: {
+			...state.data,
+			window: {
+				...state.data.window,
+				since: new Date(first - 1000).toISOString(),
+			},
+		},
 	}
 }
