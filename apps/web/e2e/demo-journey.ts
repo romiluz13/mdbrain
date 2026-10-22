@@ -10,6 +10,7 @@ import {
 	openDemo,
 	refusedReads,
 	settleContradiction,
+	settled,
 	tabTo,
 	type DemoProxy,
 	unexplainedBrowserErrors,
@@ -26,7 +27,16 @@ export const withKeyboard =
 		await page.keyboard.press("Enter")
 	}
 
+// A tap that lands while a chapter's tweens still move misses: the beat's source
+// slips slide over the claim's opener. And the page scrolls smoothly
+// (`html { scroll-behavior: smooth }`), so a tap's own scroll-into-view is still
+// moving while it hit-tests and the sticky banner and stepper cover the target.
+// Wait for the motion to end and centre the target first.
 export const withTouch: Act = async (target) => {
+	await settled(target.page())
+	await target.evaluate((element) =>
+		element.scrollIntoView({ block: "center", behavior: "instant" }),
+	)
 	await target.tap()
 }
 
