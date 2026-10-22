@@ -6,7 +6,6 @@ import { chapterIndex } from "../app/demo/chapters"
 import { VIEW_PREFERENCE_KEY } from "../lib/demo-data/view-preference"
 import {
 	goto,
-	holdSlowFallback,
 	listPages,
 	mapReady,
 	openDemo,
@@ -51,8 +50,21 @@ const spotsOf = (page: Page, slugs: string[]) =>
 		[SEAM, slugs] as const,
 	) as Promise<Array<[string, { x: number; y: number } | null]>>
 
+/** The scene falls back to the flat map when its frame monitor sees a slow
+ * run, and a host busy with other work trips it. The monitor skips frames
+ * while the page is hidden and is the only reader of `document.hidden` in the
+ * app, so a spec about the map, not about that fallback, reports the page
+ * hidden to it. */
+const silenceSlowFrameMonitor = (page: Page) =>
+	page.addInitScript(() => {
+		Object.defineProperty(document, "hidden", {
+			configurable: true,
+			get: () => true,
+		})
+	})
+
 async function openHero(page: Page) {
-	await holdSlowFallback(page)
+	await silenceSlowFrameMonitor(page)
 	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)

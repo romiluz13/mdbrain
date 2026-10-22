@@ -33,20 +33,6 @@ export async function openDemo(page: Page, hash = ""): Promise<void> {
 	await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
 }
 
-/** Keeps the 3D map from falling back to the flat map because the test machine
- * is slow. The scene drops to the flat map after three seconds under 18 fps, and
- * a host running other work does that. Its monitor skips frames while the page is
- * hidden and is the only reader of `document.hidden` in the app, so a spec about
- * the map, not about that fallback, reports the page hidden to it. */
-export async function holdSlowFallback(page: Page): Promise<void> {
-	await page.addInitScript(() => {
-		Object.defineProperty(document, "hidden", {
-			configurable: true,
-			get: () => true,
-		})
-	})
-}
-
 /** The map has its data, both canvas layers have drawn, and the headline
  * numbers have finished counting up to the API's values. */
 export async function mapReady(page: Page): Promise<void> {

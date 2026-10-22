@@ -2,6 +2,7 @@
 // recorded. Stepped by button, by arrow key and by touch; the reveal moves only
 // when the person does not ask for reduced motion.
 import { expect, test, type Page } from "@playwright/test"
+import type { MotionSeam } from "../app/demo/motion/motion"
 import {
 	expectNoSeriousAccessibilityViolations,
 	goto,
@@ -183,9 +184,10 @@ test.describe("motion", () => {
 		// first frame can arrive after the move has run past its start, and where
 		// the move starts is what this asserts.
 		const start = await page.evaluate(async () => {
-			const seam = Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as {
-				tweens: () => number
-			}
+			const seam = Reflect.get(
+				window,
+				Symbol.for("mdbrain.demo.motion"),
+			) as MotionSeam
 			document
 				.querySelector<HTMLButtonElement>(
 					'[data-testid="beat-stepper"] button:last-of-type',
@@ -228,12 +230,13 @@ test.describe("motion", () => {
 			.getByTestId("beat-stepper")
 			.getByRole("button", { name: NEXT })
 		// Both clicks in one page task: no round trip to the browser sits between
-		// seeing the move run and clicking ahead, so a slow host cannot let it end.
+		// seeing the move run and clicking ahead.
 		const underWay = await next.evaluate(async (element) => {
 			const button = element as HTMLButtonElement
-			const seam = Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as {
-				tweens: () => number
-			}
+			const seam = Reflect.get(
+				window,
+				Symbol.for("mdbrain.demo.motion"),
+			) as MotionSeam
 			button.click()
 			const deadline = performance.now() + 5000
 			while (seam.tweens() === 0 && performance.now() < deadline) {
