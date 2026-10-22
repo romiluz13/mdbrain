@@ -11,20 +11,37 @@ const flat = (
 
 describe("describeView", () => {
 	it("tells a mouse user how to turn the 3D map, and a touch user how to read it", () => {
-		const mouse = describeView({ view: "3d" }, { coarse: false })
-		const touch = describeView({ view: "3d" }, { coarse: true })
+		const mouse = describeView({ view: "3d" }, { coarse: false, drawn: true })
+		const touch = describeView({ view: "3d" }, { coarse: true, drawn: true })
 		expect(mouse.status).toMatch(/drag/i)
 		expect(touch.status).not.toMatch(/drag/i)
 		expect(touch.status).toMatch(/tap/i)
 	})
 
+	it("says the flat map is showing until the 3D map has drawn, and still offers the switch", () => {
+		const loading = describeView(
+			{ view: "3d" },
+			{ coarse: false, drawn: false },
+		)
+		expect(loading.status).toMatch(/flat map/i)
+		expect(loading.status).toMatch(/loading/i)
+		expect(loading.status).not.toMatch(/drag/i)
+		expect(loading.action).toBe("2d")
+	})
+
 	it("always offers the way back to the flat map from the 3D one", () => {
-		expect(describeView({ view: "3d" }, { coarse: false }).action).toBe("2d")
-		expect(describeView({ view: "3d" }, { coarse: true }).action).toBe("2d")
+		expect(
+			describeView({ view: "3d" }, { coarse: false, drawn: true }).action,
+		).toBe("2d")
+		expect(
+			describeView({ view: "3d" }, { coarse: true, drawn: true }).action,
+		).toBe("2d")
 	})
 
 	it("offers 3D again only where it was the viewer's own choice that made the map flat", () => {
-		expect(describeView(flat("chosen"), { coarse: false }).action).toBe("3d")
+		expect(
+			describeView(flat("chosen"), { coarse: false, drawn: true }).action,
+		).toBe("3d")
 		for (const reason of [
 			"reduced-motion",
 			"no-webgl",
@@ -33,7 +50,9 @@ describe("describeView", () => {
 			"context-lost",
 			"failed",
 		] as const) {
-			expect(describeView(flat(reason), { coarse: false }).action).toBeNull()
+			expect(
+				describeView(flat(reason), { coarse: false, drawn: true }).action,
+			).toBeNull()
 		}
 	})
 
@@ -48,7 +67,8 @@ describe("describeView", () => {
 			"chosen",
 		] as const
 		const sentences = reasons.map(
-			(reason) => describeView(flat(reason), { coarse: false }).status,
+			(reason) =>
+				describeView(flat(reason), { coarse: false, drawn: true }).status,
 		)
 		for (const sentence of sentences) {
 			expect(sentence).toMatch(/^Flat map/)
@@ -58,7 +78,7 @@ describe("describeView", () => {
 	})
 
 	it("says nothing while it is still finding out what the device can do", () => {
-		const waiting = describeView(flat(null), { coarse: false })
+		const waiting = describeView(flat(null), { coarse: false, drawn: true })
 		expect(waiting.status).toBe("")
 		expect(waiting.action).toBeNull()
 	})

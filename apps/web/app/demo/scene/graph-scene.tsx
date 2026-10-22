@@ -1,9 +1,7 @@
 "use client"
 
-import { useGSAP } from "@gsap/react"
 import { OrbitControls } from "@react-three/drei"
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
-import gsap from "gsap"
 import {
 	useCallback,
 	useEffect,
@@ -19,6 +17,7 @@ import {
 	type Vec3,
 	copyPose,
 } from "../../../lib/demo-data/camera-pose.js"
+import { GRAPH_INK } from "../../../lib/demo-data/graph-ink.js"
 import { layoutSphere } from "../../../lib/demo-data/graph-layout3.js"
 import {
 	type Degraded,
@@ -30,20 +29,10 @@ import {
 } from "../../../lib/demo-data/scene-store.js"
 import type { Graph } from "../../../lib/demo-data/views.js"
 import { createFlight } from "../motion/fly.js"
-import {
-	Label,
-	LabelLayer,
-	LitEdge,
-	Ring,
-	SCOPE_INK,
-	SIGNAL,
-} from "./scene-marks.js"
+import { useGSAP } from "../motion/gsap-react.js"
+import { Label, LabelLayer, LitEdge, Ring } from "./scene-marks.js"
 import { usePicking } from "./use-picking.js"
 
-gsap.registerPlugin(useGSAP)
-
-const SCOPE = "#143038"
-const EDGE = "#b9cdc9"
 const MAX_LABELS = 6
 
 /** Where tests and measurements reach the live scene; nothing else reads it. */
@@ -240,7 +229,7 @@ function World({
 		host[SCENE_SEAM] = seam
 		return () => {
 			if (host[SCENE_SEAM] === seam) {
-				// biome-ignore lint/performance/noDelete: the seam must be absent, not undefined, once the scene is gone
+				// Absent, not undefined, once the scene is gone: a reader tests for the seam.
 				delete host[SCENE_SEAM]
 			}
 		}
@@ -263,12 +252,14 @@ function World({
 			arrived.current = true
 			onFirstFrame()
 		}
-		if (drifting) {
-			state.invalidate()
-		}
-		// Only frames that run back to back say how fast the device is; a frame
-		// asked for by a hover says nothing about it.
+		// A flight's own tween asks for a frame from GSAP's tick, which R3F answers
+		// a frame late and then stops: every other frame is drawn, 30 fps on a
+		// throttled phone. Asking again from inside the frame keeps them back to
+		// back, as the drift does.
 		if (drifting || flight.active()) {
+			state.invalidate()
+			// Only frames that run back to back say how fast the device is; a frame
+			// asked for by a hover says nothing about it.
 			if (monitor.feed(delta, document.hidden) === "slow") {
 				onDegrade("slow")
 			}
@@ -324,7 +315,7 @@ function World({
 			</instancedMesh>
 			<lineSegments geometry={edges} frustumCulled={false}>
 				<lineBasicMaterial
-					color={EDGE}
+					color={GRAPH_INK.edge}
 					transparent
 					opacity={0.22}
 					depthWrite={false}
@@ -335,7 +326,7 @@ function World({
 					key={`flag-${i}`}
 					at={at(i)}
 					radius={nodeRadius(degreeOf(i)) * 1.55}
-					color={SIGNAL}
+					color={GRAPH_INK.signal}
 				/>
 			))}
 			{ringed.map((i) => (
@@ -343,7 +334,7 @@ function World({
 					key={`ring-${i}`}
 					at={at(i)}
 					radius={nodeRadius(degreeOf(i)) * 2.15}
-					color={i === pinnedIndex ? SIGNAL : SCOPE_INK}
+					color={i === pinnedIndex ? GRAPH_INK.signal : GRAPH_INK.scopeInk}
 				/>
 			))}
 			{pair?.link ? <LitEdge a={pair.a} b={pair.b} store={store} /> : null}
@@ -404,7 +395,7 @@ export function GraphScene({ orbit, ...rest }: SceneProps) {
 		>
 			<TouchAction orbit={orbit} />
 			<LabelLayer />
-			<fog attach="fog" args={[SCOPE, 2.2, 5.4]} />
+			<fog attach="fog" args={[GRAPH_INK.scope, 2.2, 5.4]} />
 			<World {...rest} store={store} flight={flight} />
 			{orbit ? (
 				<OrbitControls
@@ -417,6 +408,7 @@ export function GraphScene({ orbit, ...rest }: SceneProps) {
 					minPolarAngle={1.0}
 					maxPolarAngle={1.9}
 					onStart={() => store.rest()}
+					onEnd={() => store.wake()}
 				/>
 			) : null}
 		</Canvas>

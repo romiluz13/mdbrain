@@ -9,11 +9,9 @@ import {
 	CSS2DRenderer,
 } from "three/addons/renderers/CSS2DRenderer.js"
 import type { Vec3 } from "../../../lib/demo-data/camera-pose.js"
+import { GRAPH_INK } from "../../../lib/demo-data/graph-ink.js"
 import type { SceneStore } from "../../../lib/demo-data/scene-store.js"
 import styles from "../graph.module.css"
-
-export const SIGNAL = "#e5502b"
-export const SCOPE_INK = "#f6f8f5"
 
 /** A ring that always faces the camera, around the page at `at`. */
 export function Ring({
@@ -138,7 +136,7 @@ export function LitEdge({
 	return (
 		<mesh ref={mesh} visible={false}>
 			<cylinderGeometry args={[0.0045, 0.0045, 1, 10, 1]} />
-			<meshBasicMaterial color={SIGNAL} />
+			<meshBasicMaterial color={GRAPH_INK.signal} />
 		</mesh>
 	)
 }

@@ -1,8 +1,9 @@
 // The D15 bounds for the brain in 3D and the story in motion, measured on a
 // production build (`next build` then `next start`). Run on demand, one worker:
-//   DEMO_BOUNDS=1 T334_PORT=3041 T334_OUT=<dir> [T334_CHROME=<chrome>] \
-//     bunx playwright test -c playwright.t334.config.ts e2e/demo-bounds.e2e.ts --workers=1
-// T334_CHROME is a Chrome for Testing whose GL goes to the GPU; without it the
+//   DEMO_BOUNDS=1 DEMO_BASE_URL=http://127.0.0.1:3041 DEMO_BOUNDS_OUT=<dir> \
+//     [DEMO_CHROME=<chrome>] [DEMO_BOUNDS_GL=software] \
+//     bunx playwright test e2e/demo-bounds.e2e.ts --project=desktop-chromium --workers=1
+// DEMO_CHROME is a Chrome for Testing whose GL goes to the GPU; without it the
 // browser is Playwright's, drawing with SwiftShader (the software bracket).
 import { expect, test } from "@playwright/test"
 import { chapterIndex } from "../app/demo/chapters"
@@ -116,7 +117,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 		const readyList = warm.map((r) => r.ready as number)
 		const result = {
 			throttle: MOBILE_THROTTLE,
-			link: "reads modelled in the browser: 150 ms each, gzipped bodies on a shared 9 Mbit/s downlink",
+			link: "reads modeled in the browser: 150 ms each, gzipped bodies on a shared 9 Mbit/s downlink",
 			note: "run 1 warms the server and is dropped; the other four are reported",
 			readyMs: {
 				median: median(readyList),

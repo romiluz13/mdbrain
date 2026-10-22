@@ -2,8 +2,9 @@
 // and reduced motion fall back to the flat map; no chapter scrolls sideways at
 // 390 px; the scene fills its stage at 1920x1080. Run on demand, one worker, on
 // a production build, as demo-bounds.e2e.ts is:
-//   DEMO_BOUNDS=1 T334_PORT=3041 T334_OUT=<dir> [T334_CHROME=<chrome>] \
-//     bunx playwright test -c playwright.t334.config.ts e2e/demo-bounds-states.e2e.ts --workers=1
+//   DEMO_BOUNDS=1 DEMO_BASE_URL=http://127.0.0.1:3041 DEMO_BOUNDS_OUT=<dir> \
+//     [DEMO_CHROME=<chrome>] [DEMO_BOUNDS_GL=software] \
+//     bunx playwright test e2e/demo-bounds-states.e2e.ts --project=desktop-chromium --workers=1
 import { expect, type Page, test } from "@playwright/test"
 import { chapterIndex } from "../app/demo/chapters"
 import {
@@ -48,7 +49,9 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 				)
 			const status = async (page: Page) => {
 				const note = page.getByTestId("graph-view-status").first()
-				await expect(note).toContainText(/Flat map/, { timeout: 20_000 })
+				await expect(note).toContainText(/Flat map(, because|\. Your choice)/, {
+					timeout: 20_000,
+				})
 				return note.innerText()
 			}
 			const rest = async (page: Page) => {

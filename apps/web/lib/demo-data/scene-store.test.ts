@@ -86,15 +86,24 @@ describe("createSceneStore", () => {
 		expect(store.azimuth).toBe(0)
 	})
 
-	it("never drifts when motion is not allowed, even if woken", () => {
+	it("asks for a frame when it is woken, so the drift starts from a page at rest", () => {
 		const store = createSceneStore(1)
-		store.allowMotion(false)
+		const frame = vi.fn()
+		store.subscribe(frame)
 		store.wake()
-		expect(run(store, 3)).toBe(false)
-		expect(store.drift).toBe(0)
-		store.allowMotion(true)
-		store.wake()
+		expect(frame).toHaveBeenCalledTimes(1)
+	})
+
+	it("drifts again, with a frame asked for, as soon as a hold is released", () => {
+		const store = createSceneStore(1)
+		const frame = vi.fn()
+		store.subscribe(frame)
+		store.hold(true)
+		frame.mockClear()
+		store.hold(false)
+		expect(frame).toHaveBeenCalledTimes(1)
 		expect(run(store, 1)).toBe(true)
+		expect(store.drift).toBeGreaterThan(0)
 	})
 
 	it("tells every listener when a frame is wanted, and none after it is told to stop", () => {

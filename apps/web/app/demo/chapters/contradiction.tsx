@@ -78,7 +78,7 @@ export function ContradictionChapter() {
 						ease: EASE.out,
 					})
 					.from(
-						step.querySelectorAll('[data-testid="claim-slip"]'),
+						step.querySelectorAll('[data-motion="claim-slip"]'),
 						{
 							opacity: 0,
 							x: side * 28,

@@ -8,6 +8,11 @@ export const DURATION = {
 	arrow: 0.4,
 	slip: 0.45,
 	stamp: 0.4,
+	/** The camera's flight to the pair, and back. */
+	fly: 0.6,
+	/** The link between the pair lighting, and dimming. */
+	light: 0.45,
+	dim: 0.3,
 } as const
 
 export const EASE = {
@@ -25,12 +30,6 @@ export const STAGGER = {
 	/** Between the slips of one claim. */
 	slips: 0.08,
 } as const
-
-/** How long a stream of `count` rows takes from its first row starting to its
- * last row landing. */
-export function entrySeconds(count: number): number {
-	return DURATION.arrive + Math.max(0, count - 1) * rowStagger(count)
-}
 
 /** The gap between rows, narrowed for a long run so the stream stays about as
  * long as a short one. */

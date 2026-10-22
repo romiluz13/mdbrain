@@ -108,7 +108,6 @@ export function GraphView({ frame = null, ...canvas }: Props) {
 		degraded: view.degraded,
 	})
 	const show3d = settled && choice.view === "3d"
-	const { status, action } = describeView(choice, { coarse })
 
 	useEffect(() => {
 		if (!show3d) {
@@ -116,6 +115,8 @@ export function GraphView({ frame = null, ...canvas }: Props) {
 			setTurning(false)
 		}
 	}, [show3d])
+
+	const { status, action } = describeView(choice, { coarse, drawn })
 
 	const onFirstFrame = useCallback(() => {
 		setDrawn(true)

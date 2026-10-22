@@ -3,7 +3,7 @@
 // steps back. GSAP is the only writer of the pose while the drift is held, so no
 // property has two owners.
 
-import gsap from "gsap"
+import { gsap } from "./gsap-react.js"
 import {
 	type Pose,
 	type Vec3,
@@ -12,11 +12,10 @@ import {
 	nearestTurn,
 } from "../../../lib/demo-data/camera-pose.js"
 import type { SceneStore } from "../../../lib/demo-data/scene-store.js"
+import { DURATION, EASE } from "./tokens.js"
 
-const FLIGHT_SECONDS = 0.8
-const LIGHT_SECONDS = 0.5
-const LIGHT_AT = 0.5
-const DIM_SECONDS = 0.3
+// The link lights as the camera is arriving, not after it has.
+const LIGHT_AT = 0.35
 
 export function createFlight(store: SceneStore) {
 	let rest: Pose | null = null
@@ -55,13 +54,13 @@ export function createFlight(store: SceneStore) {
 				gz: target.gz,
 				yaw,
 				d: target.d,
-				duration: FLIGHT_SECONDS,
-				ease: "power3.inOut",
+				duration: DURATION.fly,
+				ease: EASE.inOut,
 			})
 			if (link) {
 				move.to(
 					store,
-					{ lit: 1, duration: LIGHT_SECONDS, ease: "power2.out" },
+					{ lit: 1, duration: DURATION.light, ease: EASE.out },
 					LIGHT_AT,
 				)
 			}
@@ -77,10 +76,10 @@ export function createFlight(store: SceneStore) {
 			const back = rest
 			rest = null
 			move = begin(() => store.hold(false))
-			move.to(store, { lit: 0, duration: DIM_SECONDS, ease: "power2.in" }, 0)
+			move.to(store, { lit: 0, duration: DURATION.dim, ease: EASE.in }, 0)
 			move.to(
 				store.pose,
-				{ ...back, duration: FLIGHT_SECONDS, ease: "power3.inOut" },
+				{ ...back, duration: DURATION.fly, ease: EASE.inOut },
 				0,
 			)
 			return move

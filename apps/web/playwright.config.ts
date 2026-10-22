@@ -4,6 +4,8 @@ import { defineConfig, devices } from "@playwright/test"
 // than the fixture's 30 s. The limit was set when a cite was a Memongo recall of
 // 5 to 7 s and has not been measured again since cite resolves by id.
 const LIVE = process.env.DEMO_E2E_LIVE === "1"
+// A server already running, such as a production build, is used as it is.
+const BASE_URL = process.env.DEMO_BASE_URL
 
 export default defineConfig({
 	testDir: "./e2e",
@@ -14,7 +16,7 @@ export default defineConfig({
 	retries: process.env.CI ? 2 : 0,
 	reporter: "line",
 	use: {
-		baseURL: "http://127.0.0.1:3040",
+		baseURL: BASE_URL ?? "http://127.0.0.1:3040",
 		trace: "on-first-retry",
 	},
 	projects: [
@@ -27,10 +29,12 @@ export default defineConfig({
 			use: { ...devices["Pixel 7"] },
 		},
 	],
-	webServer: {
-		command: "bun run dev",
-		url: "http://127.0.0.1:3040",
-		reuseExistingServer: !process.env.CI,
-		timeout: 120_000,
-	},
+	webServer: BASE_URL
+		? undefined
+		: {
+				command: "bun run dev",
+				url: "http://127.0.0.1:3040",
+				reuseExistingServer: !process.env.CI,
+				timeout: 120_000,
+			},
 })

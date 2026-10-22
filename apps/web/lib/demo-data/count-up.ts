@@ -18,3 +18,14 @@ export function countAt(value: number, progress: number): number {
 	}
 	return Math.min(value, Math.round(value * easeOut(progress)))
 }
+
+/** What a count that ends early leaves in its text node. Its own last step is
+ * replaced by the final text; a text React wrote since (the value changed, or
+ * went back to loading) is not ours to overwrite. */
+export function textAfterCountUp(
+	current: string | null,
+	lastStep: string,
+	finalText: string,
+): string {
+	return current === null || current === lastStep ? finalText : current
+}

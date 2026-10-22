@@ -91,7 +91,7 @@ function AgentStory({
 	useGSAP(
 		() => {
 			const arrows = handoff.current?.querySelectorAll(
-				'[data-testid="handoff-arrow"]',
+				'[data-motion="handoff-arrow"]',
 			)
 			if (reduced || !arrows?.length) {
 				return

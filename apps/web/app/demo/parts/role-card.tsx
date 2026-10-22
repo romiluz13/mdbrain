@@ -130,6 +130,7 @@ function HandoffArrow() {
 		<svg
 			className={styles.handoffArrow}
 			data-testid="handoff-arrow"
+			data-motion="handoff-arrow"
 			viewBox="0 0 24 24"
 			aria-hidden="true"
 			focusable="false"

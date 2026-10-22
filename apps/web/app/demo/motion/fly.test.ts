@@ -115,4 +115,26 @@ describe("the camera flight", () => {
 		move.progress(1)
 		expect(frames).toHaveBeenCalled()
 	})
+
+	it("takes no more than a second there or back, each move inside the 300 to 600 ms band", () => {
+		const store = createSceneStore(1)
+		const flight = createFlight(store)
+		const there = flight.frame(A, B, 1, true)
+		expect(there.duration()).toBeLessThanOrEqual(1)
+		const tweens = there.getChildren(false, true, false)
+		expect(tweens.length).toBeGreaterThan(0)
+		for (const child of tweens) {
+			expect(child.duration()).toBeGreaterThanOrEqual(0.3)
+			expect(child.duration()).toBeLessThanOrEqual(0.6)
+		}
+		there.progress(1)
+		const back = flight.release()
+		expect(back?.duration()).toBeLessThanOrEqual(1)
+		const returning = back?.getChildren(false, true, false) ?? []
+		expect(returning.length).toBeGreaterThan(0)
+		for (const child of returning) {
+			expect(child.duration()).toBeGreaterThanOrEqual(0.3)
+			expect(child.duration()).toBeLessThanOrEqual(0.6)
+		}
+	})
 })

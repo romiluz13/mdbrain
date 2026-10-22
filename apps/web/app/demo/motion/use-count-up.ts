@@ -1,7 +1,7 @@
 "use client"
 
 import type { RefObject } from "react"
-import { countAt } from "../../../lib/demo-data/count-up.js"
+import { countAt, textAfterCountUp } from "../../../lib/demo-data/count-up.js"
 import { gsap, useGSAP } from "./gsap-react.js"
 import { DURATION } from "./tokens.js"
 import { useReducedMotion } from "./use-reduced-motion.js"
@@ -30,8 +30,10 @@ export function useCountUp(
 				return
 			}
 			const run = { progress: 0 }
+			let lastStep = node.nodeValue ?? ""
 			const show = (shown: number) => {
-				node.nodeValue = format(shown)
+				lastStep = format(shown)
+				node.nodeValue = lastStep
 				follow?.(shown)
 			}
 			const step = () => show(countAt(value, run.progress))
@@ -43,7 +45,13 @@ export function useCountUp(
 				onUpdate: step,
 				onComplete: step,
 			})
-			return () => show(value)
+			return () => {
+				const final = format(value)
+				node.nodeValue = textAfterCountUp(node.nodeValue, lastStep, final)
+				if (node.nodeValue === final) {
+					follow?.(value)
+				}
+			}
 		},
 		{ scope: ref, dependencies: [reduced, value], revertOnUpdate: true },
 	)

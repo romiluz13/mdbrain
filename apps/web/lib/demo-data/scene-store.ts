@@ -27,15 +27,13 @@ export type SceneStore = {
 	azimuth: number
 	/** Moves the resting pose to suit a stage of this width over height. */
 	setAspect: (aspect: number) => void
-	/** Starts, or restarts, a window of drift. */
+	/** Starts, or restarts, a window of drift, and asks for the frame it begins on. */
 	wake: () => void
-	/** Holds the drift still (during a flight) or lets it be woken again. */
+	/** Holds the drift still (during a flight); releasing it wakes the drift. */
 	hold: (on: boolean) => void
 	isHeld: () => boolean
 	/** Ends the current window of drift, for when the viewer takes hold. */
 	rest: () => void
-	/** False while the viewer asks for reduced motion. */
-	allowMotion: (on: boolean) => void
 	/** One frame's step. True while the drift still wants frames. */
 	advance: (deltaSeconds: number) => boolean
 	subscribe: (listener: () => void) => () => void
@@ -49,7 +47,6 @@ export function createSceneStore(aspect: number): SceneStore {
 	const listeners = new Set<() => void>()
 	let remaining = 0
 	let held = false
-	let allowed = true
 	const store: SceneStore = {
 		pose: homePose(aspect, OPENING_YAW),
 		home: homePose(aspect, OPENING_YAW),
@@ -65,28 +62,25 @@ export function createSceneStore(aspect: number): SceneStore {
 			}
 		},
 		wake() {
-			if (allowed && !held) {
+			if (!held) {
 				remaining = DRIFT_SECONDS
+				store.invalidate()
 			}
 		},
 		hold(on) {
 			held = on
 			if (on) {
 				remaining = 0
+			} else {
+				store.wake()
 			}
 		},
 		isHeld: () => held,
 		rest() {
 			remaining = 0
 		},
-		allowMotion(on) {
-			allowed = on
-			if (!on) {
-				remaining = 0
-			}
-		},
 		advance(deltaSeconds) {
-			if (remaining <= 0 || held || !allowed) {
+			if (remaining <= 0 || held) {
 				return false
 			}
 			store.drift += deltaSeconds * DRIFT_RADIANS_PER_SECOND

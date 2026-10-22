@@ -1,7 +1,8 @@
 // The brain in 3D and the story in motion, as pictures: chapter 1 in 3D and in
 // 2D, chapter 5 on its last beat, and chapters 3 and 4 caught mid-motion and at
 // rest, on a laptop, a phone and a 1920x1080 stage.
-//   DEMO_SHOTS_DIR=/some/dir [T334_CHROME=<chrome>] \
+//   DEMO_SHOTS_DIR=/some/dir [DEMO_BASE_URL=http://127.0.0.1:3041] \
+//     [DEMO_CHROME=<chrome>] \
 //     bunx playwright test e2e/demo-shots-motion.e2e.ts --project=desktop-chromium
 // The mid-motion frames stop Playwright's fake clock part-way through the
 // tween: GSAP's ticker runs on the page's requestAnimationFrame.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { countAt } from "./count-up.js"
+import { countAt, textAfterCountUp } from "./count-up.js"
 
 describe("countAt", () => {
 	it("starts at zero and ends on the value it was given", () => {
@@ -42,5 +42,20 @@ describe("countAt", () => {
 		expect(countAt(Number.NaN, 0.5)).toBeNaN()
 		expect(countAt(-3, 0.5)).toBe(-3)
 		expect(countAt(2.5, 0.5)).toBe(2.5)
+	})
+})
+
+describe("textAfterCountUp", () => {
+	it("puts the final text back when the count was cut short and the page still shows its own step", () => {
+		expect(textAfterCountUp("37", "37", "110")).toBe("110")
+	})
+
+	it("leaves the text alone when React has already written a newer one over the step", () => {
+		expect(textAfterCountUp("0", "37", "110")).toBe("0")
+		expect(textAfterCountUp("—", "37", "110")).toBe("—")
+	})
+
+	it("falls back to the final text when the node has none", () => {
+		expect(textAfterCountUp(null, "37", "110")).toBe("110")
 	})
 })

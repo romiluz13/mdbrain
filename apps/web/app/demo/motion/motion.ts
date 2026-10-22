@@ -16,13 +16,9 @@ export type MotionSeam = {
 
 const listeners = new Set<() => void>()
 let reduced = false
-let started = false
 
-function start(): void {
-	if (started || typeof window === "undefined") {
-		return
-	}
-	started = true
+// Registered when this module loads in a browser, once for the page's life.
+if (typeof window !== "undefined") {
 	const seam: MotionSeam = {
 		tweens: () => gsap.globalTimeline.getChildren(true, true, false).length,
 		reduced: () => reduced,
@@ -45,15 +41,12 @@ function start(): void {
 	)
 }
 
-/** True while the viewer asks for reduced motion. The first call reads the
- * setting, so ask before the first thing is drawn. */
+/** True while the viewer asks for reduced motion. */
 export function motionReduced(): boolean {
-	start()
 	return reduced
 }
 
 export function subscribeMotion(listener: () => void): () => void {
-	start()
 	listeners.add(listener)
 	return () => {
 		listeners.delete(listener)

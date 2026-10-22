@@ -13,14 +13,14 @@ import { installDemoProxy } from "./demo-proxy"
 
 export type DemoProxy = Awaited<ReturnType<typeof installDemoProxy>>
 
-export const OUT = process.env.T334_OUT ?? ""
-export const GL = process.env.T334_GL === "software" ? "software" : "gpu"
+export const OUT = process.env.DEMO_BOUNDS_OUT ?? ""
+export const GL = process.env.DEMO_BOUNDS_GL === "software" ? "software" : "gpu"
 
 /** The 304 throttle for the phone: CPU 4x, 9 Mbit/s down, 1.5 up, 150 ms RTT. */
 export const MOBILE_THROTTLE =
 	"mobile 390x844 DPR3, CPU 4x, network 9 Mbit/s down / 1.5 Mbit/s up / 150 ms RTT, HTTP cache disabled"
 
-/** The proxy reads are served inside the browser, so the link is modelled: 150
+/** The proxy reads are served inside the browser, so the link is modeled: 150
  * ms per read, then the gzipped body on a 9 Mbit/s downlink shared by every read. */
 export const LINK = { latencyMs: 150, bytesPerSecond: (9 * 1024 * 1024) / 8 }
 
@@ -352,14 +352,14 @@ export const errorsOf = (page: Page): string[] => {
 
 export const CHAPTERS_TOTAL = 9
 
-/** Launch options for the bounds specs: T334_CHROME is a Chrome for Testing
+/** Launch options for the bounds specs: DEMO_CHROME is a Chrome for Testing
  * whose GL goes to the GPU; without it the browser is Playwright's, drawing
  * with SwiftShader (the software bracket). */
 export const BOUNDS_LAUNCH = {
-	executablePath: process.env.T334_CHROME || undefined,
+	executablePath: process.env.DEMO_CHROME || undefined,
 	args: [
 		"--enable-precise-memory-info",
-		...(process.env.T334_CHROME
+		...(process.env.DEMO_CHROME
 			? ["--use-angle=metal", "--ignore-gpu-blocklist"]
 			: []),
 	],

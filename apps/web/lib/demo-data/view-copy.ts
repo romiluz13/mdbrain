@@ -18,9 +18,15 @@ const FLAT_BECAUSE = {
 
 export function describeView(
 	choice: ViewChoice,
-	{ coarse }: { coarse: boolean },
+	{ coarse, drawn }: { coarse: boolean; drawn: boolean },
 ): { status: string; action: ViewAction } {
 	if (choice.view === "3d") {
+		if (!drawn) {
+			return {
+				status: "Flat map for now. The 3D map is loading.",
+				action: "2d",
+			}
+		}
 		return {
 			status: coarse
 				? "3D map. Tap a page to read it."
