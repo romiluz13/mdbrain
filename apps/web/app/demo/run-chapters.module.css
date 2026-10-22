@@ -207,28 +207,33 @@
 	min-width: 0;
 }
 
-/* The hand-off arrow: down between stacked cards, right between columns. */
-.role + .role::before {
-	content: "↓";
+/* The hand-off arrow: down between stacked cards, right between columns. The
+ * path is drawn by GSAP; at rest it is whole. */
+.handoffArrow {
 	position: absolute;
 	top: -12px;
 	left: 24px;
-	display: grid;
-	place-items: center;
 	width: 24px;
 	height: 24px;
 	border-radius: 12px;
 	background: var(--scope);
-	color: var(--scope-ink);
-	font-size: var(--t13);
-	line-height: 1;
+	fill: none;
+	stroke: var(--scope-ink);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.handoffArrow path {
+	stroke-dasharray: 1 2;
+	stroke-dashoffset: 0;
 }
 
 @media (min-width: 1000px) {
-	.role + .role::before {
-		content: "→";
+	.handoffArrow {
 		top: 24px;
 		left: -22px;
+		transform: rotate(-90deg);
 	}
 }
 

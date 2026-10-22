@@ -74,7 +74,11 @@ function stepPlan(reusedSlug: string): StepPlan[] {
 	return [
 		{ role: "support", name: "read the brain", detail: "ticket queue" },
 		{ role: "support", name: "write page", detail: reusedSlug },
-		{ role: "support", name: "replay source events" },
+		{
+			role: "support",
+			name: "replay source events",
+			detail: "mdbrain_write_event",
+		},
 		{ role: "account", name: "read page", detail: reusedSlug },
 		{ role: "account", name: "write note" },
 		{ role: "product", name: "read page", detail: reusedSlug },

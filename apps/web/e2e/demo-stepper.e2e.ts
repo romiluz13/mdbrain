@@ -8,6 +8,7 @@ import {
 	mapReady,
 	openDemo,
 	settleContradiction,
+	settled,
 	showBeat,
 } from "./demo-helpers"
 import { installDemoProxy } from "./demo-proxy"
@@ -128,23 +129,111 @@ test("touch steps the beats", async ({ page, isMobile }) => {
 })
 
 test.describe("motion", () => {
-	test("a beat eases in when motion is allowed", async ({ page }) => {
+	test("a beat eases in when motion is allowed, its sources sliding in from the side its claim sits on", async ({
+		page,
+	}) => {
 		await openWalk(page)
-		const started = await page.evaluate(async () => {
+		const midMove = await page.evaluate(async () => {
+			const seam = Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as {
+				tweens: () => number
+			}
 			document
 				.querySelector<HTMLButtonElement>(
 					'[data-testid="beat-stepper"] button:last-of-type',
 				)
 				?.click()
 			await new Promise((resolve) => requestAnimationFrame(resolve))
-			await new Promise((resolve) => requestAnimationFrame(resolve))
-			return document
-				.getAnimations()
-				.flatMap((animation) =>
-					animation instanceof CSSAnimation ? [animation.animationName] : [],
-				)
+			const step = document.querySelector('[data-current="true"]')
+			return {
+				tweens: seam.tweens(),
+				opacity: step ? Number(getComputedStyle(step).opacity) : -1,
+				slipShift: [
+					...(step?.querySelectorAll('[data-testid="claim-slip"]') ?? []),
+				].map(
+					(slip) => new DOMMatrixReadOnly(getComputedStyle(slip).transform).m41,
+				),
+			}
 		})
-		expect(started.some((name) => name.includes("beat-in"))).toBe(true)
+		expect(midMove.tweens).toBeGreaterThan(0)
+		expect(midMove.opacity).toBeLessThan(1)
+		expect(midMove.slipShift.length).toBeGreaterThan(0)
+		// The second claim sits on the right, so its sources come from the right.
+		expect(midMove.slipShift.every((shift) => shift > 0)).toBe(true)
+		await settled(page)
+		const current = page.locator('[data-current="true"]')
+		expect((await current.getAttribute("style")) ?? "").not.toContain("opacity")
+		await expect(current).toHaveCSS("opacity", "1")
+	})
+
+	test("the recorded stamp lands: it arrives larger and turned, and rests at its own tilt", async ({
+		page,
+	}) => {
+		await openWalk(page)
+		await showBeat(page, 1)
+		await settled(page)
+		const stamp = page.getByTestId("contradiction-stamp")
+		const rest = await stamp.evaluate((element) => {
+			// hidden until the last beat, so read the tilt the stylesheet gives it
+			element.removeAttribute("hidden")
+			const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform)
+			element.setAttribute("hidden", "")
+			return matrix.a
+		})
+		const mid = await page.evaluate(async () => {
+			document
+				.querySelector<HTMLButtonElement>(
+					'[data-testid="beat-stepper"] button:last-of-type',
+				)
+				?.click()
+			await new Promise((resolve) => requestAnimationFrame(resolve))
+			const element = document.querySelector(
+				'[data-testid="contradiction-stamp"]',
+			)
+			return element
+				? {
+						opacity: Number(getComputedStyle(element).opacity),
+						scale: new DOMMatrixReadOnly(getComputedStyle(element).transform).a,
+					}
+				: null
+		})
+		expect(mid?.opacity).toBeLessThan(1)
+		expect(mid?.scale).toBeGreaterThan(rest)
+		await settled(page)
+		await expect(stamp).toHaveCSS("opacity", "1")
+		const landed = await stamp.evaluate(
+			(element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a,
+		)
+		expect(landed).toBeCloseTo(rest, 4)
+		expect((await stamp.getAttribute("style")) ?? "").toBe("")
+	})
+
+	test("stepping on while a move is under way ends that move where it was going: a click ahead skips it", async ({
+		page,
+	}) => {
+		await openWalk(page)
+		await settled(page)
+		const next = page
+			.getByTestId("beat-stepper")
+			.getByRole("button", { name: NEXT })
+		await next.click()
+		expect(
+			await page.evaluate(() =>
+				(
+					Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as {
+						tweens: () => number
+					}
+				).tweens(),
+			),
+		).toBeGreaterThan(0)
+		await next.click()
+		const skipped = page
+			.getByTestId("contradiction-claim")
+			.nth(1)
+			.locator("xpath=ancestor::li[1]")
+		expect((await skipped.getAttribute("style")) ?? "").toBe("")
+		await expect(skipped).toHaveCSS("opacity", "1")
+		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
+		await settled(page)
 	})
 
 	test.describe("with reduced motion", () => {
@@ -181,6 +270,64 @@ test("the stepper's own controls are at least 44 px", async ({ page }) => {
 		}
 	}
 })
+
+test("the stepper sticks flush under the synthetic-company banner, with no gap for the page to show through", async ({
+	page,
+}) => {
+	await openWalk(page)
+	await showBeat(page, 2)
+	// The chapter's enter motion moves the stepper a few pixels until it ends.
+	await settled(page)
+	await page.evaluate(() => {
+		const stepper = document.querySelector('[data-testid="beat-stepper"]')
+		const top = (stepper?.getBoundingClientRect().top ?? 0) + window.scrollY
+		// Far enough for the stepper to be stuck, not so far that its chapter ends.
+		window.scrollTo({ top, behavior: "instant" })
+	})
+	const edges = await page.evaluate(() => ({
+		barBottom:
+			document
+				.querySelector('[data-testid="synthetic-label"]')
+				?.getBoundingClientRect().bottom ?? Number.NaN,
+		stepperTop:
+			document
+				.querySelector('[data-testid="beat-stepper"]')
+				?.getBoundingClientRect().top ?? Number.NaN,
+	}))
+	expect(edges.stepperTop).toBeGreaterThan(0)
+	expect(Math.abs(edges.stepperTop - edges.barBottom)).toBeLessThanOrEqual(0.5)
+})
+
+for (const width of [390, 360]) {
+	test(`at ${width} px the stepper is one row, so its bar stays short`, async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width, height: 844 })
+		await openWalk(page)
+		for (const beat of [0, 1, 2]) {
+			await showBeat(page, beat)
+			const row = await page.evaluate(() => {
+				const stepper = document.querySelector('[data-testid="beat-stepper"]')
+				const centers = [...(stepper?.children ?? [])].map((child) => {
+					const box = child.getBoundingClientRect()
+					return box.top + box.height / 2
+				})
+				return {
+					spread: Math.max(...centers) - Math.min(...centers),
+					height: stepper?.getBoundingClientRect().height ?? 0,
+				}
+			})
+			expect(
+				row.spread,
+				`beat ${beat + 1}: the controls share a row`,
+			).toBeLessThan(2)
+			expect(
+				row.height,
+				`beat ${beat + 1}: the bar is one control tall`,
+			).toBeLessThan(70)
+		}
+	})
+}
 
 test("on a phone the chapter is one screen per beat, not one long page", async ({
 	page,

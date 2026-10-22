@@ -4,6 +4,9 @@ import { useMemo, useRef, useState } from "react"
 import { countOf } from "../../../lib/demo-data/plural.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../chapters.module.css"
+import { gsap, useGSAP } from "../motion/gsap-react.js"
+import { DURATION, EASE, STAGGER } from "../motion/tokens.js"
+import { useReducedMotion } from "../motion/use-reduced-motion.js"
 import { GraphStage } from "../parts/graph-stage.js"
 import { BeatStepper } from "../parts/beat-stepper.js"
 import { CitationTrigger } from "../parts/citation-trigger.js"
@@ -27,11 +30,14 @@ export function ContradictionChapter() {
 	const { data, cite, pin, goTo, reload } = useDemo()
 	const [beat, setBeat] = useState(0)
 	const beats = useRef<HTMLDivElement>(null)
+	const heading = useRef<"forward" | "back">("forward")
+	const reduced = useReducedMotion()
 	const found =
 		data.contradiction.kind === "ready" ? data.contradiction.data : null
 	// On a phone each beat is one screen: a new beat opens at its top, not at
 	// the middle of a card the person has just scrolled down through.
 	const showBeat = (next: number) => {
+		heading.current = next > beat ? "forward" : "back"
 		setBeat(next)
 		const top = beats.current
 		if (top && top.getBoundingClientRect().top < 0) {
@@ -45,6 +51,70 @@ export function ContradictionChapter() {
 		() => new Set(found?.claims.map((claim) => claim.pageSlug) ?? []),
 		[found],
 	)
+	// A beat just reached arrives: its claim eases in and its sources slide in
+	// from the side its claim sits on, and the recorded stamp lands. Stepping
+	// back shows the earlier beat as it was, and reduced motion shows every beat
+	// as it ends.
+	useGSAP(
+		() => {
+			const root = beats.current
+			if (reduced || !root || heading.current === "back") {
+				return
+			}
+			const arrive = gsap.timeline({
+				defaults: { clearProps: "opacity,transform" },
+			})
+			if (beat < lastBeat) {
+				const step = root.querySelector('[data-current="true"]')
+				if (!step) {
+					return
+				}
+				const side = beat % 2 === 0 ? -1 : 1
+				arrive
+					.from(step, {
+						opacity: 0,
+						y: 8,
+						duration: DURATION.arrive,
+						ease: EASE.out,
+					})
+					.from(
+						step.querySelectorAll('[data-motion="claim-slip"]'),
+						{
+							opacity: 0,
+							x: side * 28,
+							duration: DURATION.slip,
+							ease: EASE.out,
+							stagger: STAGGER.slips,
+						},
+						0.1,
+					)
+				return
+			}
+			const stamp = root.querySelector('[data-testid="contradiction-stamp"]')
+			if (stamp) {
+				arrive.from(stamp, {
+					opacity: 0,
+					scale: 1.35,
+					rotation: -4,
+					duration: DURATION.stamp,
+					ease: EASE.stamp,
+				})
+			}
+		},
+		{
+			scope: beats,
+			dependencies: [beat, reduced, found === null],
+			revertOnUpdate: true,
+		},
+	)
+	// The camera frames the two pages from the beat the case is recorded on, and
+	// goes back as the reader steps back.
+	const framed = useMemo(() => {
+		const [first, second] = [...highlight]
+		return first !== undefined && second !== undefined && beat >= lastBeat
+			? ([first, second] as const)
+			: null
+	}, [highlight, beat, lastBeat])
 	return (
 		<>
 			<StatePanel
@@ -153,8 +223,10 @@ export function ContradictionChapter() {
 				)}
 			</StatePanel>
 			<GraphStage
+				view3d
 				title={found ? "Where the two pages sit" : "The pages in this brain"}
 				highlight={highlight}
+				frame={framed}
 				compact
 			/>
 		</>

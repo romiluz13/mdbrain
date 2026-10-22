@@ -8,6 +8,7 @@ import {
 	goto,
 	mapReady,
 	openDemo,
+	readsSettled,
 	settleContradiction,
 	settled,
 	showBeat,
@@ -51,7 +52,7 @@ for (const [index, chapter] of CHAPTERS.entries()) {
 				// final one every chapter gets.
 				for (const beat of [0, 1]) {
 					await showBeat(page, beat)
-					await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+					await readsSettled(page)
 					await settled(page)
 					await page.screenshot({
 						path: `${DIR}/${testInfo.project.name}-${String(index + 1).padStart(2, "0")}-${chapter.id}-beat${beat + 1}.png`,
@@ -61,7 +62,7 @@ for (const [index, chapter] of CHAPTERS.entries()) {
 				await showBeat(page, 2)
 			}
 		}
-		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+		await readsSettled(page)
 		const canvas = page.locator('canvas[data-layer="static"]').first()
 		if ((await canvas.count()) > 0) {
 			await expect(canvas).toHaveAttribute("data-draws", /[1-9]/)
@@ -177,10 +178,7 @@ for (const state of STATES) {
 			}
 		}
 		await state.act?.(page)
-		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
-		await expect(
-			page.locator('[data-testid="source-row"][data-status="loading"]'),
-		).toHaveCount(0)
+		await readsSettled(page)
 		await settled(page)
 		await page.evaluate(() => window.scrollTo(0, 0))
 		await page.screenshot({

@@ -18,6 +18,18 @@ import {
 } from "./demo-helpers"
 import { GENERATED, installDemoProxy } from "./demo-proxy"
 
+/** A run that stored no revisions: the changes feed answers with an empty window. */
+const NO_CHANGES = {
+	window: {
+		since: "2026-10-20T08:55:00.000Z",
+		until: "2026-10-20T08:55:00.000Z",
+		settled: true,
+	},
+	limits: { limit: 50, maxClaims: 10 },
+	changes: [],
+	hasMore: false,
+}
+
 test.describe("states", () => {
 	test.skip(!GENERATED, "the states are forced through the generated fixture")
 
@@ -38,6 +50,27 @@ test.describe("states", () => {
 		release()
 		await mapReady(page)
 		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+	})
+
+	test("chapter 7 shows its revisions while the pages are still being read", async ({
+		page,
+	}) => {
+		let release: () => void = () => {}
+		const gate = new Promise<void>((resolve) => {
+			release = resolve
+		})
+		await installDemoProxy(page, {
+			override: async (url) => {
+				if (url.pathname === "/api/demo/v1/wiki") await gate
+				return undefined
+			},
+		})
+		await openDemo(page)
+		await goto(page, 6)
+		await expect(page.getByTestId("change-row").first()).toBeVisible()
+		release()
+		await goto(page, 0)
+		await mapReady(page)
 	})
 
 	test("error names the failure, offers a retry, and recovers", async ({
@@ -61,9 +94,7 @@ test.describe("states", () => {
 		await expect(error).toContainText("UPSTREAM_ERROR")
 		await expect(error).toContainText("502")
 		await goto(page, 6)
-		await expect(page.locator('[data-state="error"]')).toContainText(
-			"NO_WINDOW_START",
-		)
+		await expect(page.getByTestId("change-row").first()).toBeVisible()
 		await goto(page, 0)
 		broken = false
 		await page.getByRole("button", { name: "Try again" }).first().click()
@@ -80,7 +111,9 @@ test.describe("states", () => {
 					? new Response(JSON.stringify({ pages: [], total: 0 }), {
 							status: 200,
 						})
-					: undefined,
+					: url.pathname === "/api/demo/v1/wiki/changes"
+						? new Response(JSON.stringify(NO_CHANGES), { status: 200 })
+						: undefined,
 		})
 		await openDemo(page)
 		await expect(page.locator('[data-state="empty"]').first()).toContainText(
@@ -103,6 +136,7 @@ test.describe("states", () => {
 		)
 		const emptyBody: Record<string, unknown> = {
 			"/api/demo/v1/wiki": { pages: [], total: 0 },
+			"/api/demo/v1/wiki/changes": NO_CHANGES,
 			"/api/demo/v1/wiki/lint": {
 				pages: 0,
 				total: 0,

@@ -8,7 +8,6 @@ import {
 	useMemo,
 	useRef,
 	useState,
-	useSyncExternalStore,
 } from "react"
 import { createEventReader } from "../../lib/demo-data/event-reader.js"
 import { claimSourceRefs } from "../../lib/demo-data/loaders-chapters.js"
@@ -35,6 +34,9 @@ import {
 } from "./demo-context.js"
 import styles from "./demo.module.css"
 import { CitationDialog } from "./parts/citation-dialog.js"
+import { gsap, useGSAP } from "./motion/gsap-react.js"
+import { DURATION, EASE, STAGGER } from "./motion/tokens.js"
+import { useReducedMotion } from "./motion/use-reduced-motion.js"
 import { DEMO_UPSTREAM, useDemoData } from "./use-demo-data.js"
 import { useLayout } from "./use-layout.js"
 
@@ -50,24 +52,6 @@ const BODY: Record<ChapterId, () => React.JSX.Element> = {
 	run: RunChapter,
 }
 
-const REDUCED = "(prefers-reduced-motion: reduce)"
-
-function subscribeMotion(notify: () => void): () => void {
-	const query = window.matchMedia(REDUCED)
-	query.addEventListener("change", notify)
-	return () => query.removeEventListener("change", notify)
-}
-
-/** The OS setting, read before the first data read starts, so a visitor who
- * asked for reduced motion never sees a moving frame. */
-function useReducedMotion(): boolean {
-	return useSyncExternalStore(
-		subscribeMotion,
-		() => window.matchMedia(REDUCED).matches,
-		() => false,
-	)
-}
-
 export function DemoApp() {
 	const { data, reload } = useDemoData()
 	const reduced = useReducedMotion()
@@ -76,6 +60,9 @@ export function DemoApp() {
 	const [citation, setCitation] = useState<CitationTarget | null>(null)
 	const [ask, setAsk] = useState<AskState>({ query: "", result: null })
 	const headingRef = useRef<HTMLHeadingElement>(null)
+	const mainRef = useRef<HTMLElement>(null)
+	const headRef = useRef<HTMLElement>(null)
+	const screenRef = useRef<HTMLDivElement>(null)
 	const navRef = useRef<HTMLElement>(null)
 	const focusHeading = useRef(false)
 
@@ -138,6 +125,31 @@ export function DemoApp() {
 			?.querySelector(`[data-chapter="${index}"]`)
 			?.scrollIntoView({ block: "nearest", inline: "nearest" })
 	}, [index])
+
+	// A chapter settles in: its kicker, title and lede, then its screen. Starting
+	// another chapter, or asking for reduced motion, ends the move where it was
+	// going.
+	useGSAP(
+		() => {
+			const head = headRef.current
+			const screen = screenRef.current
+			if (reduced || !head || !screen) {
+				return
+			}
+			gsap
+				.timeline({
+					defaults: { ease: EASE.out, clearProps: "opacity,transform" },
+				})
+				.from(head.children, {
+					opacity: 0,
+					y: 8,
+					duration: DURATION.settle,
+					stagger: STAGGER.head,
+				})
+				.from(screen, { opacity: 0, y: 6, duration: DURATION.arrive }, 0.12)
+		},
+		{ scope: mainRef, dependencies: [index, reduced], revertOnUpdate: true },
+	)
 
 	const goToIndex = useCallback((next: number) => {
 		const clamped = Math.min(Math.max(next, 0), CHAPTERS.length - 1)
@@ -272,8 +284,13 @@ export function DemoApp() {
 						</span>
 					</span>
 				</p>
-				<main id="chapter" className={styles.main} key={chapter.id}>
-					<header className={styles.chapterHead}>
+				<main
+					id="chapter"
+					ref={mainRef}
+					className={styles.main}
+					key={chapter.id}
+				>
+					<header ref={headRef} className={styles.chapterHead}>
 						<p className={styles.kicker}>
 							Chapter {index + 1} of {CHAPTERS.length}
 						</p>
@@ -282,7 +299,7 @@ export function DemoApp() {
 						</h1>
 						<p className={styles.lede}>{chapter.lede}</p>
 					</header>
-					<div className={styles.screen} data-testid="screen">
+					<div ref={screenRef} className={styles.screen} data-testid="screen">
 						<Body />
 					</div>
 					<footer className={styles.pager}>

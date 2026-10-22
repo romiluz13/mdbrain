@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import {
 	ARRIVALS_PAGE,
 	arrivalRows,
+	outsideRecordNote,
 	summarizeArrivals,
 } from "../../../lib/demo-data/arrivals.js"
 import {
@@ -19,6 +20,9 @@ import {
 import type { SourceIndexEntry } from "../../../lib/demo-data/views.js"
 import chapter from "../chapters.module.css"
 import { useDemo } from "../demo-context.js"
+import { gsap, useGSAP } from "../motion/gsap-react.js"
+import { DURATION, EASE, rowStagger } from "../motion/tokens.js"
+import { useReducedMotion } from "../motion/use-reduced-motion.js"
 import styles from "../run-chapters.module.css"
 import { useEventReads } from "../use-event-reads.js"
 import { TimeLine } from "./time-line.js"
@@ -40,6 +44,100 @@ function rowTitle(status: Status, answer: EventConfirmation | undefined) {
 		case "unavailable":
 			return "This source could not be read right now"
 	}
+}
+
+type RowProps = {
+	row: ReturnType<typeof arrivalRows>[number]
+	status: Status
+	answer: EventConfirmation | undefined
+	/** Where this row falls among those arriving with it, and how many arrive. */
+	arrival: { at: number; of: number }
+	onOpen: (opener: HTMLButtonElement) => void
+}
+
+/** One source file. It arrives in record order, and the label settles in at the
+ * moment its confirmation lands. A row already confirmed when it shows, or any
+ * row under reduced motion, is simply there. */
+function ArrivalRow({ row, status, answer, arrival, onOpen }: RowProps) {
+	const item = useRef<HTMLLIElement>(null)
+	const label = useRef<HTMLSpanElement>(null)
+	const reduced = useReducedMotion()
+	const lastStatus = useRef(status)
+
+	useGSAP(
+		() => {
+			if (reduced || !item.current) {
+				return
+			}
+			gsap.from(item.current, {
+				opacity: 0,
+				y: 10,
+				duration: DURATION.arrive,
+				delay: 0.15 + arrival.at * rowStagger(arrival.of),
+				ease: EASE.out,
+				clearProps: "opacity,transform",
+			})
+		},
+		{ scope: item, dependencies: [reduced], revertOnUpdate: true },
+	)
+	useGSAP(
+		() => {
+			const before = lastStatus.current
+			lastStatus.current = status
+			if (reduced || before !== "loading" || status !== "confirmed") {
+				return
+			}
+			gsap.from(label.current, {
+				opacity: 0.15,
+				y: 4,
+				duration: DURATION.arrive,
+				ease: EASE.out,
+				clearProps: "opacity,transform",
+			})
+		},
+		{ scope: item, dependencies: [status, reduced], revertOnUpdate: true },
+	)
+
+	return (
+		<li
+			ref={item}
+			tabIndex={-1}
+			data-testid="source-row"
+			data-status={status}
+			data-position={row.position}
+		>
+			<span className={styles.position}>{row.position}</span>
+			<div className={chapter.sourceWhat}>
+				<span ref={label} className={styles.label} data-testid="source-label">
+					{rowTitle(status, answer)}
+				</span>
+				<span className={chapter.sourceMeta}>
+					<span>
+						{row.citedBy
+							? `Cited on ${row.citedBy.pageTitle}`
+							: "No stored claim cites it"}
+					</span>
+					{status === "confirmed" && answer?.status === "confirmed" ? (
+						<TimeLine kind="business" iso={answer.businessTime} />
+					) : null}
+				</span>
+				<span className={styles.ids}>
+					<span data-testid="source-id">{row.sourceId}</span>
+					<span data-testid="source-event-id">{row.eventId}</span>
+				</span>
+			</div>
+			{row.citedBy ? (
+				<button
+					type="button"
+					className={styles.linkButton}
+					aria-label={`Open source ${row.eventId}`}
+					onClick={(event) => onOpen(event.currentTarget)}
+				>
+					Open source
+				</button>
+			) : null}
+		</li>
+	)
 }
 
 export function ArrivalList({
@@ -64,6 +162,8 @@ export function ArrivalList({
 	const reads = useEventReads(subjects)
 	const listRef = useRef<HTMLOListElement>(null)
 	const focusAt = useRef<number | null>(null)
+	// How many rows were showing before this render: only the rest arrive.
+	const arrived = useRef(0)
 
 	// After "Show ten more", focus moves to the first row that arrived.
 	useEffect(() => {
@@ -74,6 +174,10 @@ export function ArrivalList({
 			focusAt.current = null
 		}
 	})
+
+	useEffect(() => {
+		arrived.current = visible.length
+	}, [visible.length])
 
 	const answers = subjects.map((subject) => reads[subjectKey(subject)])
 	const statuses = answers.map((answer): Status => answer?.status ?? "loading")
@@ -98,7 +202,7 @@ export function ArrivalList({
 					source files, in the order they arrived. Each one shown is checked by
 					its id through the API; stored claims cite {summary.cited} of them.
 					{summary.citedOutsideRecord > 0
-						? ` ${countOf(summary.citedOutsideRecord, "stored source event")} cited by claims ${summary.citedOutsideRecord === 1 ? "is" : "are"} not in this record.`
+						? ` ${outsideRecordNote(summary)}`
 						: ""}
 				</p>
 				<p className={chapter.note} data-testid="arrivals-tally">
@@ -121,63 +225,32 @@ export function ArrivalList({
 				className={styles.arrivalList}
 				aria-label="Source files in arrival order"
 			>
-				{visible.map((row, at) => {
-					const status = statuses[at] ?? "loading"
-					const answer = answers[at]
-					return (
-						<li
-							key={row.eventId}
-							tabIndex={-1}
-							data-testid="source-row"
-							data-status={status}
-							data-position={row.position}
-						>
-							<span className={styles.position}>{row.position}</span>
-							<div className={chapter.sourceWhat}>
-								<span className={styles.label} data-testid="source-label">
-									{rowTitle(status, answer)}
-								</span>
-								<span className={chapter.sourceMeta}>
-									<span>
-										{row.citedBy
-											? `Cited on ${row.citedBy.pageTitle}`
-											: "No stored claim cites it"}
-									</span>
-									{status === "confirmed" && answer?.status === "confirmed" ? (
-										<TimeLine kind="business" iso={answer.businessTime} />
-									) : null}
-								</span>
-								<span className={styles.ids}>
-									<span data-testid="source-id">{row.sourceId}</span>
-									<span data-testid="source-event-id">{row.eventId}</span>
-								</span>
-							</div>
-							{row.citedBy ? (
-								<button
-									type="button"
-									className={styles.linkButton}
-									aria-label={`Open source ${row.eventId}`}
-									onClick={(event) => {
-										const entry = row.citedBy
-										if (entry) {
-											cite(
-												{
-													claim: entry.claim,
-													pageSlug: entry.pageSlug,
-													pageTitle: entry.pageTitle,
-													revision: entry.revision,
-												},
-												event.currentTarget,
-											)
-										}
-									}}
-								>
-									Open source
-								</button>
-							) : null}
-						</li>
-					)
-				})}
+				{visible.map((row, at) => (
+					<ArrivalRow
+						key={row.eventId}
+						row={row}
+						status={statuses[at] ?? "loading"}
+						answer={answers[at]}
+						arrival={{
+							at: Math.max(0, at - arrived.current),
+							of: visible.length - arrived.current,
+						}}
+						onOpen={(opener) => {
+							const entry = row.citedBy
+							if (entry) {
+								cite(
+									{
+										claim: entry.claim,
+										pageSlug: entry.pageSlug,
+										pageTitle: entry.pageTitle,
+										revision: entry.revision,
+									},
+									opener,
+								)
+							}
+						}}
+					/>
+				))}
 			</ol>
 			{shown < rows.length ? (
 				<div className={styles.more}>

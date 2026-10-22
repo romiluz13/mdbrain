@@ -1,10 +1,11 @@
 "use client"
 
 import type { EventConfirmation } from "../../../lib/demo-data/confirm-event.js"
-import type {
-	AgentRunChecks,
-	PageCheck,
-	RoleStory,
+import {
+	type AgentRunChecks,
+	type PageCheck,
+	type RoleStory,
+	reusedPageName,
 } from "../../../lib/demo-data/agent-run.js"
 import { countOf } from "../../../lib/demo-data/plural.js"
 import type {
@@ -28,19 +29,23 @@ function didOf(
 	run: AgentRunRecord,
 	checks: AgentRunChecks | null,
 ): string {
-	const reused = checks?.reusedPage
 	const yet = run.state === "running" ? " yet" : ""
-	const name =
-		reused?.kind === "stored" ? reused.title : (run.reusedPage?.slug ?? "")
+	const name = reusedPageName(run, checks)
 	switch (role) {
 		case "support":
-			return run.reusedPage
-				? `Wrote the page “${name}”.`
-				: `No page write is recorded for this role${yet}.`
+			if (!run.reusedPage) {
+				return `No page write is recorded for this role${yet}.`
+			}
+			return name === null
+				? "Wrote a page to the wiki."
+				: `Wrote the page “${name}”.`
 		case "account":
-			return run.reusedPage
-				? `Read Support's completed revision of “${name}”.`
-				: `No page read is recorded for this role${yet}.`
+			if (!run.reusedPage) {
+				return `No page read is recorded for this role${yet}.`
+			}
+			return name === null
+				? "Read the page Support wrote."
+				: `Read Support's completed revision of “${name}”.`
 		case "product":
 			return run.pendingProposal
 				? `Proposed “${run.pendingProposal.title}”. It is pending review.`
@@ -117,6 +122,24 @@ function stepStatus(answer: EventConfirmation | undefined) {
 	}
 }
 
+/** The hand-off arrow into this card, drawn by the chapter as the run reads
+ * left to right. It points down between stacked cards and right between
+ * columns. */
+function HandoffArrow() {
+	return (
+		<svg
+			className={styles.handoffArrow}
+			data-testid="handoff-arrow"
+			data-motion="handoff-arrow"
+			viewBox="0 0 24 24"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path pathLength={1} d="M12 6.5V17M7.5 12.5L12 17L16.5 12.5" />
+		</svg>
+	)
+}
+
 type Props = {
 	story: RoleStory
 	order: number
@@ -137,6 +160,7 @@ export function RoleCard({
 	const check = checkOf(story.role, run, checks)
 	return (
 		<li className={styles.role} data-testid="agent-role" data-role={story.role}>
+			{order > 1 ? <HandoffArrow /> : null}
 			<div className={styles.roleHead}>
 				<span className={styles.roleOrder} aria-hidden="true">
 					{order}

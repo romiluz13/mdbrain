@@ -125,22 +125,35 @@ test.describe("reduced motion", () => {
 	})
 })
 
-test("without the preference the chapter eases in", async ({ page }) => {
-	const motion = await watchMotion(page)
+test("without the preference the chapter eases in, under GSAP", async ({
+	page,
+}) => {
 	await installDemoProxy(page)
+	await page.addInitScript(() => {
+		let peak = 0
+		const watch = () => {
+			const seam = Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as
+				| { tweens: () => number }
+				| undefined
+			peak = Math.max(peak, seam?.tweens() ?? 0)
+			Reflect.set(window, "__tweenPeak", peak)
+			requestAnimationFrame(watch)
+		}
+		requestAnimationFrame(watch)
+	})
 	await page.goto("/demo")
 	await expect(page.locator("[data-motion]").first()).toHaveAttribute(
 		"data-motion",
 		"full",
 	)
+	await expect
+		.poll(() => page.evaluate(() => Reflect.get(window, "__tweenPeak")))
+		.toBeGreaterThan(0)
 	expect(
 		await page
 			.getByTestId("screen")
 			.evaluate((element) => getComputedStyle(element).animationName),
-	).not.toBe("none")
-	await expect
-		.poll(async () => (await motion()).started.length)
-		.toBeGreaterThan(0)
+	).toBe("none")
 })
 
 test("the run's number table names each value on the phone, where the header row is hidden", async ({
@@ -297,7 +310,10 @@ test("every interactive control on every chapter is at least 44 px", async ({
 		await expect(
 			page.getByRole("heading", { level: 1, name: chapter.title }),
 		).toBeVisible()
-		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+		await expect(page.locator('[data-state="loading"]')).toHaveCount(
+			0,
+			SLOW_READ,
+		)
 		expect(await small(), `chapter ${chapter.title}`).toEqual([])
 	}
 	await openAnyCitation(page, proxy)
@@ -352,7 +368,10 @@ test("no chapter scrolls sideways, keeps the synthetic label in view, and passes
 		await expect(
 			page.getByRole("heading", { level: 1, name: chapter.title }),
 		).toBeVisible()
-		await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+		await expect(page.locator('[data-state="loading"]')).toHaveCount(
+			0,
+			SLOW_READ,
+		)
 		await settled(page)
 		expect(
 			await page.evaluate(
@@ -383,7 +402,12 @@ test("the layout runs in a Worker and interaction redraws only the live layer", 
 	await openDemo(page)
 	await mapReady(page)
 	await expect
-		.poll(() => workers.some((url) => /graph-layout/.test(url)))
+		.poll(() =>
+			workers.some((url) =>
+				// Dev serves the worker by its file name; a production build, as a hashed chunk.
+				/graph-layout|\/_next\/static\/chunks\//.test(url),
+			),
+		)
 		.toBe(true)
 
 	const staticLayer = page.locator('canvas[data-layer="static"]')

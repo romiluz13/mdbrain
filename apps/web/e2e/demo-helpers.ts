@@ -33,7 +33,8 @@ export async function openDemo(page: Page, hash = ""): Promise<void> {
 	await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
 }
 
-/** The map has its data and both canvas layers have drawn. */
+/** The map has its data, both canvas layers have drawn, and the headline
+ * numbers have finished counting up to the API's values. */
 export async function mapReady(page: Page): Promise<void> {
 	await expect(page.locator('[data-stat="pages"]')).not.toHaveText(
 		"—",
@@ -44,6 +45,7 @@ export async function mapReady(page: Page): Promise<void> {
 		/[1-9]/,
 		SLOW_READ,
 	)
+	await settled(page)
 }
 
 /** Presses Tab until the target holds focus; fails with where focus is. */
@@ -407,9 +409,31 @@ export function unexplainedBrowserErrors(
 	})
 }
 
-/** Lets the finite CSS animations and transitions finish, so a contrast check
- * does not read a half-faded frame. */
+/** Every read the open chapter makes has come back: no map, row, step or page
+ * check still says it is loading. A role's steps are read only once opened, so
+ * a closed list is not waiting on anything. A screenshot taken before this shows
+ * a placeholder where the answer will be. */
+export async function readsSettled(page: Page): Promise<void> {
+	for (const pending of [
+		'[data-state="loading"]',
+		'[data-testid="source-row"][data-status="loading"]',
+		'details[open] [data-testid="agent-step"][data-status="loading"]',
+		'[data-testid="agent-check"][data-check="checking"]',
+	]) {
+		await expect(page.locator(pending)).toHaveCount(0, SLOW_READ)
+	}
+}
+
+/** Lets the finite CSS animations and transitions and every GSAP move finish,
+ * so a contrast check or a one-shot read does not meet a half-faded frame or a
+ * number still counting. */
 export async function settled(page: Page): Promise<void> {
+	await page.waitForFunction(() => {
+		const seam = Reflect.get(window, Symbol.for("mdbrain.demo.motion")) as
+			| { tweens: () => number }
+			| undefined
+		return seam === undefined || seam.tweens() === 0
+	}, undefined)
 	await page.evaluate(() =>
 		Promise.all(
 			document

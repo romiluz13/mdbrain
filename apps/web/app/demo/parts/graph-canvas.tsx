@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { Layout } from "../../../lib/demo-data/graph-layout.js"
+import { GRAPH_INK } from "../../../lib/demo-data/graph-ink.js"
 import { NodeGrid } from "../../../lib/demo-data/node-grid.js"
 import type { Graph } from "../../../lib/demo-data/views.js"
 import styles from "../graph.module.css"
@@ -13,10 +14,11 @@ type Props = {
 	pinned: string | null
 	onPin: (slug: string) => void
 	label: string
+	/** Fills the box it sits in instead of sizing itself. */
+	fill?: boolean
 }
 
-const SIGNAL = "#e5502b"
-const SCOPE_INK = "#f6f8f5"
+const { signal: SIGNAL, scopeInk: SCOPE_INK } = GRAPH_INK
 const LABEL_FONT = '600 12px "Archivo Variable", Archivo, system-ui, sans-serif'
 const MOUSE_REACH = 16
 // A finger is wider than a cursor: half of the 44 px touch target.
@@ -46,6 +48,7 @@ export function GraphCanvas({
 	pinned,
 	onPin,
 	label,
+	fill,
 }: Props) {
 	const wrapRef = useRef<HTMLDivElement>(null)
 	const staticRef = useRef<HTMLCanvasElement>(null)
@@ -275,7 +278,7 @@ export function GraphCanvas({
 		// biome-ignore lint/a11y/useKeyWithClickEvents: pinning by click is the pointer path; the page picker beside the map is the keyboard path
 		<div
 			ref={wrapRef}
-			className={styles.canvasWrap}
+			className={fill ? styles.canvasFill : styles.canvasWrap}
 			role="img"
 			aria-label={label}
 			onPointerMove={(event) => {

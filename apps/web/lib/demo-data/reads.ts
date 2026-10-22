@@ -49,6 +49,7 @@ export interface DemoReads {
 	changes(input: {
 		since: string | Date
 		cursor?: string
+		limit?: number
 	}): Promise<MdbrainWikiChangesResponse>
 	wikiGet(slug: string): Promise<MdbrainWikiPageView>
 	/** The governed text-lane question read: no model, a bounded result count. */
@@ -162,7 +163,7 @@ function proxyReads(
 			),
 		changes: (input) =>
 			get<MdbrainWikiChangesResponse>(
-				`/v1/wiki/changes${query({ since: input.since, cursor: input.cursor })}`,
+				`/v1/wiki/changes${query({ since: input.since, cursor: input.cursor, limit: input.limit })}`,
 			),
 		wikiGet: (slug) =>
 			get<MdbrainWikiPageView>(`/v1/wiki/${encodeURIComponent(slug)}`),
