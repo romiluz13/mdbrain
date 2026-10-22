@@ -1,5 +1,7 @@
 "use client"
 
+// What bit us building this scene and its motion: docs/platform/demo-3d-and-motion.md
+
 import { OrbitControls } from "@react-three/drei"
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
 import {
