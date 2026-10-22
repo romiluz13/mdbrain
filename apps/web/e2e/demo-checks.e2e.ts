@@ -396,7 +396,12 @@ test("the layout runs in a Worker and interaction redraws only the live layer", 
 	await openDemo(page)
 	await mapReady(page)
 	await expect
-		.poll(() => workers.some((url) => /graph-layout/.test(url)))
+		.poll(() =>
+			workers.some((url) =>
+				// Dev serves the worker by its file name; a production build, as a hashed chunk.
+				/graph-layout|\/_next\/static\/chunks\//.test(url),
+			),
+		)
 		.toBe(true)
 
 	const staticLayer = page.locator('canvas[data-layer="static"]')
