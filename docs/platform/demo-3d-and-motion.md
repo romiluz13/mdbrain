@@ -25,3 +25,7 @@ Trigger: 338 saw doubled requests on `/demo` in `next dev`. Cause: Strict Mode r
 ## Wait for motion before a tap or a measurement
 
 Trigger: the phone journey missed a tap in chapter 5 on about one run in four, and the stepper's gap read 6 px. Cause: the beat's source slips and the stepper's enter tween were still moving, and `html { scroll-behavior: smooth }` keeps a tap's own scroll-into-view moving while it hit-tests, with the sticky banner and stepper covering the target. Rule: call `settled(page)` first, then centre the target with an instant scroll. Check: `withTouch` in `e2e/demo-journey.ts`; the touch journey passes 16 of 16 runs on a production build.
+
+## Start a rest measurement after GSAP's ticker has gone to sleep
+
+Trigger: the phone's "reduced motion turned on at runtime" bound read 17 frame requests a second on a Next 16 production build, in 4 runs of 4. Cause: GSAP's ticker asks for 120 more frames (about 2 s at 60 fps) after its last tween, and the rest window began 1.5 s after the tween count read 0. Rule: poll `requestAnimationFrame` deltas until a full second reads 0, then open the window (`rest()` in `e2e/demo-bounds-states.e2e.ts`); a loop that never stops still fails the bound. Check: that spec, 3 repeats on each profile, passes on the GPU lane.
