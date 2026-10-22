@@ -271,6 +271,62 @@ test("the stepper's own controls are at least 44 px", async ({ page }) => {
 	}
 })
 
+test("the stepper sticks flush under the synthetic-company banner, with no gap for the page to show through", async ({
+	page,
+}) => {
+	await openWalk(page)
+	await showBeat(page, 2)
+	await page.evaluate(() => {
+		const stepper = document.querySelector('[data-testid="beat-stepper"]')
+		const top = (stepper?.getBoundingClientRect().top ?? 0) + window.scrollY
+		// Far enough for the stepper to be stuck, not so far that its chapter ends.
+		window.scrollTo({ top, behavior: "instant" })
+	})
+	const edges = await page.evaluate(() => ({
+		barBottom:
+			document
+				.querySelector('[data-testid="synthetic-label"]')
+				?.getBoundingClientRect().bottom ?? Number.NaN,
+		stepperTop:
+			document
+				.querySelector('[data-testid="beat-stepper"]')
+				?.getBoundingClientRect().top ?? Number.NaN,
+	}))
+	expect(edges.stepperTop).toBeGreaterThan(0)
+	expect(Math.abs(edges.stepperTop - edges.barBottom)).toBeLessThanOrEqual(0.5)
+})
+
+for (const width of [390, 360]) {
+	test(`at ${width} px the stepper is one row, so its bar stays short`, async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width, height: 844 })
+		await openWalk(page)
+		for (const beat of [0, 1, 2]) {
+			await showBeat(page, beat)
+			const row = await page.evaluate(() => {
+				const stepper = document.querySelector('[data-testid="beat-stepper"]')
+				const centers = [...(stepper?.children ?? [])].map((child) => {
+					const box = child.getBoundingClientRect()
+					return box.top + box.height / 2
+				})
+				return {
+					spread: Math.max(...centers) - Math.min(...centers),
+					height: stepper?.getBoundingClientRect().height ?? 0,
+				}
+			})
+			expect(
+				row.spread,
+				`beat ${beat + 1}: the controls share a row`,
+			).toBeLessThan(2)
+			expect(
+				row.height,
+				`beat ${beat + 1}: the bar is one control tall`,
+			).toBeLessThan(70)
+		}
+	})
+}
+
 test("on a phone the chapter is one screen per beat, not one long page", async ({
 	page,
 	isMobile,

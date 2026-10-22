@@ -163,11 +163,22 @@
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	padding: 8px var(--gutter);
+	box-sizing: border-box;
+	/* Exactly one target tall, on one line: what sticks under it (the chapter 5
+	 * stepper) sets its top to --target and meets it with no gap. */
+	height: var(--target);
+	padding: 0 var(--gutter);
 	background: var(--panel);
 	border-bottom: 2px dashed var(--ink-2);
 	font-size: var(--t13);
 	font-weight: 600;
+	white-space: nowrap;
+}
+
+.syntheticBar > :last-child {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .syntheticTag {

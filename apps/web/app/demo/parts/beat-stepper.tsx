@@ -43,7 +43,7 @@ export function BeatStepper({
 				onClick={() => step(-1)}
 				onKeyDown={onKeyDown}
 			>
-				← Previous beat
+				← <span className={styles.stepWord}>Previous beat</span>
 			</button>
 			<p className={styles.beatStatus} role="status" data-testid="beat-status">
 				Beat {beat + 1} of {labels.length} · {labels[beat]}
@@ -55,7 +55,7 @@ export function BeatStepper({
 				onClick={() => step(1)}
 				onKeyDown={onKeyDown}
 			>
-				Next beat →
+				<span className={styles.stepWord}>Next beat</span> →
 			</button>
 		</fieldset>
 	)

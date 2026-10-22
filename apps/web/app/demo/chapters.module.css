@@ -332,7 +332,7 @@
 	margin: 0;
 	min-inline-size: 0;
 	position: sticky;
-	top: calc(var(--target) + 12px);
+	top: var(--target);
 	z-index: 5;
 	display: flex;
 	flex-wrap: wrap;
@@ -375,6 +375,32 @@
 	color: var(--ink-2);
 	font-size: var(--t13);
 	font-weight: 600;
+}
+
+/* On a phone the stepper is one short row: the arrows stand for their words
+ * (which stay in each button's name) so the bar does not cover the card. */
+@media (max-width: 479px) {
+	.stepper {
+		flex-wrap: nowrap;
+		gap: 8px;
+		padding: 4px 8px;
+	}
+
+	.stepWord {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+
+	.beatStatus {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 }
 
 @media (min-width: 1000px) {
