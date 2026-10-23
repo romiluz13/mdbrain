@@ -224,6 +224,31 @@ test.describe("presenter mode: the slot", () => {
 	})
 })
 
+test.describe("presenter mode: keyboard and accessibility", () => {
+	test("leases a slot from the keyboard, with no serious accessibility violations before or after", async ({
+		page,
+		context,
+	}) => {
+		test.slow()
+		const world = createWorld()
+		await installWorld(context, world)
+		await signIn(page)
+		await expectNoSeriousAccessibilityViolations(page)
+
+		await page.getByTestId("lease-name-input").focus()
+		await page.keyboard.type("Board demo")
+		await page.keyboard.press("Tab")
+		await expect(page.getByTestId("lease-slot-button")).toBeFocused()
+		await page.keyboard.press("Enter")
+		await expect(page.getByTestId("lease-slot")).toHaveText(
+			"Slot 13, Board demo",
+			POLL,
+		)
+		await expect(page.getByTestId("run-agents")).toBeVisible()
+		await expectNoSeriousAccessibilityViolations(page)
+	})
+})
+
 test.describe("presenter mode: a flaky connection", () => {
 	test("keeps the presenter's controls while the state read fails, says so, and recovers when it answers again", async ({
 		page,

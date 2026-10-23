@@ -425,3 +425,49 @@ test.describe("public mode", () => {
 		await expect(page.getByTestId("proposal-review")).toHaveCount(0)
 	})
 })
+
+test.describe("public mode with reduced motion", () => {
+	test.use({ contextOptions: { reducedMotion: "reduce" } })
+
+	test("the recording's controls add no animation or transition, and still step and play", async ({
+		page,
+		context,
+	}) => {
+		test.slow()
+		const world = createWorld()
+		await installWorld(context, world)
+		await openChapter(page, "changes")
+		const bar = page.getByTestId("playback-bar")
+		await expect(bar).toBeVisible()
+		// The page's reduced-motion rule (globals.css) squeezes every duration to
+		// 0.001ms, so a move is any duration above a millisecond.
+		const moving = await bar.evaluate((root) => {
+			const seconds = (list: string) =>
+				Math.max(...list.split(",").map((value) => Number.parseFloat(value)))
+			return [root, ...root.querySelectorAll("*")]
+				.map((element) => {
+					const style = getComputedStyle(element)
+					return {
+						name: element.getAttribute("data-testid") ?? element.tagName,
+						animation:
+							style.animationName === "none"
+								? 0
+								: seconds(style.animationDuration),
+						transition: seconds(style.transitionDuration),
+					}
+				})
+				.filter((entry) => entry.animation > 0.001 || entry.transition > 0.001)
+		})
+		expect(moving).toEqual([])
+
+		const total = Number(
+			await page.getByTestId("playback-slider").getAttribute("max"),
+		)
+		await page.getByTestId("playback-back").click()
+		expect(await revisionOf(page)).toBe(total - 1)
+		await page.getByTestId("playback-play").click()
+		await expect(page.getByTestId("playback-play")).toHaveText("Pause")
+		await page.getByTestId("playback-play").click()
+		await expect(page.getByTestId("playback-play")).toHaveText("Play")
+	})
+})
