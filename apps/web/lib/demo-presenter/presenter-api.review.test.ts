@@ -4,11 +4,9 @@ import { SESSION_COOKIE } from "./session.js"
 import {
 	call,
 	ORIGIN,
-	pendingProposal,
 	rig,
 	seeded,
 	signIn,
-	TOKEN,
 } from "./testing/presenter-rig.js"
 
 describe("presenter API: approve, reject, pin", () => {

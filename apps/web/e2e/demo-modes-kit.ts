@@ -98,7 +98,8 @@ export function withApprovedPage(url: URL, body: unknown): unknown {
 	return body
 }
 
-export const PRESENTER_TOKEN = "e2e-presenter-token-0123456789"
+export const PRESENTER_TOKEN = "e2e-presenter-token-0123456789-Zq"
+const CLIENT_ADDRESS = "203.0.113.9"
 export const RUN_DEADLINE_MS = 335_000
 const SLOT_COUNT = 15
 
@@ -319,6 +320,8 @@ export function createWorld(options: WorldOptions = {}) {
 			baselineRun: FIXTURE_RUN,
 			stores,
 			proposalsClient: proposals,
+			readKeyCheck: async () => true,
+			adminKeyCheck: async () => true,
 			now,
 		})
 	}
@@ -352,7 +355,10 @@ export async function installWorld(
 		const response = await handlePresenterRequest(
 			new Request(request.url(), {
 				method,
-				headers: await request.allHeaders(),
+				headers: {
+					"x-forwarded-for": CLIENT_ADDRESS,
+					...(await request.allHeaders()),
+				},
 				...(method !== "GET" && body !== null ? { body } : {}),
 			}),
 			path,
@@ -370,7 +376,7 @@ export async function installWorld(
 		const headers = await request.allHeaders()
 		const web = new Request(request.url(), {
 			method: request.method(),
-			headers,
+			headers: { "x-forwarded-for": CLIENT_ADDRESS, ...headers },
 		})
 		const resolved = await world.runtime.resolver.resolve(web)
 		if (!resolved.ok) {

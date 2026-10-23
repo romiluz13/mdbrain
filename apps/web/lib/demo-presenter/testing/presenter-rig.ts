@@ -142,6 +142,13 @@ export type Call = {
 	body_text?: string
 }
 
+/** The fields the presenter tests read from a response; any other field is unknown. */
+export type PresenterBody = {
+	error: { code: string; message: string }
+	lease: { name: string }
+	[field: string]: unknown
+}
+
 export async function call(services: PresenterServices | null, input: Call) {
 	const method = input.method ?? "POST"
 	const headers: Record<string, string> = {}
@@ -172,7 +179,7 @@ export async function call(services: PresenterServices | null, input: Call) {
 	return {
 		response,
 		status: response.status,
-		body: (await response.json()) as Record<string, any>,
+		body: (await response.json()) as PresenterBody,
 	}
 }
 

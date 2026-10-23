@@ -64,15 +64,22 @@ describe("driverCollection", () => {
 	it("passes filters, updates and the update options to the driver and returns what it returns", async () => {
 		const seen: unknown[] = []
 		const collection = driverCollection<{ _id: string }>({
-			findOne: async (filter) => (seen.push(["findOne", filter]), { _id: "a" }),
-			find: (filter) => (
-				seen.push(["find", filter]),
-				{ toArray: async () => [{ _id: "a" }, { _id: "b" }] }
-			),
-			insertOne: async (doc) => (seen.push(["insertOne", doc]), {}),
-			findOneAndUpdate: async (filter, update, options) => (
-				seen.push(["findOneAndUpdate", filter, update, options]), { _id: "a" }
-			),
+			findOne: async (filter) => {
+				seen.push(["findOne", filter])
+				return { _id: "a" }
+			},
+			find: (filter) => {
+				seen.push(["find", filter])
+				return { toArray: async () => [{ _id: "a" }, { _id: "b" }] }
+			},
+			insertOne: async (doc) => {
+				seen.push(["insertOne", doc])
+				return {}
+			},
+			findOneAndUpdate: async (filter, update, options) => {
+				seen.push(["findOneAndUpdate", filter, update, options])
+				return { _id: "a" }
+			},
 			deleteOne: async () => ({ deletedCount: 1 }),
 			deleteMany: async () => ({ deletedCount: 3 }),
 		})
