@@ -25,7 +25,11 @@ import {
 } from "../seeding/run.js"
 import { agentCeilings } from "./config.js"
 import { readAgentRoleKeys } from "./keys.js"
-import { runRoleAgents, type AgentRunOutcome } from "./runner.js"
+import {
+	RunNotStartableError,
+	runRoleAgents,
+	type AgentRunOutcome,
+} from "./runner.js"
 
 /** A client for one role key's exact grant. The key never reaches stdout. */
 function agentClient(key: string): MdbrainClient {
@@ -59,15 +63,18 @@ export type AgentRunContext = {
 export async function executeAgentRun(
 	ctx: AgentRunContext,
 	runId: string,
+	owner?: string,
 ): Promise<AgentRunOutcome> {
 	const { secrets, control } = ctx
 	const manifest = await control.manifests.get(runId)
-	if (!manifest) throw new Error(`no manifest for run ${runId}`)
+	if (!manifest) throw new RunNotStartableError(`no manifest for run ${runId}`)
 	if (manifest.state !== "ready") {
-		throw new Error(`run ${runId} is ${manifest.state}, not ready`)
+		throw new RunNotStartableError(
+			`run ${runId} is ${manifest.state}, not ready`,
+		)
 	}
 	if (manifest.agentRun?.state) {
-		throw new Error(
+		throw new RunNotStartableError(
 			`run ${runId}'s agent run is already ${manifest.agentRun.state}`,
 		)
 	}
@@ -78,6 +85,7 @@ export async function executeAgentRun(
 	)
 	const budget = createModelBudget(control.db)
 	return runRoleAgents({
+		owner,
 		manifests: control.manifests,
 		pool: control.pool,
 		runId,

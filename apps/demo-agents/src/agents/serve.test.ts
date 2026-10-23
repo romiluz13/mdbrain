@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { FakeCollection } from "../seeding/testing/fakes.js"
 import { createRunRequests, type RunRequestDoc } from "./run-requests.js"
+import { RunNotStartableError } from "./runner.js"
 import { serveRunRequests, type ServeDeps } from "./serve.js"
 
 const T0 = new Date("2026-10-23T12:00:00.000Z")
@@ -27,7 +28,8 @@ function rig(
 ) {
 	const store = new FakeCollection<RunRequestDoc>(docs)
 	const clock = { ms: options.clockMs ?? 0 }
-	const incomplete: Array<{ runId: string; reason: string }> = []
+	const incomplete: Array<{ runId: string; reason: string; owner?: string }> =
+		[]
 	const sleeps: number[] = []
 	const controller = new AbortController()
 	const deps: ServeDeps = {
@@ -37,8 +39,8 @@ function rig(
 			runDeadlineMs: 335_000,
 		}),
 		manifests: {
-			markAgentRunIncomplete: async (runId, reason) => {
-				incomplete.push({ runId, reason })
+			markAgentRunIncomplete: async (runId, reason, owner) => {
+				incomplete.push({ runId, reason, ...(owner ? { owner } : {}) })
 				return null
 			},
 		},
@@ -108,7 +110,11 @@ describe("serveRunRequests", () => {
 			failureReason: "the control store went away",
 		})
 		expect(incomplete).toEqual([
-			{ runId: "run-a", reason: "the control store went away" },
+			{
+				runId: "run-a",
+				reason: "the control store went away",
+				owner: `worker-1@${at(10)}`,
+			},
 		])
 		expect(store.docs.get("run-b")?.state).toBe("done")
 	})
@@ -154,5 +160,36 @@ describe("serveRunRequests", () => {
 		const { deps, sleeps } = rig([], async () => ({ state: "complete" }))
 		await serveRunRequests(deps)
 		expect(sleeps).toEqual([1000, 1000])
+	})
+	it("fails a request whose run could not start without touching the run", async () => {
+		const { store, deps, incomplete } = rig(
+			[request("run-a")],
+			async () => {
+				throw new RunNotStartableError(
+					"run run-a's agent run is already running",
+				)
+			},
+			{ clockMs: 10 },
+		)
+		await serveRunRequests({ ...deps, once: true })
+		expect(incomplete).toEqual([])
+		expect(store.docs.get("run-a")).toMatchObject({
+			state: "failed",
+			failureReason: "run run-a's agent run is already running",
+		})
+	})
+
+	it("hands execute the owner it must start the run with", async () => {
+		const owners: Array<string | undefined> = []
+		const { deps } = rig(
+			[request("run-a")],
+			async (_request, owner) => {
+				owners.push(owner)
+				return { state: "complete" }
+			},
+			{ clockMs: 10 },
+		)
+		await serveRunRequests({ ...deps, once: true })
+		expect(owners).toEqual([`worker-1@${at(10)}`])
 	})
 })

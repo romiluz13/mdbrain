@@ -35,6 +35,10 @@ export type RunManifestDoc = {
 	 * agent run starts, so "not yet running" is a plain equality filter
 	 * (a missing field would never match). */
 	agentRunState?: "" | "running" | "complete" | "incomplete"
+	/** Who started the agent run, flat for the same reason: a worker ends or
+	 * completes only a run it started, so a second worker's lost start cannot
+	 * end the first one's live run. Absent for a run started with no owner. */
+	agentRunOwner?: string
 	agentRun?: AgentRunDoc
 }
 
@@ -217,12 +221,14 @@ export function createRunManifests(
 	 * that has not started one yet; one-way: a second start is refused. */
 	async function markAgentRunStarted(
 		runId: string,
+		owner?: string,
 	): Promise<RunManifestDoc | null> {
 		return store.findOneAndUpdate(
 			{ _id: runId, state: "ready", agentRun: { $exists: false } },
 			{
 				$set: {
 					agentRunState: "running",
+					...(owner !== undefined ? { agentRunOwner: owner } : {}),
 					agentRun: { state: "running", startedAt: now() },
 					updatedAt: now(),
 				},
@@ -231,14 +237,23 @@ export function createRunManifests(
 		)
 	}
 
+	/** The filter for ending a running agent run: the run, running, and (when
+	 * the caller names one) started by that owner. */
+	const running = (runId: string, owner: string | undefined) => ({
+		_id: runId,
+		agentRunState: "running",
+		...(owner !== undefined ? { agentRunOwner: owner } : {}),
+	})
+
 	async function markAgentRunComplete(
 		runId: string,
 		summary: AgentRunSummaryInput,
+		owner?: string,
 	): Promise<RunManifestDoc | null> {
-		const doc = await store.findOne({ _id: runId, agentRunState: "running" })
+		const doc = await store.findOne(running(runId, owner))
 		if (doc?.agentRun?.state !== "running") return null
 		return store.findOneAndUpdate(
-			{ _id: runId, agentRunState: "running" },
+			running(runId, owner),
 			{
 				$set: {
 					agentRunState: "complete",
@@ -262,11 +277,12 @@ export function createRunManifests(
 	async function markAgentRunIncomplete(
 		runId: string,
 		reason: string,
+		owner?: string,
 	): Promise<RunManifestDoc | null> {
-		const doc = await store.findOne({ _id: runId, agentRunState: "running" })
+		const doc = await store.findOne(running(runId, owner))
 		if (doc?.agentRun?.state !== "running") return null
 		return store.findOneAndUpdate(
-			{ _id: runId, agentRunState: "running" },
+			running(runId, owner),
 			{
 				$set: {
 					agentRunState: "incomplete",

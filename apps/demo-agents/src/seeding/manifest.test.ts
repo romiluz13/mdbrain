@@ -187,6 +187,63 @@ describe("agent runs", () => {
 		expect(doc?.state).toBe("ready")
 	})
 
+	describe("a run started with an owner", () => {
+		async function started(owner: string) {
+			const store = makeStore()
+			await store.manifests.createRun(init)
+			await store.manifests.markReady("run-a")
+			await store.manifests.markAgentRunStarted("run-a", owner)
+			return store.manifests
+		}
+
+		it("is not ended or completed by a worker that does not own it", async () => {
+			const manifests = await started("worker-a@1")
+			expect(
+				await manifests.markAgentRunIncomplete("run-a", "late", "worker-b@2"),
+			).toBeNull()
+			expect(
+				await manifests.markAgentRunComplete("run-a", summary, "worker-b@2"),
+			).toBeNull()
+			expect((await manifests.get("run-a"))?.agentRun?.state).toBe("running")
+		})
+
+		it("is ended and completed by the worker that started it", async () => {
+			const manifests = await started("worker-a@1")
+			expect(
+				(await manifests.markAgentRunComplete("run-a", summary, "worker-a@1"))
+					?.agentRun?.state,
+			).toBe("complete")
+			const second = await started("worker-a@1")
+			expect(
+				(await second.markAgentRunIncomplete("run-a", "late", "worker-a@1"))
+					?.agentRun?.state,
+			).toBe("incomplete")
+		})
+
+		it("is not ended by a later attempt of the same worker", async () => {
+			const manifests = await started("worker-a@1")
+			expect(
+				await manifests.markAgentRunIncomplete("run-a", "late", "worker-a@2"),
+			).toBeNull()
+		})
+
+		it("can still be ended by the deadline sweep, which names no owner", async () => {
+			const manifests = await started("worker-a@1")
+			expect(
+				(await manifests.markAgentRunIncomplete("run-a", "run deadline"))
+					?.agentRun?.state,
+			).toBe("incomplete")
+		})
+
+		it("keeps the owner out of the run record the web reads", async () => {
+			const manifests = await started("worker-a@1")
+			expect((await manifests.get("run-a"))?.agentRun).toEqual({
+				state: "running",
+				startedAt: NOW,
+			})
+		})
+	})
+
 	it("starts an agent run on a ready run seeded before agent runs existed", async () => {
 		const { collection, manifests } = makeStore()
 		await manifests.createRun(init)

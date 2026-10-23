@@ -46,7 +46,8 @@ async function main(): Promise<void> {
 				runDeadlineMs: agentRunDeadlineMs(process.env),
 			}),
 			manifests: control.manifests,
-			execute: (request) => executeAgentRun({ secrets, control }, request._id),
+			execute: (request, owner) =>
+				executeAgentRun({ secrets, control }, request._id, owner),
 			workerId,
 			pollMs: POLL_MS,
 			sleep: (ms) =>

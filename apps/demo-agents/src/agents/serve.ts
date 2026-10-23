@@ -6,16 +6,22 @@
  * It also keeps the deadline honest: a request nobody picked up in time fails,
  * and a run that stayed claimed past the run deadline (a worker that died
  * mid-run) is marked incomplete instead of looking forever "running". */
-import type { AgentRunOutcome } from "./runner.js"
+import { RunNotStartableError, type AgentRunOutcome } from "./runner.js"
 import type { RunRequestDoc, RunRequests } from "./run-requests.js"
 
 export type ServeDeps = {
 	requests: RunRequests
 	manifests: {
-		markAgentRunIncomplete(runId: string, reason: string): Promise<unknown>
+		markAgentRunIncomplete(
+			runId: string,
+			reason: string,
+			owner?: string,
+		): Promise<unknown>
 	}
+	/** Runs the request's run, starting it as `owner`. */
 	execute: (
 		request: RunRequestDoc,
+		owner: string,
 	) => Promise<Pick<AgentRunOutcome, "state" | "failureReason">>
 	workerId: string
 	pollMs: number
@@ -47,8 +53,11 @@ async function handle(
 	log: (line: string) => void,
 ) {
 	log(`request ${request._id}: running on slot ${request.slotIndex}`)
+	// One claim, one owner: a later claim of the same request is a different
+	// attempt, so it cannot end a run an earlier attempt still holds.
+	const owner = `${deps.workerId}@${request.claimedAt ?? ""}`
 	try {
-		const outcome = await deps.execute(request)
+		const outcome = await deps.execute(request, owner)
 		if (outcome.state === "complete") {
 			await deps.requests.finish(request._id, { state: "done" })
 		} else {
@@ -60,11 +69,14 @@ async function handle(
 		log(`request ${request._id}: ${outcome.state}`)
 	} catch (error) {
 		const reason = message(error)
-		// A run that already started must not stay "running": end it. One that
-		// never started has no running state, and this is then a no-op.
-		await deps.manifests
-			.markAgentRunIncomplete(request._id, reason)
-			.catch(() => undefined)
+		// A run this attempt started must not stay "running": end it, as its
+		// owner. A run that could not start belongs to someone else, or to no
+		// one, and is left alone.
+		if (!(error instanceof RunNotStartableError)) {
+			await deps.manifests
+				.markAgentRunIncomplete(request._id, reason, owner)
+				.catch(() => undefined)
+		}
 		await deps.requests.finish(request._id, { state: "failed", reason })
 		log(`request ${request._id}: failed (${reason})`)
 	}
