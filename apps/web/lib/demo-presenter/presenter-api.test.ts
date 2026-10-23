@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest"
-import {
-	call,
-	rig,
-	seeded,
-	signIn,
-	TOKEN,
-} from "./testing/presenter-rig.js"
+import { call, rig, seeded, signIn, TOKEN } from "./testing/presenter-rig.js"
 
 describe("presenter API: public stays public", () => {
 	it("tells a visitor with no session that it is public mode and nothing else", async () => {
