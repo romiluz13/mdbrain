@@ -14,7 +14,7 @@ import {
 	BudgetExhaustedError,
 	type BudgetUsage,
 	type ModelBudget,
-} from "../budget.js"
+} from "@mdbrain/lib/budget"
 import type { RenderedRecord, World } from "../corpus/types.js"
 import type { RunWrites } from "../evidence.js"
 import type { createRunManifests } from "../seeding/manifest.js"

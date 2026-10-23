@@ -32,6 +32,10 @@
 			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
 		},
+		"./budget": {
+			"types": "./dist/budget.d.ts",
+			"default": "./dist/budget.js"
+		},
 		"./types": {
 			"types": "./dist/types.d.ts",
 			"default": "./dist/types.js"
@@ -46,10 +50,16 @@
 		"check-types": "node ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
 		"test": "vitest run"
 	},
+	"dependencies": {
+		"@ai-sdk/provider": "2.0.3",
+		"ai": "5.0.210",
+		"mongodb": "^7.0.0"
+	},
 	"devDependencies": {
 		"typescript": "^5.8.0",
 		"@types/node": "^22.10.0",
-		"vitest": "^4.1.0"
+		"vitest": "^4.1.0",
+		"zod": "3.25.76"
 	},
 	"homepage": "https://github.com/romiluz13/mdbrain#readme",
 	"bugs": {

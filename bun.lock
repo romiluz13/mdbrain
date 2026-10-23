@@ -42,6 +42,7 @@
         "@ai-sdk/anthropic": "2.0.109",
         "@ai-sdk/provider": "2.0.3",
         "@mdbrain/client": "workspace:*",
+        "@mdbrain/lib": "workspace:*",
         "@mdbrain/mcp": "workspace:*",
         "@mdbrain/wiki-engine": "workspace:*",
         "ai": "5.0.210",
@@ -79,13 +80,16 @@
       "name": "@mdbrain/web",
       "version": "2.0.0",
       "dependencies": {
+        "@ai-sdk/anthropic": "2.0.109",
         "@fontsource-variable/archivo": "5.3.0",
         "@fontsource-variable/source-serif-4": "5.3.1",
         "@fontsource/ibm-plex-mono": "5.3.0",
         "@gsap/react": "2.1.2",
         "@mdbrain/client": "workspace:*",
+        "@mdbrain/lib": "workspace:*",
         "@react-three/drei": "10.7.9",
         "@react-three/fiber": "9.8.2",
+        "ai": "5.0.210",
         "gsap": "3.15.0",
         "mongodb": "^7.0.0",
         "next": "16.4.2",
@@ -93,6 +97,7 @@
         "react-dom": "19.3.1",
         "three": "0.186.1",
         "typescript": "^5.8.0",
+        "zod": "3.25.76",
       },
       "devDependencies": {
         "@axe-core/playwright": "^4.13.0",
@@ -121,10 +126,16 @@
     "packages/lib": {
       "name": "@mdbrain/lib",
       "version": "2.0.0",
+      "dependencies": {
+        "@ai-sdk/provider": "2.0.3",
+        "ai": "5.0.210",
+        "mongodb": "^7.0.0",
+      },
       "devDependencies": {
         "@types/node": "^22.10.0",
         "typescript": "^5.8.0",
         "vitest": "^4.1.0",
+        "zod": "3.25.76",
       },
     },
     "packages/mdbrain-memory": {

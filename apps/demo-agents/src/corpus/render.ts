@@ -12,7 +12,7 @@ import {
 	budgetMiddleware,
 	createModelBudget,
 	operatorCeiling,
-} from "../budget.js"
+} from "@mdbrain/lib/budget"
 import {
 	appendRecord,
 	readRecords,

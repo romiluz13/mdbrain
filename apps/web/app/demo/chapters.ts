@@ -20,7 +20,7 @@ export const CHAPTERS: readonly Chapter[] = [
 	{
 		id: "ask",
 		title: "Ask",
-		lede: "Ask the stored brain a question. It answers with stored claims and the source each one came from. No model is called on this screen.",
+		lede: "Ask the stored brain a question. The stored search answers with claims and the source each one came from; the answer lane has a small model read the same pages and write a cited answer.",
 	},
 	{
 		id: "sources",

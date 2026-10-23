@@ -3,6 +3,7 @@
 // what the screen shows with what the proxy returned.
 import { gzipSync } from "node:zlib"
 import type { Page } from "@playwright/test"
+import type { AnswerOutcome } from "../lib/demo-data/answer-types.js"
 import { handleDemoRead } from "../lib/demo-data/proxy.js"
 import {
 	createRecordedRun,
@@ -170,4 +171,52 @@ export async function installDemoProxy(page: Page, options: ProxyOptions = {}) {
 				)
 		},
 	}
+}
+
+/** What a stubbed answers route serves: an outcome body, "hold" (the request
+ * never answers; the disconnect path is what is under test), or "down" (the
+ * network fails). */
+export type AnswerReply =
+	| { kind: "outcome"; body: AnswerOutcome }
+	| { kind: "hold" }
+	| { kind: "down" }
+
+export type AnswerReplyer = (
+	visit: number,
+	question: string,
+) => AnswerReply | Promise<AnswerReply>
+
+/** Serves POST /api/demo/answers at the browser boundary. The server route
+ * needs the control store, the read principal and an Anthropic key, none of
+ * which a test may touch, so the lane's states are exercised against fixture
+ * outcomes instead; every served reply is logged for assertions. */
+export async function installAnswerRoute(page: Page, reply: AnswerReplyer) {
+	const served: Array<{ visit: number; question: string }> = []
+	await page.route("**/api/demo/answers", async (route) => {
+		const visit = served.length + 1
+		let question = ""
+		try {
+			question = String((await route.request().postDataJSON())?.question ?? "")
+		} catch {
+			question = ""
+		}
+		const answered = await reply(visit, question)
+		served.push({ visit, question })
+		if (answered.kind === "down") {
+			await route.abort("failed")
+			return
+		}
+		if (answered.kind === "hold") {
+			// The request must stay pending: the lane's disconnect path is what
+			// is under test.
+			await new Promise(() => {})
+			return
+		}
+		await route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify(answered.body),
+		})
+	})
+	return { served }
 }

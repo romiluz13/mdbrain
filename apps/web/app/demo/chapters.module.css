@@ -578,3 +578,50 @@
 		color: var(--ink-2);
 	}
 }
+/* The model answer lane in chapter 2. A quiet panel under the stored search:
+ * it never animates on its own, so reduced motion needs no special case. */
+.answerLane {
+	display: grid;
+	gap: 12px;
+	padding: 16px;
+	border-radius: var(--r2);
+	background: var(--panel);
+	min-width: 0;
+}
+
+.answerMeta {
+	color: var(--ink-2);
+	font-size: var(--t13);
+	max-width: 70ch;
+}
+
+.answerText {
+	font-family: var(--font-serif);
+	font-size: var(--t17);
+	line-height: 1.45;
+	max-width: 70ch;
+	overflow-wrap: anywhere;
+}
+
+.answerStatus {
+	display: grid;
+	gap: 8px;
+	justify-items: start;
+	max-width: 70ch;
+}
+
+.answerEvent {
+	font-style: italic;
+}
+
+.answerEvents {
+	display: grid;
+	gap: 8px;
+	color: var(--ink-2);
+	font-size: var(--t13);
+	max-width: 70ch;
+}
+
+.answerEvents li {
+	overflow-wrap: anywhere;
+}
