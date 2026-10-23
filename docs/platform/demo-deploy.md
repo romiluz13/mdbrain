@@ -15,7 +15,7 @@ The deploy, the accounts and every credential stay with the human. The repo prov
 | Atlas cluster (wiki data, the `mdbrain_demo_*` databases) | As is, unchanged | — | Memongo; the web's control-database read |
 | Demo control database | A MongoDB deployment the operator picks (the demo stack's control DB) | — | The web Worker, for the run read and the answer lane |
 
-The web Worker holds no inbound traffic rule of its own: it serves the reads and the answer route, and the edge rate rule (below) sits in front of the whole app. Memongo has no public IP: its Flycast address is reachable only inside the private network, and TLS is terminated at the Fly proxy. Atlas is not changed by this deploy.
+The web Worker holds no inbound traffic rule of its own: it serves the reads and the answer route, and the edge rate rule (below) sits in front of the whole app. Memongo has no public IP: its Flycast address is reachable only inside the private network. Flycast is plain HTTP through the Fly proxy (it does no HTTPS), and the private network itself runs over Fly's WireGuard mesh. Atlas is not changed by this deploy.
 
 One point to settle before the first deploy: the web Worker reads the control database directly (the run read and the answer lane, `MDBRAIN_DEMO_CONTROL_URI`). Cloudflare Workers have no static egress addresses, so the control database's IP access list must allow connections from any address, with the database user's credentials and TLS as the control. Confirm that trade-off before publishing (open question to the operator, not settled by this ticket).
 
@@ -23,9 +23,7 @@ One point to settle before the first deploy: the web Worker reads the control da
 
 The local workerd smoke (the OpenNext build served by `wrangler dev`, a single-node local mongod, fake upstreams and a fake model) ran the whole path on the Workers runtime: the run read (`GET /api/demo/v1/run`) answered `200` with the full run record from the control database, and the answer route ran its complete stepwise flow (a model turn, tool calls through the read seam, a second model turn, the citation marker validated through the cite read) and settled the daily budget ledger in the control store. The MongoDB driver itself (`mongodb` 7.2.0) loads and runs under the runtime, provided it is imported lazily, as the OpenNext route chunks do.
 
-One caveat was measured, and it matters for this topology: the driver's pooled connections are bound to the request context that created them. A request that reuses a pooled connection from an earlier request hangs, and the Workers runtime cancels it (the visitor sees a 500); the next request opens a fresh connection and succeeds, so the failure lands roughly on every other back-to-back request. Idle-connection pruning avoids the hang only when the gap between requests exceeds the pruning timeout (`maxIdleTimeMS`); back-to-back requests still hit it. This was measured with `wrangler dev` 4.151.3 locally; a deployed Worker runs the same runtime but was not measured here. `apps/web/lib/demo-data/run-store.ts` holds one pooled client with `maxIdleTimeMS` unset.
-
-Before the first production deploy, pick one with the lead: (a) tune the client (a short `maxIdleTimeMS`, accepting that a burst of back-to-back reads can still surface occasional 500s on the run read and the answer lane), or (b) move the control-store reads onto the API service (a small follow-up ticket), keeping the Worker free of direct MongoDB connections. Until one is chosen and verified, treat the run read as a lane that can 500 under consecutive traffic.
+One caveat was measured, and it shapes the web's driver use: Workers cannot reuse I/O objects across requests, so connection pooling does not work in a plain Worker (Cloudflare's MongoDB page). With one process-wide client, a request that reused a pooled connection from an earlier request hung and the runtime canceled it (a 500), on every other back-to-back run read or answer under `wrangler dev`. The web therefore gives each request on Workers its own client: every demo route runs in a control scope (`withControlScope`, `apps/web/lib/demo-data/run-store.ts`) that opens the client on first use and closes it when the route's work settles, and the presenter stores ask for the current request's client at each operation. On Node (`next start`, the local stack) the one pooled process client stays. Measured locally with `wrangler dev` (tasks 346 and 350): 20 back-to-back and 10 concurrent run reads, 5 back-to-back answers and 4 presenter sign-ins all answered. Each request now pays its own TCP and TLS connection to the cluster; a Durable Object holding the client is Cloudflare's documented way to keep one across requests, if that latency matters. A deployed Worker was not measured.
 
 ## Environment variables per service
 
@@ -63,7 +61,7 @@ Set with `fly secrets set`:
 | `MDBRAIN_API_KEY` | The admin key the API boots with (production refuses unauthenticated `/v1`) |
 | `MDBRAIN_WIKI_MONGODB_URI` | The Atlas cluster's connection string. Without it the API still listens, but `/ready` answers 503 and every wiki route fails |
 | `MDBRAIN_WIKI_DATABASE` | `mdbrain_demo_wiki`. Required: left unset, the wiki engine uses `mdbrain_wiki`, a new database on the cluster |
-| `MEMONGO_API_URL` | Memongo's private-network address (`...internal`), never a public URL |
+| `MEMONGO_API_URL` | Memongo's Flycast address, `http://<memongo-app>.flycast:<port>`, never a public URL |
 | `MEMONGO_API_KEY` | The key the API uses against Memongo |
 | `MDBRAIN_API_SCOPED_KEYS` | The scoped-key policies, including the demo reader policy (below) |
 | `MDBRAIN_API_HOST` | `0.0.0.0` so other containers reach it |
@@ -104,9 +102,9 @@ Never the admin `MDBRAIN_API_KEY`, never a slot or proposer key. The proxy check
 The operator's runbook. Each step is a human action; nothing below runs itself.
 
 1. **Atlas, as is.** The `mdbrain_demo_*` databases exist with the seeded run (decision D3). Note the control-database access-list point above.
-2. **Fly apps.** Create three apps: the API, Memongo, the agent runner. Give Memongo no public IP: `fly ips allocate-v6 --private` (a Flycast address); machines still bind `0.0.0.0` and the proxy terminates TLS.
+2. **Fly apps.** Create three apps: the API, Memongo, the agent runner. Give Memongo no public IP: `fly ips allocate-v6 --private` (a Flycast address). Machines bind `0.0.0.0`; the Fly proxy forwards Flycast traffic to them as plain HTTP, so Memongo's service is defined without HTTPS and without `force_https`. Check `fly ips list` shows no public address.
 3. **Memongo first.** `fly deploy` the Memongo image with its five variables. The API cannot boot healthy without it.
-4. **The API.** `fly deploy` from the repo root with `apps/api/Dockerfile`; set the API secrets (table above) with `MEMONGO_API_URL` pointing at Memongo's `...internal` address. Check `fly status` and the health check (`/health`, `/ready`).
+4. **The API.** `fly deploy` from the repo root with `apps/api/Dockerfile`; set the API secrets (table above) with `MEMONGO_API_URL` pointing at Memongo's `.flycast` address (an `.internal` address skips the Fly proxy and needs the process to listen on IPv6). Check `fly status` and the health check (`/health`, `/ready`).
 5. **The read key.** Create it as its section above: policy into `MDBRAIN_API_SCOPED_KEYS`, token into the Worker's `MDBRAIN_DEMO_READ_KEY`.
 6. **The web.** In `apps/web`, set the `[vars]`, then `wrangler secret put` the four secrets, then `bun run deploy` (OpenNext build and deploy; the build must exit 0). The route is not public until the smoke passes.
 7. **The edge rate rules (D28).** In Cloudflare, in front of the whole web app, two rate-limiting rules, both keyed on the client IP (`ip.src`), both with the Block action (Block answers `429`):
