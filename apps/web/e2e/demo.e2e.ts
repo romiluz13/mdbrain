@@ -26,7 +26,7 @@ test.describe("journey", () => {
 	}) => {
 		test.skip(isMobile, "the keyboard journey runs on the desktop project")
 		const proxy = await installDemoProxy(page)
-		await journey(page, proxy, withKeyboard(page), "escape")
+		await journey(page, proxy, withKeyboard(page), "escape", true)
 		expect(listPages(proxy).length).toBeGreaterThan(0)
 	})
 
@@ -39,7 +39,7 @@ test.describe("journey", () => {
 			"the empty run is forced through the generated fixture",
 		)
 		const proxy = await installDemoProxy(page, { contradiction: "none" })
-		await journey(page, proxy, withKeyboard(page), "escape")
+		await journey(page, proxy, withKeyboard(page), "escape", true)
 	})
 
 	test("completes by touch on the phone, citations returning focus", async ({
@@ -48,7 +48,7 @@ test.describe("journey", () => {
 	}) => {
 		test.skip(!isMobile, "the touch journey runs on the mobile project")
 		const proxy = await installDemoProxy(page)
-		await journey(page, proxy, withTouch, "close")
+		await journey(page, proxy, withTouch, "close", true)
 	})
 })
 
