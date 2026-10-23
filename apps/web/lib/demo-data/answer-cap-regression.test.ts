@@ -171,8 +171,15 @@ describe("the documented 8,000-token context (live regression)", () => {
 			text: "The stored pages do not settle it.",
 			citations: [],
 		})
+		expect(sent.map((s) => s.path)).toEqual([
+			"/v1/messages/count_tokens",
+			"/v1/messages",
+			"/v1/messages/count_tokens",
+			"/v1/messages",
+			"/v1/messages/count_tokens",
+			"/v1/messages",
+		])
 		const messages = sent.filter((s) => s.path === "/v1/messages")
-		expect(messages).toHaveLength(3)
 		expect(messages[2]?.bytes).toBeGreaterThan(8_000)
 		expect(spend.settled.map((u) => u.uncachedInput)).toEqual(
 			LIVE_STEP_INPUT_TOKENS,

@@ -89,8 +89,12 @@ export function tokenCappedFetch(options: {
 			)
 		}
 		const url = String(input)
-		if ((init.method ?? "GET").toUpperCase() !== "POST") {
-			return send(input, init)
+		const method = (init.method ?? "GET").toUpperCase()
+		if (method === "GET" || method === "HEAD") return send(input, init)
+		if (method !== "POST") {
+			throw new TransportInputRefusedError(
+				`the model transport sends only counted POSTs, not ${method}`,
+			)
 		}
 		let request: Record<string, unknown>
 		try {

@@ -158,4 +158,13 @@ describe("tokenCappedFetch", () => {
 		).rejects.toBeInstanceOf(TransportInputRefusedError)
 		expect(sent).toEqual([])
 	})
+
+	it("refuses any method but GET or HEAD unless it is a counted POST", async () => {
+		const { base, sent } = upstream(counted(1))
+		const capped = tokenCappedFetch({ maxInputTokens: 8_000, fetch: base })
+		await expect(
+			capped(MESSAGES_URL, { ...post(request), method: "PUT" }),
+		).rejects.toBeInstanceOf(TransportInputRefusedError)
+		expect(sent).toEqual([])
+	})
 })
