@@ -36,6 +36,9 @@ export type WikiSearchEnvelope = {
 	mode: string
 }
 
+/** A read the caller can stop: the signal cancels its request. */
+export type ReadOptions = { signal?: AbortSignal }
+
 /** The reads the demo data layer needs. The principal is not part of the
  * input: either the caller-owned principal is folded in by `clientReads`,
  * or the proxy injects its own. */
@@ -44,26 +47,32 @@ export interface DemoReads {
 		limit: number
 		skip?: number
 	}): Promise<MdbrainWikiPageListResponse>
-	wikiLint(input: { limit: number }): Promise<unknown>
+	wikiLint(input: { limit: number }, options?: ReadOptions): Promise<unknown>
 	overview(slug: string): Promise<MdbrainWikiOverviewResponse>
 	changes(input: {
 		since: string | Date
 		cursor?: string
 		limit?: number
 	}): Promise<MdbrainWikiChangesResponse>
-	wikiGet(slug: string): Promise<MdbrainWikiPageView>
+	wikiGet(slug: string, options?: ReadOptions): Promise<MdbrainWikiPageView>
 	/** The governed text-lane question read: no model, a bounded result count. */
-	search(input: {
-		query: string
-		maxResults: number
-	}): Promise<WikiSearchEnvelope>
+	search(
+		input: {
+			query: string
+			maxResults: number
+		},
+		options?: ReadOptions,
+	): Promise<WikiSearchEnvelope>
 	/** `citedBy` is optional for an event marker: the event is then confirmed by
 	 * its id in the run's scope. */
-	cite(input: {
-		marker: string
-		citedBy?: string
-		agentId?: string
-	}): Promise<MdbrainCitationResponse>
+	cite(
+		input: {
+			marker: string
+			citedBy?: string
+			agentId?: string
+		},
+		options?: ReadOptions,
+	): Promise<MdbrainCitationResponse>
 	/** The pinned run's record, which only the demo proxy serves. */
 	run(): Promise<RunRecord>
 }
@@ -92,19 +101,23 @@ function clientReads(upstream: DemoDataUpstream): DemoReads {
 	}
 	return {
 		wikiList: (input) => client.wikiList({ ...principal, ...input }),
-		wikiLint: (input) => client.wikiLint({ ...principal, ...input }),
+		wikiLint: (input, options) =>
+			client.wikiLint({ ...principal, ...input }, options),
 		overview: (slug) => client.overview({ slug, ...principal }),
 		changes: (input) => client.changes({ ...principal, ...input }),
-		wikiGet: (slug) => client.wikiGet({ slug, ...principal }),
-		search: async (input) =>
-			(await client.wikiSearch({
-				...principal,
-				query: input.query,
-				recipe: "text",
-				maxResults: input.maxResults,
-			})) as WikiSearchEnvelope,
+		wikiGet: (slug, options) => client.wikiGet({ slug, ...principal }, options),
+		search: async (input, options) =>
+			(await client.wikiSearch(
+				{
+					...principal,
+					query: input.query,
+					recipe: "text",
+					maxResults: input.maxResults,
+				},
+				options,
+			)) as WikiSearchEnvelope,
 		// agentId rides along for direct reads; the proxy reader drops it.
-		cite: (input) => client.cite({ ...input, ...principal }),
+		cite: (input, options) => client.cite({ ...input, ...principal }, options),
 		run: runOnlyOnTheProxy,
 	}
 }
@@ -124,11 +137,14 @@ function proxyReads(
 	if (upstream.readKey) {
 		headers.authorization = `Bearer ${upstream.readKey}`
 	}
-	const get = async <T>(path: string): Promise<T> => {
+	const get = async <T>(path: string, options?: ReadOptions): Promise<T> => {
+		const signals = [signal, options?.signal].filter(
+			(candidate): candidate is AbortSignal => candidate !== undefined,
+		)
 		const response = await fetch(`${upstream.apiBaseUrl}${path}`, {
 			method: "GET",
 			headers,
-			signal,
+			signal: signals.length > 1 ? AbortSignal.any(signals) : signals[0],
 		})
 		if (!response.ok) {
 			throw new MdbrainClientError(response.status, await response.text())
@@ -155,8 +171,8 @@ function proxyReads(
 			get<MdbrainWikiPageListResponse>(
 				`/v1/wiki${query({ limit: input.limit, skip: input.skip })}`,
 			),
-		wikiLint: (input) =>
-			get<unknown>(`/v1/wiki/lint${query({ limit: input.limit })}`),
+		wikiLint: (input, options) =>
+			get<unknown>(`/v1/wiki/lint${query({ limit: input.limit })}`, options),
 		overview: (slug) =>
 			get<MdbrainWikiOverviewResponse>(
 				`/v1/wiki/overview/${encodeURIComponent(slug)}`,
@@ -165,17 +181,19 @@ function proxyReads(
 			get<MdbrainWikiChangesResponse>(
 				`/v1/wiki/changes${query({ since: input.since, cursor: input.cursor, limit: input.limit })}`,
 			),
-		wikiGet: (slug) =>
-			get<MdbrainWikiPageView>(`/v1/wiki/${encodeURIComponent(slug)}`),
-		search: (input) =>
+		wikiGet: (slug, options) =>
+			get<MdbrainWikiPageView>(`/v1/wiki/${encodeURIComponent(slug)}`, options),
+		search: (input, options) =>
 			get<WikiSearchEnvelope>(
 				`/v1/wiki/search${query({ query: input.query, maxResults: input.maxResults })}`,
+				options,
 			),
 		// agentId is a principal parameter: the proxy refuses it from the
 		// caller, so the proxy reader never forwards it.
-		cite: (input) =>
+		cite: (input, options) =>
 			get<MdbrainCitationResponse>(
 				`/v1/cite${query({ marker: input.marker, citedBy: input.citedBy })}`,
+				options,
 			),
 		run: () => get<RunRecord>("/v1/run"),
 	}

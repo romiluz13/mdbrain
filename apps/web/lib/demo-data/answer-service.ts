@@ -140,8 +140,11 @@ export function createAnswerService(input: {
 		description:
 			"Search the stored pages. Returns at most 5 pages with slugs, titles, summaries, and claim texts.",
 		inputSchema: z.object({ query: z.string().min(1).max(200) }),
-		execute: async ({ query }) => {
-			const envelope = await input.reads.search({ query, maxResults: 5 })
+		execute: async ({ query }, { abortSignal }) => {
+			const envelope = await input.reads.search(
+				{ query, maxResults: 5 },
+				{ signal: abortSignal },
+			)
 			return bounded({
 				hits: envelope.results.map((hit) => ({
 					slug: hit.page.slug,
@@ -160,8 +163,8 @@ export function createAnswerService(input: {
 		description:
 			"Read one stored page by slug: its summary, a bounded body excerpt, and its claims.",
 		inputSchema: z.object({ slug: z.string().min(1).max(200) }),
-		execute: async ({ slug }) => {
-			const page = await input.reads.wikiGet(slug)
+		execute: async ({ slug }, { abortSignal }) => {
+			const page = await input.reads.wikiGet(slug, { signal: abortSignal })
 			return bounded({
 				slug: page.slug,
 				title: page.title,
@@ -181,11 +184,11 @@ export function createAnswerService(input: {
 		description:
 			"Resolve a citation marker to the stored claim or event before citing it.",
 		inputSchema: z.object({ marker: z.string().min(4).max(2048) }),
-		execute: async ({ marker }) => {
-			const response = await input.reads.cite({
-				marker,
-				agentId: input.agentId,
-			})
+		execute: async ({ marker }, { abortSignal }) => {
+			const response = await input.reads.cite(
+				{ marker, agentId: input.agentId },
+				{ signal: abortSignal },
+			)
 			return bounded(response)
 		},
 	})
@@ -194,20 +197,26 @@ export function createAnswerService(input: {
 		description:
 			"Read the knowledge base's recorded unresolved contradictions: the pages that hold them and the stored record for each. Use it before settling an answer a disagreement could change.",
 		inputSchema: z.object({}),
-		execute: async () => {
-			const lint = await input.reads.wikiLint({ limit: 20 })
+		execute: async (_input, { abortSignal }) => {
+			const lint = await input.reads.wikiLint(
+				{ limit: 20 },
+				{ signal: abortSignal },
+			)
 			return bounded(conflictsFromLint(lint))
 		},
 	})
 
 	/** The budget-spent fallback: cited retrieval and a plain message, never
 	 * another model. */
-	async function citedRetrieval(question: string): Promise<AnswerOutcome> {
+	async function citedRetrieval(
+		question: string,
+		signal: AbortSignal,
+	): Promise<AnswerOutcome> {
 		try {
-			const envelope = await input.reads.search({
-				query: question,
-				maxResults: 5,
-			})
+			const envelope = await input.reads.search(
+				{ query: question, maxResults: 5 },
+				{ signal },
+			)
 			const hits: AnswerHit[] = envelope.results.slice(0, 5).map((hit) => ({
 				slug: hit.page.slug,
 				title: hit.page.title,
@@ -229,18 +238,22 @@ export function createAnswerService(input: {
 
 	/** A marker the cite read cannot resolve never renders: it is dropped
 	 * from the text and from the citations. */
-	async function validatedAnswer(text: string): Promise<AnswerOutcome> {
+	async function validatedAnswer(
+		text: string,
+		signal: AbortSignal,
+	): Promise<AnswerOutcome> {
 		let cleaned = text
 		const citations: AnswerCitation[] = []
 		for (const candidate of markerCandidates(text)) {
+			signal.throwIfAborted()
 			const parsed = parseCitationMarker(candidate)
 			let response: MdbrainCitationResponse | null = null
 			if (parsed.ok) {
 				try {
-					response = await input.reads.cite({
-						marker: candidate,
-						agentId: input.agentId,
-					})
+					response = await input.reads.cite(
+						{ marker: candidate, agentId: input.agentId },
+						{ signal },
+					)
 				} catch {
 					response = null
 				}
@@ -251,6 +264,9 @@ export function createAnswerService(input: {
 				cleaned = cleaned.split(candidate).join("")
 			}
 		}
+		// A marker dropped because the answer was stopped is not a verdict on
+		// the marker: a stopped answer never renders.
+		signal.throwIfAborted()
 		if (cleaned.trim().length === 0) {
 			// The steps ended on tool calls, or every marker was dropped: the
 			// visitor still gets the one honest sentence, never an empty lane.
@@ -304,10 +320,20 @@ export function createAnswerService(input: {
 				inputCap: input.inputCap,
 			}),
 		})
+		// The deadline and a disconnect stop the whole answer: the model loop,
+		// every read, and the cite validation. The lease is released only after
+		// the work they stop has settled.
 		const controller = new AbortController()
 		const deadline = setTimeout(() => controller.abort(), deadlineMs)
 		const disconnect = () => controller.abort()
 		signal?.addEventListener("abort", disconnect, { once: true })
+		const stopped = (): AnswerOutcome | undefined => {
+			// The visitor disconnected: nothing to show, nothing owed.
+			if (signal?.aborted) return { state: "canceled" }
+			if (controller.signal.aborted)
+				return { state: "refused", reason: "deadline" }
+			return undefined
+		}
 		let outcome: AnswerOutcome
 		try {
 			const result = await generateText({
@@ -326,20 +352,16 @@ export function createAnswerService(input: {
 				// The reservation is the whole retry allowance: none beyond it.
 				maxRetries: 0,
 			})
-			outcome = await validatedAnswer(result.text)
+			outcome = await validatedAnswer(result.text, controller.signal)
 		} catch (error) {
-			if (signal?.aborted) {
-				// The visitor disconnected: nothing to show, nothing owed.
-				outcome = { state: "canceled" }
-			} else if (controller.signal.aborted) {
-				outcome = { state: "refused", reason: "deadline" }
-			} else if (error instanceof BudgetExhaustedError) {
-				outcome = await citedRetrieval(trimmed)
+			if (error instanceof BudgetExhaustedError && !controller.signal.aborted) {
+				const fallback = await citedRetrieval(trimmed, controller.signal)
+				outcome = stopped() ?? fallback
 			} else if (error instanceof BudgetInputRefusedError) {
-				outcome = { state: "refused", reason: "limits" }
+				outcome = stopped() ?? { state: "refused", reason: "limits" }
 			} else {
 				// A store, provider, or tool failure fails closed.
-				outcome = { state: "unavailable" }
+				outcome = stopped() ?? { state: "unavailable" }
 			}
 		} finally {
 			clearTimeout(deadline)
