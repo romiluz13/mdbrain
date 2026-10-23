@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { createPresenterClient } from "./client.js"
+import { createPresenterClient, leaseLabel } from "./client.js"
 
 function fakeFetch(...answers: Array<{ status?: number; body: unknown }>) {
 	const queue = [...answers]
@@ -101,5 +101,16 @@ describe("presenter client", () => {
 		const init = fetchImpl.mock.calls[0]![1]!
 		expect(JSON.parse(init.body as string)).toEqual({ token: "token" })
 		expect(init.headers).not.toHaveProperty("x-demo-csrf")
+	})
+})
+
+describe("leaseLabel", () => {
+	it("names the slot alone while it holds its default name, and with the presenter's name once renamed", () => {
+		const base = { slotIndex: 13, expiresAt: "2026-10-23T12:30:00.000Z" }
+		expect(leaseLabel({ ...base, name: "Slot 13" })).toBe("Slot 13")
+		expect(leaseLabel({ ...base, name: "" })).toBe("Slot 13")
+		expect(leaseLabel({ ...base, name: "Board demo" })).toBe(
+			"Slot 13, Board demo",
+		)
 	})
 })

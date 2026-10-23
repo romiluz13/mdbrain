@@ -90,9 +90,11 @@ describe("viewAt", () => {
 		expect(early.contradiction).toEqual({ kind: "empty" })
 		expect(early.run).toBe(data.run)
 
+		// Recorded after the last revision stored before it, so the cursor that
+		// has applied that revision shows it.
 		const late = viewAt(data, stateAt(timeline, 2), timeline)
 		expect(late.map.kind === "ready" && late.map.data.pageTotal).toBe(2)
-		expect(late.contradiction).toEqual({ kind: "empty" })
+		expect(late.contradiction.kind).toBe("ready")
 	})
 
 	it("keeps the contradiction once its detection time has passed", () => {

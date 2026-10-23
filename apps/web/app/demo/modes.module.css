@@ -5,7 +5,7 @@
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 6px 12px;
-	margin-bottom: 16px;
+	margin-bottom: 12px;
 	font-size: var(--t13);
 }
 
@@ -101,6 +101,27 @@
 	font-size: var(--t17);
 	font-weight: 700;
 	font-stretch: 112%;
+}
+
+.modeWide {
+	display: inline;
+}
+
+@media (max-width: 599px) {
+	.modeWide {
+		display: none;
+	}
+}
+
+.playbackNote {
+	color: var(--ink-2);
+	font-size: var(--t13);
+}
+
+@media (max-width: 599px) {
+	.playbackNote {
+		display: none;
+	}
 }
 
 .playbackControls {

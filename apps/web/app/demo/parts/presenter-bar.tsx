@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { leaseLabel } from "../../../lib/demo-presenter/client.js"
 import { runProgress } from "../../../lib/demo-presenter/progress.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../modes.module.css"
@@ -39,10 +40,7 @@ export function PresenterBar() {
 					Presenter
 				</span>
 				{lease ? (
-					<span data-testid="lease-slot">
-						Slot {lease.slotIndex}
-						{lease.name ? `, ${lease.name}` : ""}
-					</span>
+					<span data-testid="lease-slot">{leaseLabel(lease)}</span>
 				) : (
 					<span className={styles.modeText}>
 						No slot leased. Visitors see the recording.

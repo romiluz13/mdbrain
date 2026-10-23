@@ -13,7 +13,12 @@ import {
 import type { RunRecord } from "../../lib/demo-data/run-record.js"
 
 /** The chapter whose phase the cursor jumps to on arrival. */
-export type PlaybackPhase = "sources" | "agents" | "approval" | "end"
+export type PlaybackPhase =
+	| "sources"
+	| "agents"
+	| "contradiction"
+	| "approval"
+	| "end"
 
 export type Playback =
 	| { status: "off" }
@@ -42,8 +47,10 @@ export function usePlayback(input: {
 	map: WikiMapView | null
 	changes: ChangesView | null
 	run: RunRecord | null
+	/** When the detector recorded the run's contradiction, if one is recorded. */
+	detectedAt?: string
 }): Playback {
-	const { enabled, map, changes, run } = input
+	const { enabled, map, changes, run, detectedAt } = input
 	const built = useMemo(
 		() => (enabled && map && changes ? buildTimeline(map, changes) : null),
 		[enabled, map, changes],
@@ -88,8 +95,9 @@ export function usePlayback(input: {
 	}, [playing, total])
 
 	const marks = useMemo(
-		() => (timeline ? boundaries(timeline, run ?? undefined) : null),
-		[timeline, run],
+		() =>
+			timeline ? boundaries(timeline, run ?? undefined, detectedAt) : null,
+		[timeline, run, detectedAt],
 	)
 
 	const jump = useCallback(
@@ -100,9 +108,11 @@ export function usePlayback(input: {
 					? marks?.sourcesEnd
 					: phase === "agents"
 						? marks?.agentsEnd
-						: phase === "approval"
-							? (marks?.approval ?? marks?.agentsEnd)
-							: total
+						: phase === "contradiction"
+							? (marks?.contradiction ?? marks?.agentsEnd)
+							: phase === "approval"
+								? (marks?.approval ?? marks?.agentsEnd)
+								: total
 			setCursorState(Math.max(1, Math.min(total, target || total)))
 		},
 		[marks, total],

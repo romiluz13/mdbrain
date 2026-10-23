@@ -7,6 +7,14 @@
 import { CSRF_HEADER } from "./session-names.js"
 
 export type LeaseView = { slotIndex: number; name: string; expiresAt: string }
+/** "Slot 13" for a slot still holding its default name, else "Slot 13, Board
+ * demo". */
+export function leaseLabel(lease: LeaseView): string {
+	return lease.name === "" || lease.name === `Slot ${lease.slotIndex}`
+		? `Slot ${lease.slotIndex}`
+		: `Slot ${lease.slotIndex}, ${lease.name}`
+}
+
 export type RequestView = {
 	state: "queued" | "claimed" | "done" | "failed"
 	requestedAt: string

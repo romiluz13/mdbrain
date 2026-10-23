@@ -182,6 +182,23 @@ export type Boundaries = {
 	/** The cursor at which the proposed page was approved into the wiki, or
 	 * null while the record shows it pending. */
 	approval: number | null
+	/** The cursor at which the detector had recorded the run's contradiction,
+	 * or null when none is recorded. */
+	contradiction: number | null
+}
+
+/** The cursor that has applied every revision stored up to an instant, never
+ * less than the first; null for an instant that is missing or not a time. */
+export function cursorAt(
+	timeline: Timeline,
+	instant: string | undefined,
+): number | null {
+	const at = instant === undefined ? Number.NaN : Date.parse(instant)
+	if (Number.isNaN(at)) return null
+	return Math.max(
+		1,
+		timeline.points.filter((point) => Date.parse(point.at) <= at).length,
+	)
 }
 
 /** Where the run's own times fall on the timeline, or null when the run has no
@@ -189,6 +206,7 @@ export type Boundaries = {
 export function boundaries(
 	timeline: Timeline,
 	run: RunRecord | undefined,
+	detectedAt?: string,
 ): Boundaries | null {
 	const agentRun = run?.agentRun
 	if (!agentRun) return null
@@ -210,7 +228,13 @@ export function boundaries(
 					(point) =>
 						point.created && point.pageSlug === slug && point.index > agentsEnd,
 				)
-	return { sourcesEnd, agentsEnd, approval: approvalPoint?.index ?? null }
+	const contradiction = cursorAt(timeline, detectedAt)
+	return {
+		sourcesEnd,
+		agentsEnd,
+		approval: approvalPoint?.index ?? null,
+		contradiction,
+	}
 }
 
 /** The graph as it stood at the cursor: the pages that exist, the links among

@@ -284,7 +284,16 @@ describe("boundaries", () => {
 			sourcesEnd: 2,
 			agentsEnd: 3,
 			approval: 4,
+			contradiction: null,
 		})
+	})
+
+	it("places the contradiction where the detector had recorded it, and nowhere without a record", () => {
+		const timeline = built()
+		expect(boundaries(timeline, run(), T(5))?.contradiction).toBe(3)
+		expect(boundaries(timeline, run(), T(0))?.contradiction).toBe(1)
+		expect(boundaries(timeline, run(), "not a time")?.contradiction).toBeNull()
+		expect(boundaries(timeline, run())?.contradiction).toBeNull()
 	})
 
 	it("reports no approval while the proposal's page has not been stored", () => {

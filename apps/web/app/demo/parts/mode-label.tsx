@@ -1,27 +1,27 @@
 "use client"
 
+import {
+	type LeaseView,
+	leaseLabel,
+} from "../../../lib/demo-presenter/client.js"
 import styles from "../modes.module.css"
 
 /** Says which of the two views this is. The recorded view is the default for
  * every visitor; the live one exists only for the presenter who holds a slot. */
 export function ModeLabel({
-	live,
-	slotIndex,
-	name,
+	lease,
 }: {
-	live: boolean
-	slotIndex?: number
-	name?: string
+	/** The presenter's lease: set when this page is live. */
+	lease: LeaseView | null
 }) {
-	return live ? (
+	return lease ? (
 		<p className={styles.modeBar} data-testid="live-label">
 			<span className={styles.modeTag} data-mode="live">
 				Live
 			</span>
 			<span className={styles.modeText}>
-				Slot {slotIndex}
-				{name ? `, ${name}` : ""}. Every number here is read from this slot as
-				its agents write.
+				{leaseLabel(lease)}. Every number here is read from this slot as its
+				agents write.
 			</span>
 		</p>
 	) : (
@@ -30,8 +30,11 @@ export function ModeLabel({
 				Recorded
 			</span>
 			<span className={styles.modeText}>
-				Playback of a completed run, read from what it stored. Visitors watch;
-				they cannot change it.
+				A completed run, played back.
+				<span className={styles.modeWide}>
+					{" "}
+					Read from what it stored; visitors cannot change it.
+				</span>
 			</span>
 		</p>
 	)

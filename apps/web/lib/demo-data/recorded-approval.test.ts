@@ -51,7 +51,12 @@ describe("recordedApproval", () => {
 				{ at: "2026-10-20T09:12:00.000Z" },
 			],
 		} as Timeline
-		const marks: Boundaries = { sourcesEnd: 1, agentsEnd: 1, approval: 2 }
+		const marks: Boundaries = {
+			sourcesEnd: 1,
+			agentsEnd: 1,
+			approval: 2,
+			contradiction: null,
+		}
 		expect(
 			recordedApproval(run(PROPOSAL), map("a", PROPOSAL.slug), timeline, marks),
 		).toEqual({

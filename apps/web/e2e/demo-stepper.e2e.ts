@@ -359,8 +359,25 @@ test("on a phone the chapter is one screen per beat, not one long page", async (
 }) => {
 	test.skip(!isMobile, "page length matters on the phone")
 	await openWalk(page)
+	// The recording's controls and the mode label sit above the chapter on every
+	// chapter from 3 to 7; the page length that matters is the chapter's own.
 	const height = () =>
-		page.evaluate(() => Math.round(document.documentElement.scrollHeight))
+		page.evaluate(() => {
+			const chrome = [
+				...document.querySelectorAll(
+					'[data-testid="playback-bar"], [data-testid="playback-fallback"], [data-testid="recorded-label"], [data-testid="live-label"], [data-testid="presenter-bar"]',
+				),
+			].reduce((sum, element) => {
+				const style = getComputedStyle(element)
+				return (
+					sum +
+					element.getBoundingClientRect().height +
+					Number.parseFloat(style.marginTop) +
+					Number.parseFloat(style.marginBottom)
+				)
+			}, 0)
+			return Math.round(document.documentElement.scrollHeight - chrome)
+		})
 	const heights: number[] = []
 	for (const beat of [0, 1, 2]) {
 		await showBeat(page, beat)

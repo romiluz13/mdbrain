@@ -7,6 +7,7 @@ import type { ChangesView, WikiMapView } from "./loaders.js"
 import type { ContradictionCase } from "./loaders-chapters.js"
 import {
 	changesAt,
+	cursorAt,
 	mapAt,
 	type PlaybackState,
 	type Timeline,
@@ -24,11 +25,12 @@ export function viewAt<T extends Parts>(
 	state: PlaybackState,
 	timeline: Timeline,
 ): T {
-	const cursorTime = state.at === undefined ? Number.NaN : Date.parse(state.at)
 	const contradiction = data.contradiction
-	const recorded =
-		contradiction.kind !== "ready" ||
-		Date.parse(contradiction.data.detectedAt) <= cursorTime
+	const recordedAt =
+		contradiction.kind === "ready"
+			? cursorAt(timeline, contradiction.data.detectedAt)
+			: null
+	const recorded = recordedAt === null || state.cursor >= recordedAt
 	return {
 		...data,
 		map:

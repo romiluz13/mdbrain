@@ -422,6 +422,17 @@ export function createDemoUpstream(
 				.flatMap((page) => {
 					const plan = data.plans.get(page.slug) ?? []
 					const head = { pageSlug: page.slug, title: page.title }
+					// The first revision adds what the later ones leave in place, so the
+					// feed's claims sum to the page's stored claims, as the API's do.
+					const total = page.claims.length
+					const net = plan.reduce(
+						(sum, [add, change, remove]) =>
+							sum +
+							Math.min(add, total) -
+							Math.min(remove, Math.max(0, total - add - change)),
+						0,
+					)
+					const first = page.claims.slice(0, Math.max(0, total - net))
 					const created = {
 						...head,
 						revision: 1,
@@ -430,10 +441,10 @@ export function createDemoUpstream(
 						baseline: "none",
 						baselineRevision: null,
 						claims: {
-							added: page.claims,
+							added: first,
 							changed: [],
 							removed: [],
-							counts: { added: page.claims.length, changed: 0, removed: 0 },
+							counts: { added: first.length, changed: 0, removed: 0 },
 							truncated: false,
 						},
 					}

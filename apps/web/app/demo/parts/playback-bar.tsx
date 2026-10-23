@@ -19,6 +19,9 @@ function phaseOf(playback: Ready): string | null {
 	if (marks.approval !== null && cursor >= marks.approval) {
 		return "Proposal approved"
 	}
+	if (marks.contradiction !== null && cursor >= marks.contradiction) {
+		return "Contradiction recorded"
+	}
 	return "After the agents"
 }
 
@@ -35,9 +38,9 @@ function ReadyBar({ playback }: { playback: Ready }) {
 		>
 			<div className={styles.playbackHead}>
 				<h2 id="playback-heading">Watch how it was built</h2>
-				<span className={styles.modeText}>
-					Recorded playback. Every number on this chapter is derived from the
-					revisions the run stored.
+				<span className={styles.playbackNote}>
+					Every number on this chapter is derived from the revisions the run
+					stored.
 				</span>
 			</div>
 			<input
@@ -101,6 +104,16 @@ function ReadyBar({ playback }: { playback: Ready }) {
 						>
 							Agents done
 						</button>
+						{marks.contradiction !== null ? (
+							<button
+								type="button"
+								className={styles.control}
+								onClick={() => playback.jump("contradiction")}
+								data-testid="playback-jump-contradiction"
+							>
+								Contradiction caught
+							</button>
+						) : null}
 						{marks.approval !== null ? (
 							<button
 								type="button"
@@ -118,8 +131,8 @@ function ReadyBar({ playback }: { playback: Ready }) {
 				<span>
 					<strong>Revision {state.cursor}</strong> of {state.total}
 				</span>
-				<span data-stat="pages">{countOf(state.pageCount, "page")}</span>
-				<span data-stat="claims">{countOf(state.claimCount, "claim")}</span>
+				<span data-readout="pages">{countOf(state.pageCount, "page")}</span>
+				<span data-readout="claims">{countOf(state.claimCount, "claim")}</span>
 				{state.at ? <span>stored {formatUtc(state.at)}</span> : null}
 				{phase ? <span data-testid="playback-phase">{phase}</span> : null}
 				{latest ? (

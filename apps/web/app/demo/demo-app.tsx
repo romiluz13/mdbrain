@@ -44,7 +44,7 @@ import { DURATION, EASE, STAGGER } from "./motion/tokens.js"
 import { useReducedMotion } from "./motion/use-reduced-motion.js"
 import { DEMO_UPSTREAM, useDemoData } from "./use-demo-data.js"
 import { useLayout } from "./use-layout.js"
-import { type PlaybackPhase, usePlayback } from "./use-playback.js"
+import { usePlayback } from "./use-playback.js"
 import { usePresenter } from "./use-presenter.js"
 
 // Only a confirmed presenter's page asks for the controls' code.
@@ -53,14 +53,16 @@ const PresenterBar = dynamic(
 	{ ssr: false },
 )
 
-/** Chapters 3 to 7 follow the recording; where the cursor sits when one opens. */
-const PLAYBACK_CHAPTERS: Partial<Record<ChapterId, PlaybackPhase>> = {
-	sources: "sources",
-	agents: "agents",
-	contradiction: "agents",
-	growth: "approval",
-	changes: "end",
-}
+/** The chapters that follow the recording: sources arrive to what changed. The
+ * cursor starts at the end, so each shows its final state until a visitor
+ * scrubs back. */
+const PLAYBACK_CHAPTERS: ReadonlySet<ChapterId> = new Set([
+	"sources",
+	"agents",
+	"contradiction",
+	"growth",
+	"changes",
+])
 
 /** How often a live run's reads are taken again while its agents write. */
 const LIVE_REFRESH_MS = 2_500
@@ -126,10 +128,14 @@ export function DemoApp() {
 				: stored.run.kind === "incomplete"
 					? (stored.run.data ?? null)
 					: null,
+		detectedAt:
+			stored.contradiction.kind === "ready"
+				? stored.contradiction.data.detectedAt
+				: undefined,
 	})
 	const chapterId = CHAPTERS[index]?.id
-	const phase = chapterId ? PLAYBACK_CHAPTERS[chapterId] : undefined
-	const following = recorded && phase !== undefined
+	const following =
+		recorded && chapterId !== undefined && PLAYBACK_CHAPTERS.has(chapterId)
 	const cursorView = following && playback.status === "ready" ? playback : null
 	const data = useMemo(
 		() =>
@@ -173,16 +179,6 @@ export function DemoApp() {
 			setIndex(fromHash)
 		}
 	}, [])
-
-	// A chapter opens the recording where its story is: sources in, agents
-	// done, the proposal approved, or the end.
-	const jumpTo = useRef<((phase: PlaybackPhase) => void) | null>(null)
-	jumpTo.current = playback.status === "ready" ? playback.jump : null
-	const ready = playback.status === "ready"
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the cursor moves when the chapter changes, not on every scrub
-	useEffect(() => {
-		jumpTo.current?.(phase ?? "end")
-	}, [chapterId, ready])
 
 	// The leased slot is another brain: reading it again, from a clear screen,
 	// when the lease starts, ends or changes hands.
@@ -425,11 +421,7 @@ export function DemoApp() {
 					<div ref={screenRef} className={styles.screen} data-testid="screen">
 						{presenter.mode === "presenter" ? <PresenterBar /> : null}
 						{presenter.mode === "loading" ? null : (
-							<ModeLabel
-								live={live}
-								slotIndex={presenter.lease?.slotIndex}
-								name={presenter.lease?.name}
-							/>
+							<ModeLabel lease={live ? presenter.lease : null} />
 						)}
 						{following ? <PlaybackBar /> : null}
 						<Body />
