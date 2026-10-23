@@ -10,6 +10,7 @@ import {
 } from "../presenter-api.js"
 import { createProposalService, type ProposalsClient } from "../proposals.js"
 import { createRunRequestService, type RunRequestDoc } from "../run-requests.js"
+import { createSignInLimiter } from "../signin-limit.js"
 import {
 	CSRF_HEADER,
 	SESSION_COOKIE,
@@ -112,6 +113,8 @@ export function rig(manifests: LeaseManifest[]) {
 		runRequests: createRunRequestService({ requests: requestStore, now }),
 		pins,
 		proposals: createProposalService(client),
+		signIns: createSignInLimiter({ now }),
+		ready: async () => true,
 		now,
 	}
 	return {
@@ -134,11 +137,17 @@ export type Call = {
 	origin?: string | null
 	csrf?: string | null
 	type?: string
+	/** The client address header; the default is a documentation address. */
+	address?: string | null
+	body_text?: string
 }
 
 export async function call(services: PresenterServices | null, input: Call) {
 	const method = input.method ?? "POST"
 	const headers: Record<string, string> = {}
+	if (input.address !== null) {
+		headers["x-forwarded-for"] = input.address ?? "203.0.113.9"
+	}
 	if (method !== "GET") {
 		headers["content-type"] = input.type ?? "application/json"
 		if (input.origin !== null) headers.origin = input.origin ?? ORIGIN
@@ -153,7 +162,9 @@ export async function call(services: PresenterServices | null, input: Call) {
 		new Request(`${ORIGIN}/api/demo/presenter/${input.path}`, {
 			method,
 			headers,
-			...(method === "GET" ? {} : { body: JSON.stringify(input.body ?? {}) }),
+			...(method === "GET"
+				? {}
+				: { body: input.body_text ?? JSON.stringify(input.body ?? {}) }),
 		}),
 		input.path.split("/"),
 		services,

@@ -39,6 +39,13 @@ export interface ControlCollection<T extends { _id: string }> {
 
 const DUPLICATE_KEY = 11000
 
+/** The driver's duplicate key error as the port's; any other error as it came. */
+function asPortError(error: unknown): unknown {
+	return (error as { code?: unknown } | null)?.code === DUPLICATE_KEY
+		? new DuplicateKeyError("duplicate key")
+		: error
+}
+
 /** The slice of a driver collection the adapter calls, named structurally so
  * the driver is imported by ./run-store.ts and nowhere else in the web app (a
  * test holds that). A driver `Collection` satisfies it. */
@@ -72,17 +79,21 @@ export function driverCollection<T extends { _id: string }>(
 			try {
 				await collection.insertOne(doc as never)
 			} catch (error) {
-				if ((error as { code?: unknown } | null)?.code === DUPLICATE_KEY) {
-					throw new DuplicateKeyError("duplicate key")
-				}
-				throw error
+				throw asPortError(error)
 			}
 		},
-		findOneAndUpdate: async (filter, update, options) =>
-			(await collection.findOneAndUpdate(filter, update, {
-				returnDocument: options?.returnDocument ?? "after",
-				...(options?.sort ? { sort: options.sort } : {}),
-			})) as unknown as T | null,
+		// A takeover can violate the unique presenter index just as an insert
+		// can, so the update maps the driver's duplicate key error too.
+		findOneAndUpdate: async (filter, update, options) => {
+			try {
+				return (await collection.findOneAndUpdate(filter, update, {
+					returnDocument: options?.returnDocument ?? "after",
+					...(options?.sort ? { sort: options.sort } : {}),
+				})) as unknown as T | null
+			} catch (error) {
+				throw asPortError(error)
+			}
+		},
 		deleteOne: async (filter) =>
 			(await collection.deleteOne(filter)).deletedCount,
 		deleteMany: async (filter) =>

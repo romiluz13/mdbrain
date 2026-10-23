@@ -8,6 +8,7 @@ import {
 	type ReadKeyCheck,
 } from "../demo-data/proxy-principal.js"
 import type { DemoRunEnv } from "../demo-data/proxy-run.js"
+import { createAdminKeyCheck, type AdminKeyCheck } from "./admin-key.js"
 import type { ControlCollection } from "./collections.js"
 import type { PresenterConfig } from "./config.js"
 import {
@@ -22,6 +23,7 @@ import { createPinService, type PinDoc } from "./pin.js"
 import type { PresenterServices } from "./presenter-api.js"
 import { createProposalService, type ProposalsClient } from "./proposals.js"
 import { createRunRequestService, type RunRequestDoc } from "./run-requests.js"
+import { createSignInLimiter } from "./signin-limit.js"
 import {
 	createSessionService,
 	verifyPresenterToken,
@@ -52,7 +54,12 @@ export function createPresenterRuntime(input: {
 	now?: () => Date
 	/** How a slot's key is asked what it can do; tests pass a fake. */
 	readKeyCheck?: ReadKeyCheck
+	adminKeyCheck?: AdminKeyCheck
 	fetchImpl?: typeof fetch
+	/** Creates the control collections' indexes. The lease's one-per-presenter
+	 * index is what makes "a presenter holds one slot" true, so presenter mode
+	 * stays off until this has succeeded. Tests with memory stores omit it. */
+	ensureIndexes?: () => Promise<void>
 }): PresenterRuntime {
 	const now = input.now ?? (() => new Date())
 	const { config, stores } = input
@@ -84,6 +91,26 @@ export function createPresenterRuntime(input: {
 	const manifests = manifestReader(stores.manifests)
 	const checkReadKey = input.readKeyCheck ?? createReadKeyCheck()
 	const fetchImpl = input.fetchImpl ?? fetch
+	const checkAdminKey = input.adminKeyCheck ?? createAdminKeyCheck()
+	const ensureIndexes = input.ensureIndexes ?? (async () => undefined)
+	let indexed = false
+	// Presenter mode runs only with its indexes in place and a review key that
+	// can do nothing but administer; anything else answers "not configured".
+	// An index that failed is tried again on the next request, never skipped.
+	const ready = async (): Promise<boolean> => {
+		if (!indexed) {
+			try {
+				await ensureIndexes()
+				indexed = true
+			} catch {
+				return false
+			}
+		}
+		return checkAdminKey(
+			{ apiBaseUrl: config.apiBaseUrl, adminKey: config.adminKey },
+			fetchImpl,
+		)
+	}
 	// A slot is readable only when its ring key is an exact read-only reader of
 	// the slot's own scope: the same gate the read proxy holds every key to.
 	const readable = async (manifest: LeaseManifest) => {
@@ -124,6 +151,8 @@ export function createPresenterRuntime(input: {
 			}),
 			pins,
 			proposals: createProposalService(input.proposalsClient),
+			signIns: createSignInLimiter({ now }),
+			ready,
 			now,
 		},
 		resolver: createTargetResolver({
@@ -134,6 +163,7 @@ export function createPresenterRuntime(input: {
 			leases,
 			manifests,
 			pins,
+			ready,
 			now,
 		}),
 	}

@@ -43,6 +43,49 @@ describe("readPresenterConfig", () => {
 		}
 	})
 
+	it.each([
+		["a short token", "Ab1-Ab1-Ab1-Ab1-Ab1-Ab1-"],
+		["31 characters", "aB3dE6gH9jK2mN5pQ8sT1vW4yZ7xC0v"],
+		["one repeated character", "a".repeat(40)],
+		["two characters repeated", "ab".repeat(20)],
+		["digits only", "1234567890".repeat(4)],
+		["one class, few distinct characters", "abcabcabcabcabcabcabcabcabcabcabc"],
+		["a three-character pattern repeated", "Ab1".repeat(12)],
+	])("refuses a presenter token that is %s", (_name, token) => {
+		expect(
+			readPresenterConfig({ ...ENV, MDBRAIN_DEMO_PRESENTER_TOKEN: token }),
+		).toBeNull()
+	})
+
+	it.each([
+		[
+			"32 random bytes in base64url",
+			"k3J9xQ2mP7vR1tY6uI0oL4aS8dF5gH_zXcVbN-wEqMe",
+		],
+		["16 random bytes in hex", "9f86d081884c7d659a2feaa0c55ad015"],
+		["a long mixed token", "Zx9-Qm4_Rt7+Lp2.Wn8~Vb5/Hc3=Jd6!Ke1@Fa0"],
+	])("accepts a presenter token that is %s", (_name, token) => {
+		expect(
+			readPresenterConfig({ ...ENV, MDBRAIN_DEMO_PRESENTER_TOKEN: token })
+				?.token,
+		).toBe(token)
+	})
+
+	it("is null when the review key is also a read key, so one leaked key never holds both powers", () => {
+		expect(
+			readPresenterConfig({
+				...ENV,
+				MDBRAIN_DEMO_PRESENTER_API_KEY: "read-2",
+			}),
+		).toBeNull()
+		expect(
+			readPresenterConfig({
+				...ENV,
+				MDBRAIN_DEMO_READ_KEY: "admin-key-0123456789",
+			}),
+		).toBeNull()
+	})
+
 	it("honors a run deadline override and ignores an invalid one", () => {
 		expect(
 			readPresenterConfig({ ...ENV, MDBRAIN_DEMO_RUN_DEADLINE_MS: "120000" })

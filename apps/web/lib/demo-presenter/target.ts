@@ -38,6 +38,8 @@ export type TargetDeps = {
 	leases: Pick<LeaseService, "current">
 	manifests: ManifestReader
 	pins: Pick<PinService, "get">
+	/** Whether presenter mode is on; a session means nothing while it is off. */
+	ready?: () => Promise<boolean>
 	now: () => Date
 	/** How long the pinned run is remembered before the pin is read again. */
 	pinTtlMs?: number
@@ -125,7 +127,7 @@ export function createTargetResolver(deps: TargetDeps) {
 	return {
 		async resolve(request: Request): Promise<TargetResult> {
 			const sessionId = sessionIdOf(request)
-			if (deps.config && sessionId !== "") {
+			if (deps.config && sessionId !== "" && (await (deps.ready?.() ?? true))) {
 				const session = await deps.sessions.lookup(sessionId)
 				const lease = session
 					? await deps.leases.current(session.presenterId)

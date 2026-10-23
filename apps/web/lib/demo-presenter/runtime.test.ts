@@ -56,6 +56,11 @@ type Principal = {
 	capabilities: string[]
 	grants: Array<{ scope: string; scopeRef: string }>
 }
+const reviewer: Principal = {
+	trustTier: "admin",
+	capabilities: ["administer"],
+	grants: [{ scope: "*", scopeRef: "*" }],
+}
 const readerOf = (slot: number): Principal => ({
 	trustTier: "standard",
 	capabilities: ["read"],
@@ -69,7 +74,9 @@ function principals(overrides: Record<string, Principal> = {}): typeof fetch {
 		const url = new URL(input instanceof Request ? input.url : String(input))
 		const key = new Headers(init?.headers).get("authorization")?.slice(7) ?? ""
 		const slot = Number(/^r(\d+)$/.exec(key)?.[1])
-		const principal = overrides[key] ?? (slot ? readerOf(slot) : undefined)
+		const principal =
+			overrides[key] ??
+			(key === CONFIG.adminKey ? reviewer : slot ? readerOf(slot) : undefined)
 		return url.pathname === "/v1/principal/self" && principal
 			? new Response(JSON.stringify({ subjectId: key, ...principal }), {
 					headers: { "content-type": "application/json" },
@@ -128,6 +135,7 @@ describe("createPresenterRuntime", () => {
 					headers: {
 						"content-type": "application/json",
 						origin: ORIGIN,
+						"x-forwarded-for": "203.0.113.9",
 						...(cookie ? { cookie: `${SESSION_COOKIE}=${cookie}` } : {}),
 						...(csrf ? { [CSRF_HEADER]: csrf } : {}),
 					},
@@ -207,7 +215,11 @@ describe("createPresenterRuntime", () => {
 		const login = await handlePresenterRequest(
 			new Request(`${ORIGIN}/api/demo/presenter/session`, {
 				method: "POST",
-				headers: { "content-type": "application/json", origin: ORIGIN },
+				headers: {
+					"content-type": "application/json",
+					origin: ORIGIN,
+					"x-forwarded-for": "203.0.113.9",
+				},
 				body: JSON.stringify({ token: TOKEN }),
 			}),
 			["session"],
@@ -265,7 +277,11 @@ describe("createPresenterRuntime", () => {
 			const login = await handlePresenterRequest(
 				new Request(`${ORIGIN}/api/demo/presenter/session`, {
 					method: "POST",
-					headers: { "content-type": "application/json", origin: ORIGIN },
+					headers: {
+						"content-type": "application/json",
+						origin: ORIGIN,
+						"x-forwarded-for": "203.0.113.9",
+					},
 					body: JSON.stringify({ token: TOKEN }),
 				}),
 				["session"],
@@ -340,11 +356,134 @@ describe("createPresenterRuntime", () => {
 		})
 
 		it("is not leased while the API cannot say what its key can do", async () => {
-			const runtime = runtimeFor([slotDoc(13)], (async () => {
-				throw new Error("socket hang up")
+			const runtime = runtimeFor([slotDoc(13)], (async (
+				input: RequestInfo | URL,
+				init?: RequestInit,
+			) => {
+				if (new Headers(init?.headers).get("authorization") === "Bearer r13") {
+					throw new Error("socket hang up")
+				}
+				return principals()(input, init)
 			}) as typeof fetch)
 			const refused = await leaseFrom(runtime)
 			expect(refused.status).toBe(409)
+		})
+	})
+	describe("presenter mode readiness", () => {
+		const boot = (over: {
+			fetchImpl?: typeof fetch
+			ensureIndexes?: () => Promise<void>
+		}) =>
+			createPresenterRuntime({
+				config: CONFIG,
+				baselineEnv: BASELINE,
+				baselineRun: null,
+				stores: stores(),
+				proposalsClient: noProposals,
+				fetchImpl: over.fetchImpl ?? principals(),
+				...(over.ensureIndexes ? { ensureIndexes: over.ensureIndexes } : {}),
+			})
+		const signInOnce = (runtime: ReturnType<typeof boot>) =>
+			handlePresenterRequest(
+				new Request(`${ORIGIN}/api/demo/presenter/session`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						origin: ORIGIN,
+						"x-forwarded-for": "203.0.113.9",
+					},
+					body: JSON.stringify({ token: TOKEN }),
+				}),
+				["session"],
+				runtime.services,
+			)
+
+		it.each([
+			["the API's own admin key", ["read", "write", "administer"]],
+			["a key that can also read", ["read", "administer"]],
+		])("is off when the review key is %s", async (_name, capabilities) => {
+			const runtime = boot({
+				fetchImpl: principals({
+					[CONFIG.adminKey]: { ...reviewer, capabilities },
+				}),
+			})
+			const refused = await signInOnce(runtime)
+			expect(refused.status).toBe(503)
+			expect(await refused.json()).toEqual({
+				error: {
+					code: "PRESENTER_NOT_CONFIGURED",
+					message: "Presenter mode is not configured on this server.",
+				},
+			})
+		})
+
+		it("is on when the review key is administer-only", async () => {
+			expect((await signInOnce(boot({}))).status).toBe(200)
+		})
+
+		it("stays off while an index cannot be created, tries again, and never leases meanwhile", async () => {
+			let failing = true
+			let attempts = 0
+			const runtime = boot({
+				ensureIndexes: async () => {
+					attempts += 1
+					if (failing) throw new Error("index build failed")
+				},
+			})
+			expect((await signInOnce(runtime)).status).toBe(503)
+			failing = false
+			expect((await signInOnce(runtime)).status).toBe(200)
+			expect((await signInOnce(runtime)).status).toBe(200)
+			expect(attempts).toBe(2)
+		})
+
+		it("serves a signed-in presenter the public run while presenter mode is off", async () => {
+			let failing = false
+			const runtime = boot({
+				ensureIndexes: async () => {
+					if (failing) throw new Error("index build failed")
+				},
+			})
+			const login = await signInOnce(runtime)
+			const sessionId = /demo_presenter=([^;]+)/.exec(
+				login.headers.get("set-cookie") ?? "",
+			)![1]!
+			const { csrf } = (await login.json()) as { csrf: string }
+			await handlePresenterRequest(
+				new Request(`${ORIGIN}/api/demo/presenter/lease`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						origin: ORIGIN,
+						cookie: `${SESSION_COOKIE}=${sessionId}`,
+						[CSRF_HEADER]: csrf,
+					},
+					body: "{}",
+				}),
+				["lease"],
+				runtime.services,
+			)
+			const read = () =>
+				runtime.resolver.resolve(
+					new Request(`${ORIGIN}/api/demo/v1/wiki`, {
+						headers: { cookie: `${SESSION_COOKIE}=${sessionId}` },
+					}),
+				)
+			expect(await read()).toMatchObject({ target: { mode: "presenter" } })
+			// A fresh process whose index can no longer be made.
+			failing = true
+			const off = boot({
+				ensureIndexes: async () => {
+					throw new Error("index build failed")
+				},
+			})
+			expect(
+				await off.resolver.resolve(
+					new Request(`${ORIGIN}/api/demo/v1/wiki`, {
+						headers: { cookie: `${SESSION_COOKIE}=${sessionId}` },
+					}),
+				),
+			).toMatchObject({ target: { mode: "public" } })
 		})
 	})
 })

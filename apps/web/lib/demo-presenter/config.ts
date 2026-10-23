@@ -4,7 +4,20 @@
 // routes answer "not configured" and public mode is untouched.
 
 export const DEFAULT_RUN_DEADLINE_MS = 335_000
-const TOKEN_MIN_LENGTH = 24
+export const TOKEN_MIN_LENGTH = 32
+const TOKEN_MIN_DISTINCT = 10
+const CHARACTER_CLASSES = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/]
+
+/** A floor, not a measure: long enough, drawn from at least two character
+ * classes, and not one short pattern repeated. A token from 32 random bytes
+ * (43 base64url characters) clears it with room to spare. */
+export function tokenIsStrongEnough(token: string): boolean {
+	return (
+		token.length >= TOKEN_MIN_LENGTH &&
+		CHARACTER_CLASSES.filter((pattern) => pattern.test(token)).length >= 2 &&
+		new Set(token).size >= TOKEN_MIN_DISTINCT
+	)
+}
 
 export type PresenterConfig = {
 	/** The demo control database. */
@@ -63,9 +76,12 @@ export function readPresenterConfig(
 	const readKeys = keyList(env.MDBRAIN_DEMO_READ_KEYS)
 	if (
 		!MONGO_URI.test(controlUri) ||
-		token.length < TOKEN_MIN_LENGTH ||
+		!tokenIsStrongEnough(token) ||
 		adminKey === "" ||
-		readKeys === null
+		readKeys === null ||
+		// One leaked key must never hold both the review power and a read.
+		readKeys.includes(adminKey) ||
+		adminKey === (env.MDBRAIN_DEMO_READ_KEY ?? "").trim()
 	) {
 		return null
 	}

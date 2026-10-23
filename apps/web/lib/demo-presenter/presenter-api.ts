@@ -21,6 +21,7 @@ import {
 	type RunRequestDoc,
 	type RunRequestService,
 } from "./run-requests.js"
+import { clientAddress, type SignInLimiter } from "./signin-limit.js"
 import {
 	DEFAULT_SESSION_TTL_MS,
 	authorizeMutation,
@@ -41,6 +42,11 @@ export type PresenterServices = {
 	runRequests: RunRequestService
 	pins: PinService
 	proposals: ProposalService
+	signIns: SignInLimiter
+	/** Whether this server may act as the presenter's: its indexes exist and
+	 * its review key is an administer-only key. False answers "not configured"
+	 * to every action. */
+	ready(): Promise<boolean>
 	now: () => Date
 	sessionTtlMs?: number
 }
@@ -101,14 +107,44 @@ const refusal = (refused: Refused): Response =>
 
 type Fields = Record<string, unknown>
 
+const tooLarge = () =>
+	failure(413, "BODY_TOO_LARGE", "The request body is too large.")
+
+/** The body as text, or null when it is over BODY_MAX bytes: a declared size
+ * over the cap is refused before a byte is read, and an undeclared or
+ * understated one is cut off as soon as it passes the cap. */
+async function readBounded(request: Request): Promise<string | null> {
+	const declared = request.headers.get("content-length")
+	if (declared !== null && Number(declared) > BODY_MAX) return null
+	const reader = request.body?.getReader()
+	if (!reader) return ""
+	const chunks: Uint8Array[] = []
+	let total = 0
+	for (;;) {
+		const { done, value } = await reader.read()
+		if (done) break
+		total += value.byteLength
+		if (total > BODY_MAX) {
+			await reader.cancel()
+			return null
+		}
+		chunks.push(value)
+	}
+	const bytes = new Uint8Array(total)
+	let at = 0
+	for (const chunk of chunks) {
+		bytes.set(chunk, at)
+		at += chunk.byteLength
+	}
+	return new TextDecoder().decode(bytes)
+}
+
 async function readFields(
 	request: Request,
 	allowed: readonly string[],
 ): Promise<Fields | Response> {
-	const text = await request.text()
-	if (text.length > BODY_MAX) {
-		return failure(413, "BODY_TOO_LARGE", "The request body is too large.")
-	}
+	const text = await readBounded(request)
+	if (text === null) return tooLarge()
 	if (text.trim() === "") return {}
 	let parsed: unknown
 	try {
@@ -192,7 +228,7 @@ export async function handlePresenterRequest(
 			"That method is not allowed here.",
 		)
 	}
-	if (services === null) {
+	if (services === null || !(await services.ready())) {
 		return key === "state"
 			? json({ mode: "public" })
 			: failure(
@@ -234,10 +270,32 @@ export async function handlePresenterRequest(
 async function signIn(request: Request, services: PresenterServices) {
 	const refused = checkSameOriginJson(request)
 	if (refused) return refusal(refused)
+	const address = clientAddress(request.headers)
+	const allowed = services.signIns.check(address)
+	if (allowed === "no-address" || address === undefined) {
+		return failure(
+			403,
+			"NO_CLIENT_ADDRESS",
+			"Sign-in is not available from here.",
+		)
+	}
+	if (allowed === "limited") {
+		return json(
+			{
+				error: {
+					code: "TOO_MANY_ATTEMPTS",
+					message: "Too many failed sign-ins. Wait a minute.",
+				},
+			},
+			429,
+			{ "retry-after": String(services.signIns.retryAfterSeconds(address)) },
+		)
+	}
 	const fields = await readFields(request, ["token"])
 	if (fields instanceof Response) return fields
 	const token = typeof fields.token === "string" ? fields.token : ""
 	if (!services.verifyToken(token)) {
+		services.signIns.fail(address)
 		return failure(401, "INVALID_TOKEN", "That is not the presenter token.")
 	}
 	const opened = await services.sessions.open()
