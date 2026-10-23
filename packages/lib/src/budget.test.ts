@@ -21,6 +21,7 @@ import {
 	BudgetInputRefusedError,
 	BudgetUnavailableError,
 	type BudgetUsage,
+	TransportInputRefusedError,
 	type ModelBudget,
 	budgetMiddleware,
 	createModelBudget,
@@ -498,6 +499,92 @@ describe("input cap", () => {
 		expect(calls.reserve).toEqual([
 			{ key: "k", ceiling: 1_000_000, amount: 1010 },
 		])
+	})
+})
+
+describe("transport input cap", () => {
+	function transportCapped(model: LanguageModelV2, budget: ModelBudget) {
+		return wrapLanguageModel({
+			model,
+			middleware: budgetMiddleware({
+				budget,
+				key: "k",
+				ceiling: 1_000_000,
+				maxInputTokens: 1000,
+				inputCap: "transport",
+			}),
+		})
+	}
+
+	it("leaves the cap to the transport: a prompt over the byte bound is sent under the unchanged reservation", async () => {
+		const model = mockModel()
+		const { budget, calls } = fakeBudget()
+		await transportCapped(model, budget).doGenerate({
+			prompt: userPrompt("x".repeat(3000)),
+			maxOutputTokens: 10,
+		})
+		expect(model.doGenerateCalls).toBe(1)
+		expect(calls.reserve).toEqual([
+			{ key: "k", ceiling: 1_000_000, amount: 1010 },
+		])
+	})
+
+	it("still refuses input whose cost is not a function of what the transport counts", async () => {
+		const model = mockModel()
+		const { budget, calls } = fakeBudget()
+		await expect(
+			transportCapped(model, budget).doGenerate({
+				prompt: [
+					{
+						role: "user",
+						content: [
+							{ type: "file", mediaType: "image/png", data: new Uint8Array(4) },
+						],
+					},
+				],
+				maxOutputTokens: 10,
+			}),
+		).rejects.toThrow(/file parts/)
+		expect(calls.reserve).toEqual([])
+	})
+
+	it("settles at zero when the transport refused before sending, for a call and a stream", async () => {
+		const refused = () => {
+			throw new TransportInputRefusedError("counted 1200 > 1000")
+		}
+		const model = fakeModel({ doGenerate: refused, doStream: refused })
+		const { budget, calls } = fakeBudget()
+		const wrapped = transportCapped(model, budget)
+		const request = { prompt: userPrompt("hi"), maxOutputTokens: 10 }
+		await expect(wrapped.doGenerate(request)).rejects.toBeInstanceOf(
+			BudgetInputRefusedError,
+		)
+		await expect(wrapped.doStream(request)).rejects.toBeInstanceOf(
+			BudgetInputRefusedError,
+		)
+		const zero = { uncachedInput: 0, cacheRead: 0, cacheWrite: 0, output: 0 }
+		expect(calls.settle).toEqual([
+			{ id: "r1", usage: zero },
+			{ id: "r2", usage: zero },
+		])
+		expect(calls.uncertain).toEqual([])
+	})
+
+	it("keeps the full reservation for any other failure, including a plain input refusal", async () => {
+		const model = fakeModel({
+			doGenerate: async () => {
+				throw new BudgetInputRefusedError("not from the transport")
+			},
+		})
+		const { budget, calls } = fakeBudget()
+		await expect(
+			transportCapped(model, budget).doGenerate({
+				prompt: userPrompt("hi"),
+				maxOutputTokens: 10,
+			}),
+		).rejects.toBeInstanceOf(BudgetInputRefusedError)
+		expect(calls.settle).toEqual([])
+		expect(calls.uncertain).toEqual(["r1"])
 	})
 })
 

@@ -129,6 +129,9 @@ export function createAnswerService(input: {
 	agentId: string
 	deadlineMs?: number
 	maxInputTokens?: number
+	/** "transport" when the model's transport enforces maxInputTokens in
+	 * tokens (answer-token-cap.ts); the byte bound otherwise. */
+	inputCap?: "bytes" | "transport"
 }) {
 	const deadlineMs = input.deadlineMs ?? ANSWER_DEADLINE_MS
 	const maxInputTokens = input.maxInputTokens ?? ANSWER_MAX_INPUT_TOKENS
@@ -298,6 +301,7 @@ export function createAnswerService(input: {
 				key: answerBudgetKey(),
 				ceiling: input.ceiling,
 				maxInputTokens,
+				inputCap: input.inputCap,
 			}),
 		})
 		const controller = new AbortController()

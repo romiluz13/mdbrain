@@ -20,6 +20,19 @@ export class BudgetInputRefusedError extends Error {
 	name = "BudgetInputRefusedError"
 }
 
+/** Thrown by a transport that counted the request and refused it before
+ * sending anything, so the reservation for that call is released at zero. */
+export class TransportInputRefusedError extends BudgetInputRefusedError {
+	name = "TransportInputRefusedError"
+}
+
+const NOTHING_SENT: BudgetUsage = {
+	uncachedInput: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	output: 0,
+}
+
 export function operatorCeiling(env: NodeJS.ProcessEnv, name: string): number {
 	const raw = env[name]?.trim() ?? ""
 	return /^[1-9]\d*$/.test(raw) ? Number(raw) : 0
@@ -313,7 +326,12 @@ function inputTokenUpperBound(params: LanguageModelV2CallOptions): number {
 function enforceInputCap(
 	params: LanguageModelV2CallOptions,
 	maxInputTokens: number,
+	inputCap: "bytes" | "transport",
 ): void {
+	if (inputCap === "transport") {
+		assertBoundable(params)
+		return
+	}
 	const bound = inputTokenUpperBound(params)
 	if (bound > maxInputTokens) {
 		throw new BudgetInputRefusedError(
@@ -333,18 +351,24 @@ function enforceInputCap(
 // Anthropic does not publish: that no token covers less than one byte of text.
 // Input whose cost is not a function of its bytes (files, media, server tools,
 // provider options that bill elsewhere) is refused rather than estimated.
+//
+// inputCap "transport" moves the cap into the model's transport, which counts
+// the exact request in tokens and throws TransportInputRefusedError instead of
+// sending it. The reservation is unchanged; such a refusal settles at zero.
 export function budgetMiddleware(input: {
 	budget: ModelBudget
 	key: string
 	ceiling: number
 	maxInputTokens: number
+	inputCap?: "bytes" | "transport"
 }): LanguageModelMiddleware {
+	const inputCap = input.inputCap ?? "bytes"
 	assertCount("ceiling", input.ceiling, 0)
 	assertCount("maxInputTokens", input.maxInputTokens, 1)
 	return {
 		wrapGenerate: async ({ doGenerate, params }) => {
 			const amount = worstCase(params, input.maxInputTokens)
-			enforceInputCap(params, input.maxInputTokens)
+			enforceInputCap(params, input.maxInputTokens, inputCap)
 			const id = await input.budget.reserve({
 				key: input.key,
 				ceiling: input.ceiling,
@@ -354,7 +378,11 @@ export function budgetMiddleware(input: {
 			try {
 				result = await doGenerate()
 			} catch (error) {
-				await input.budget.markUncertain(id)
+				if (error instanceof TransportInputRefusedError) {
+					await input.budget.settle(id, NOTHING_SENT)
+				} else {
+					await input.budget.markUncertain(id)
+				}
 				throw error
 			}
 			const actual = toBudgetUsage(result.usage, result.providerMetadata)
@@ -364,7 +392,7 @@ export function budgetMiddleware(input: {
 		},
 		wrapStream: async ({ doStream, params }) => {
 			const amount = worstCase(params, input.maxInputTokens)
-			enforceInputCap(params, input.maxInputTokens)
+			enforceInputCap(params, input.maxInputTokens, inputCap)
 			const id = await input.budget.reserve({
 				key: input.key,
 				ceiling: input.ceiling,
@@ -389,7 +417,11 @@ export function budgetMiddleware(input: {
 			try {
 				result = await doStream()
 			} catch (error) {
-				await releaseOnce()
+				await releaseOnce(
+					error instanceof TransportInputRefusedError
+						? NOTHING_SENT
+						: undefined,
+				)
 				throw error
 			}
 			const reader = result.stream.getReader()

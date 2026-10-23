@@ -19,6 +19,7 @@ import {
 	type MdbrainWikiClaim,
 	type MdbrainWikiPageView,
 } from "@mdbrain/client"
+import { createAnthropic } from "@ai-sdk/anthropic"
 import { describe, expect, it } from "vitest"
 import {
 	ANSWER_MAX_INPUT_CHARS,
@@ -30,6 +31,7 @@ import {
 	ANSWER_NO_EVIDENCE_TEXT,
 	VISITOR_QUESTIONS_PER_HOUR,
 } from "./answer-types.js"
+import { tokenCappedFetch } from "./answer-token-cap.js"
 import type { DemoReads } from "./reads.js"
 
 const AGENT_ID = "agent-slot-12"
@@ -756,5 +758,122 @@ describe("answerQuestion", () => {
 			text: ANSWER_NO_EVIDENCE_TEXT,
 			citations: [],
 		})
+	})
+})
+
+// The live failure of 2026-10-23: counted in bytes, a step after one tool
+// result passed the cap although its real input was a few thousand tokens,
+// so nearly every visitor question was refused. In tokens, the same steps fit.
+describe("the context cap in tokens", () => {
+	function anthropicOverFakeHttp(countedTokens: number) {
+		const requests: string[] = []
+		let messages = 0
+		const http = (async (input: RequestInfo | URL) => {
+			const url = String(input)
+			requests.push(new URL(url).pathname)
+			if (url.endsWith("/count_tokens")) {
+				return Response.json({ input_tokens: countedTokens })
+			}
+			messages++
+			const usage = { input_tokens: countedTokens, output_tokens: 40 }
+			return Response.json(
+				messages === 1
+					? {
+							type: "message",
+							id: "msg_1",
+							role: "assistant",
+							model: "claude-haiku-5-5",
+							content: [
+								{
+									type: "tool_use",
+									id: "toolu_1",
+									name: "search_brain",
+									input: { query: QUESTION },
+								},
+							],
+							stop_reason: "tool_use",
+							stop_sequence: null,
+							usage,
+						}
+					: {
+							type: "message",
+							id: "msg_2",
+							role: "assistant",
+							model: "claude-haiku-5-5",
+							content: [
+								{
+									type: "text",
+									text: `The renewal is in legal review. ${STATUS_MARKER}`,
+								},
+							],
+							stop_reason: "end_turn",
+							stop_sequence: null,
+							usage,
+						},
+			)
+		}) as typeof fetch
+		const model = createAnthropic({
+			apiKey: "test-key",
+			fetch: tokenCappedFetch({ maxInputTokens: 3_000, fetch: http }),
+		})("claude-haiku-5-5")
+		return { model, requests }
+	}
+
+	function transportService(given: Parts, model: LanguageModelV2) {
+		return createAnswerService({
+			reads: given.reads.reads,
+			limits: given.limits.limits,
+			budget: given.budget.budget,
+			model,
+			ceiling: 500_000,
+			agentId: AGENT_ID,
+			maxInputTokens: 3_000,
+			inputCap: "transport",
+		})
+	}
+
+	it("answers when each step counts inside the cap, though its bytes are over it", async () => {
+		const given = parts()
+		const { model, requests } = anthropicOverFakeHttp(1_200)
+		const outcome = await ask(transportService(given, model), QUESTION)
+		expect(outcome.state).toBe("answered")
+		expect(requests).toEqual([
+			"/v1/messages/count_tokens",
+			"/v1/messages",
+			"/v1/messages/count_tokens",
+			"/v1/messages",
+		])
+		expect(given.budget.events.reserved.map((r) => r.amount)).toEqual([
+			4_000, 4_000,
+		])
+		expect(given.budget.events.uncertain).toEqual([])
+
+		const bytes = parts()
+		const counted = anthropicOverFakeHttp(1_200)
+		const byteOutcome = await ask(
+			service(
+				{ ...bytes, scripted: { ...bytes.scripted, model: counted.model } },
+				{
+					maxInputTokens: 3_000,
+				},
+			),
+			QUESTION,
+		)
+		expect(byteOutcome).toEqual({ state: "refused", reason: "limits" })
+	})
+
+	it("refuses a step counted over the cap without sending it, and releases its reservation", async () => {
+		const given = parts()
+		const { model, requests } = anthropicOverFakeHttp(2_990)
+		const outcome = await ask(transportService(given, model), QUESTION)
+		expect(outcome).toEqual({ state: "refused", reason: "limits" })
+		expect(requests).toEqual(["/v1/messages/count_tokens"])
+		expect(given.budget.events.settled).toEqual([
+			{
+				id: "r1",
+				usage: { uncachedInput: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+			},
+		])
+		expect(given.limits.state.leaseHolder).toBeNull()
 	})
 })
