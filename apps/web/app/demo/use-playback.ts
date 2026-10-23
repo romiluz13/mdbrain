@@ -39,6 +39,41 @@ export type Playback =
 
 const TICK_MS = 700
 
+/** The cursor held on a frame: a whole number from the first to the last. */
+export function clampCursor(value: number, total: number): number {
+	return Math.max(1, Math.min(total, Math.trunc(value)))
+}
+
+/** The frame a chapter's jump lands on. A run that recorded no contradiction
+ * or approval falls back to where the agents ended. */
+export function jumpTarget(
+	phase: PlaybackPhase,
+	marks: Boundaries | null,
+	total: number,
+): number {
+	const target =
+		phase === "sources"
+			? marks?.sourcesEnd
+			: phase === "agents"
+				? marks?.agentsEnd
+				: phase === "contradiction"
+					? (marks?.contradiction ?? marks?.agentsEnd)
+					: phase === "approval"
+						? (marks?.approval ?? marks?.agentsEnd)
+						: total
+	return clampCursor(target ?? total, total)
+}
+
+/** One tick of playback: the next frame, and whether that was the last. */
+export function nextFrame(
+	current: number,
+	total: number,
+): { cursor: number; done: boolean } {
+	return current >= total
+		? { cursor: total, done: true }
+		: { cursor: current + 1, done: false }
+}
+
 /** The recording's cursor. Built only from reads the page already made, so a
  * frame costs no request. Off while the data is not all here, or for a
  * presenter, whose page is live. */
@@ -75,7 +110,7 @@ export function usePlayback(input: {
 	const setCursor = useCallback(
 		(next: number) => {
 			setPlaying(false)
-			setCursorState(Math.max(1, Math.min(total, Math.trunc(next))))
+			setCursorState(clampCursor(next, total))
 		},
 		[total],
 	)
@@ -84,11 +119,9 @@ export function usePlayback(input: {
 		if (!playing) return
 		const timer = setInterval(() => {
 			setCursorState((current) => {
-				if (current >= total) {
-					setPlaying(false)
-					return total
-				}
-				return current + 1
+				const frame = nextFrame(current, total)
+				if (frame.done) setPlaying(false)
+				return frame.cursor
 			})
 		}, TICK_MS)
 		return () => clearInterval(timer)
@@ -103,17 +136,7 @@ export function usePlayback(input: {
 	const jump = useCallback(
 		(phase: PlaybackPhase) => {
 			setPlaying(false)
-			const target =
-				phase === "sources"
-					? marks?.sourcesEnd
-					: phase === "agents"
-						? marks?.agentsEnd
-						: phase === "contradiction"
-							? (marks?.contradiction ?? marks?.agentsEnd)
-							: phase === "approval"
-								? (marks?.approval ?? marks?.agentsEnd)
-								: total
-			setCursorState(Math.max(1, Math.min(total, target ?? total)))
+			setCursorState(jumpTarget(phase, marks, total))
 		},
 		[marks, total],
 	)
@@ -126,9 +149,7 @@ export function usePlayback(input: {
 	const step = useCallback(
 		(by: number) => {
 			setPlaying(false)
-			setCursorState((current) =>
-				Math.max(1, Math.min(total, (current || total) + by)),
-			)
+			setCursorState((current) => clampCursor((current || total) + by, total))
 		},
 		[total],
 	)
