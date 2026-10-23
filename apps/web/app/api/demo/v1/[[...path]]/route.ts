@@ -1,22 +1,27 @@
 // The demo read proxy route: every /api/demo/v1/* GET lands here and is
-// either refused or forwarded as one allowlisted upstream read. Force-dynamic
-// keeps Next from caching the handler output; the server env (read key, API
-// base URL, pinned scope, control database URI) never reaches the client.
+// either refused or forwarded as one allowlisted upstream read. A read key
+// that is not an exact read-only reader of the pinned scope counts as missing
+// configuration (see proxy-principal.ts). Force-dynamic keeps Next from
+// caching the handler output; the server env (read key, API base URL, pinned
+// scope, control database URI) never reaches the client.
 
 import {
 	handleDemoRead,
 	readDemoProxyEnv,
 	type DemoProxyEnv,
 } from "@/lib/demo-data/proxy.js"
+import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
 import { readDemoRunEnv } from "@/lib/demo-data/proxy-run.js"
 import { createRunManifestSource } from "@/lib/demo-data/run-store.js"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
+const checkReadKey = createReadKeyCheck()
+
 export async function GET(request: Request): Promise<Response> {
 	const env: DemoProxyEnv | null = readDemoProxyEnv(process.env)
-	if (!env) {
+	if (!env || !(await checkReadKey(env, fetch))) {
 		return new Response(
 			JSON.stringify({
 				error: {

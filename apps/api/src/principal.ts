@@ -407,9 +407,8 @@ export function resolvePrincipalBySubjectId(
 	)
 }
 
-export function authorizePrincipalRequest(
+export function principalIdentityRefusal(
 	principal: ApiPrincipal,
-	request: PrincipalRequestAuthority,
 	now = new Date(),
 ): string | null {
 	if (
@@ -419,6 +418,16 @@ export function authorizePrincipalRequest(
 	) {
 		return "identity is not active"
 	}
+	return null
+}
+
+export function authorizePrincipalRequest(
+	principal: ApiPrincipal,
+	request: PrincipalRequestAuthority,
+	now = new Date(),
+): string | null {
+	const identityRefusal = principalIdentityRefusal(principal, now)
+	if (identityRefusal) return identityRefusal
 	if (!principal.allowedAgentIds.includes(WILDCARD)) {
 		if (!request.agentId) return "agentId is required for this API key"
 		if (!principal.allowedAgentIds.includes(request.agentId)) {
