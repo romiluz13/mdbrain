@@ -22,6 +22,8 @@ export type RunManifestSource = (runId: string) => Promise<unknown | null>
 export interface RunReadDeps {
 	run: DemoRunEnv | null
 	manifest: RunManifestSource
+	/** The whole-run limit: a run still running past it is reported incomplete. */
+	deadline?: { now: () => Date; ms: number }
 }
 
 export const RUN_PATH = "/api/demo/v1/run"
@@ -89,10 +91,11 @@ async function projectedRecord(
 			),
 		}
 	}
-	const projection = projectRunRecord(doc, {
-		scopeRef: env.scopeRef,
-		agentId: env.agentId,
-	})
+	const projection = projectRunRecord(
+		doc,
+		{ scopeRef: env.scopeRef, agentId: env.agentId },
+		deps.deadline && { now: deps.deadline.now(), ms: deps.deadline.ms },
+	)
 	if (!projection.ok) {
 		return {
 			response:

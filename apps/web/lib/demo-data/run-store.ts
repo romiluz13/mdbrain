@@ -6,7 +6,7 @@
 import { MongoClient } from "mongodb"
 import type { DemoRunEnv, RunManifestSource } from "./proxy-run.js"
 
-const CONTROL_DATABASE = "mdbrain_demo_control"
+export const CONTROL_DATABASE = "mdbrain_demo_control"
 const MANIFESTS = "demo_run_manifests"
 const SELECTION_TIMEOUT_MS = 5_000
 

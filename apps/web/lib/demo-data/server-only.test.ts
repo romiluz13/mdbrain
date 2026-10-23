@@ -31,6 +31,14 @@ describe("the control database stays on the server", () => {
 		expect(importing(/from "mongodb"/)).toEqual(["lib/demo-data/run-store.ts"])
 		expect(importing(/["']\S*run-store(\.js)?["']/)).toEqual([
 			"app/api/demo/v1/[[...path]]/route.ts",
+			"lib/demo-presenter/server.ts",
+		])
+	})
+
+	it("reaches the presenter routes only through the one server module", () => {
+		expect(importing(/["']\S*demo-presenter\/server(\.js)?["']/)).toEqual([
+			"app/api/demo/presenter/[...action]/route.ts",
+			"app/api/demo/v1/[[...path]]/route.ts",
 		])
 	})
 })

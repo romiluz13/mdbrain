@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { AGENT_ROLES, ROLE_LABELS, agentCeilings } from "./config.js"
+import {
+	AGENT_ROLES,
+	ROLE_LABELS,
+	agentCeilings,
+	agentRunDeadlineMs,
+} from "./config.js"
 
 describe("agentCeilings", () => {
 	it("defaults to the ticket-07 ceilings: 8 steps, 90s per task, 150k tokens", () => {
@@ -23,6 +28,27 @@ describe("agentCeilings", () => {
 		expect(
 			agentCeilings({ DEMO_AGENT_TASK_DEADLINE_MS: "-1" }).taskDeadlineMs,
 		).toBe(90_000)
+	})
+})
+
+describe("agentRunDeadlineMs", () => {
+	it("defaults to three task deadlines plus the staging wait and the step-event confirm", () => {
+		expect(agentRunDeadlineMs({})).toBe(3 * 90_000 + 5_000 + 60_000)
+		expect(agentRunDeadlineMs({ DEMO_AGENT_TASK_DEADLINE_MS: "10000" })).toBe(
+			3 * 10_000 + 5_000 + 60_000,
+		)
+	})
+
+	it("honors an operator override and falls back on an invalid one", () => {
+		expect(agentRunDeadlineMs({ DEMO_AGENT_RUN_DEADLINE_MS: "120000" })).toBe(
+			120_000,
+		)
+		expect(agentRunDeadlineMs({ DEMO_AGENT_RUN_DEADLINE_MS: "0" })).toBe(
+			335_000,
+		)
+		expect(agentRunDeadlineMs({ DEMO_AGENT_RUN_DEADLINE_MS: "soon" })).toBe(
+			335_000,
+		)
 	})
 })
 

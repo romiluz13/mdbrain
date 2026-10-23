@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { projectRunRecord } from "./run-record.js"
+import {
+	DEADLINE_LABEL,
+	projectRunRecord,
+	type RunDeadline,
+} from "./run-record.js"
 
 const PINNED = { scopeRef: "demo-run-9", agentId: "demo-run-9" }
 
@@ -273,5 +277,48 @@ describe("projectRunRecord", () => {
 			}),
 		)
 		expect(record.arrivals).toEqual([{ sourceId: "src-1", eventId: "evt-a" }])
+	})
+})
+
+describe("projectRunRecord: the run's deadline", () => {
+	const RUNNING = manifest({
+		agentRunState: "running",
+		agentRun: { state: "running", startedAt: "2026-10-20T09:55:00.000Z" },
+	})
+	const deadline = (nowIso: string): RunDeadline => ({
+		now: new Date(nowIso),
+		ms: 335_000,
+	})
+	const withDeadline = (doc: unknown, d: RunDeadline) => {
+		const result = projectRunRecord(doc, PINNED, d)
+		if (!result.ok) throw new Error(result.code)
+		return result.record
+	}
+
+	it("keeps a running agent run running until its deadline", () => {
+		const record = withDeadline(RUNNING, deadline("2026-10-20T10:00:34.999Z"))
+		expect(record.agentRun?.state).toBe("running")
+		expect(record.agentRun?.incompleteLabel).toBeUndefined()
+	})
+
+	it("reports a running agent run past its deadline as incomplete, with a fixed label and no end time it did not have", () => {
+		const record = withDeadline(RUNNING, deadline("2026-10-20T10:00:35.001Z"))
+		expect(record.agentRun).toEqual({
+			state: "incomplete",
+			startedAt: "2026-10-20T09:55:00.000Z",
+			incompleteLabel: DEADLINE_LABEL,
+		})
+	})
+
+	it("leaves a finished agent run alone whatever the clock says", () => {
+		const record = withDeadline(
+			manifest(),
+			deadline("2027-01-01T00:00:00.000Z"),
+		)
+		expect(record.agentRun?.state).toBe("complete")
+	})
+
+	it("applies no deadline when none is given", () => {
+		expect(projected(RUNNING).agentRun?.state).toBe("running")
 	})
 })

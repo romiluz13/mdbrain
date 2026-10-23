@@ -121,6 +121,34 @@ describe("readDemoRunEnv", () => {
 	})
 })
 
+describe("GET /api/demo/v1/run: the run's deadline", () => {
+	const running = () =>
+		manifest({
+			agentRunState: "running",
+			agentRun: { state: "running", startedAt: "2026-10-20T09:55:00.000Z" },
+		})
+	const read = async (nowIso: string) => {
+		const response = await handleDemoRead(
+			request("/api/demo/v1/run"),
+			ENV,
+			noUpstream,
+			{
+				...deps(async () => running()),
+				deadline: { now: () => new Date(nowIso), ms: 335_000 },
+			},
+		)
+		return (await bodyOf(response)).agentRun as Record<string, unknown>
+	}
+
+	it("reports a run still running past its deadline as incomplete", async () => {
+		expect((await read("2026-10-20T10:00:36.000Z")).state).toBe("incomplete")
+	})
+
+	it("keeps a run running inside its deadline", async () => {
+		expect((await read("2026-10-20T09:58:00.000Z")).state).toBe("running")
+	})
+})
+
 describe("GET /api/demo/v1/run", () => {
 	it("answers the public record of the pinned run, read by its id alone", async () => {
 		const read = vi.fn(async () => manifest())

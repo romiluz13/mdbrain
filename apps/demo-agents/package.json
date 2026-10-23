@@ -11,7 +11,8 @@
 		"corpus:render": "node --import tsx src/corpus/render.ts",
 		"corpus:check": "node --import tsx src/corpus/check.ts",
 		"seed:run": "node --import tsx src/seeding/run.ts",
-		"agents:run": "node --import tsx src/agents/run.ts"
+		"agents:run": "node --import tsx src/agents/run.ts",
+		"agents:serve": "node --import tsx src/agents/serve-cli.ts"
 	},
 	"dependencies": {
 		"@ai-sdk/anthropic": "2.0.109",
