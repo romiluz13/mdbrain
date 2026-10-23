@@ -13,6 +13,7 @@ import {
 	showBeat,
 } from "./demo-helpers"
 import { installDemoProxy } from "./demo-proxy"
+import { withTouch } from "./demo-journey"
 
 const NEXT = /^Next beat/
 const PREVIOUS = /Previous beat$/
@@ -121,11 +122,11 @@ test("touch steps the beats", async ({ page, isMobile }) => {
 	test.skip(!isMobile, "a tap is the phone's input")
 	await openWalk(page)
 	const stepper = page.getByTestId("beat-stepper")
-	await stepper.getByRole("button", { name: NEXT }).tap()
+	await withTouch(stepper.getByRole("button", { name: NEXT }))
 	await expect(stepper).toHaveAttribute("data-beat", "1")
-	await stepper.getByRole("button", { name: NEXT }).tap()
+	await withTouch(stepper.getByRole("button", { name: NEXT }))
 	await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
-	await stepper.getByRole("button", { name: PREVIOUS }).tap()
+	await withTouch(stepper.getByRole("button", { name: PREVIOUS }))
 	await expect(stepper).toHaveAttribute("data-beat", "1")
 })
 
