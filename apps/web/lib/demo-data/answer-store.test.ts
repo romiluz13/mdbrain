@@ -105,9 +105,11 @@ describe.skipIf(!liveUri)("answer store against MongoDB", () => {
 			budgetPrefix,
 		})
 		const key = `answers-test-${randomUUID()}`
+		// R2: the second reservation must actually cross the ceiling, so the
+		// refusal is the ledger's, not the test's own arithmetic.
 		await store.budget.reserve({ key, ceiling: 300, amount: 100 })
 		await expect(
-			store.budget.reserve({ key, ceiling: 300, amount: 100 }),
+			store.budget.reserve({ key, ceiling: 300, amount: 250 }),
 		).rejects.toBeInstanceOf(BudgetExhaustedError)
 	}, 60_000)
 })

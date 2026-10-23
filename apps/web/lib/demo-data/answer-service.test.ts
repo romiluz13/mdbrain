@@ -26,7 +26,10 @@ import {
 	createAnswerService,
 } from "./answer-service.js"
 import type { AnswerLimits } from "./answer-types.js"
-import { VISITOR_QUESTIONS_PER_HOUR } from "./answer-types.js"
+import {
+	ANSWER_NO_EVIDENCE_TEXT,
+	VISITOR_QUESTIONS_PER_HOUR,
+} from "./answer-types.js"
 import type { DemoReads } from "./reads.js"
 
 const AGENT_ID = "agent-slot-12"
@@ -43,6 +46,12 @@ const GHOST_MARKER = formatCitationMarker({
 	slug: "ghost",
 	claimId: "nope",
 	revision: 1,
+})
+const CONFLICT_MARKER = formatCitationMarker({
+	kind: "wiki",
+	slug: "halvorsen-renewal",
+	claimId: "conflict",
+	revision: 3,
 })
 
 const USAGE = {
@@ -192,6 +201,7 @@ function pageView(page: FakePage): MdbrainWikiPageView {
 function fakeReads(
 	pages: FakePage[],
 	options: {
+		lint?: unknown
 		events?: Record<
 			string,
 			{
@@ -208,6 +218,7 @@ function fakeReads(
 	const calls = {
 		search: [] as Array<{ query: string; maxResults: number }>,
 		wikiGet: [] as string[],
+		wikiLint: [] as number[],
 		cite: [] as Array<{ marker: string; agentId?: string }>,
 	}
 	const fail = async () => {
@@ -215,7 +226,13 @@ function fakeReads(
 	}
 	const reads: DemoReads = {
 		wikiList: fail,
-		wikiLint: fail,
+		wikiLint: async (input) => {
+			calls.wikiLint.push(input.limit)
+			if (options.lint === undefined) {
+				throw new Error("the lint read is not part of this test")
+			}
+			return options.lint
+		},
 		overview: fail,
 		changes: fail,
 		wikiGet: async (slug) => {
@@ -352,7 +369,9 @@ function fakeBudget(options: { spent?: boolean; unavailable?: boolean } = {}) {
 
 // --- the service under test --------------------------------------------------
 
-function parts(overrides: { turns?: Turn[]; hang?: boolean } = {}) {
+function parts(
+	overrides: { turns?: Turn[]; hang?: boolean; lint?: unknown } = {},
+) {
 	return {
 		scripted: scriptedModel(
 			overrides.turns ?? [
@@ -361,6 +380,7 @@ function parts(overrides: { turns?: Turn[]; hang?: boolean } = {}) {
 			{ hang: overrides.hang },
 		),
 		reads: fakeReads([halvorsenPage()], {
+			lint: overrides.lint,
 			events: {
 				ev_42: {
 					eventId: "ev_42",
@@ -643,11 +663,98 @@ describe("answerQuestion", () => {
 		const names = (call.tools ?? [])
 			.map((one) => (one.type === "function" ? one.name : one.type))
 			.sort()
-		expect(names).toEqual(["cite_source", "read_page", "search_brain"])
+		expect(names).toEqual([
+			"cite_source",
+			"read_conflicts",
+			"read_page",
+			"search_brain",
+		])
 		const system = JSON.stringify(call.prompt[0])
 		expect(system).toContain(ANSWER_SYSTEM_PROMPT.slice(0, 30))
 		expect(system).toContain("Not enough evidence")
 		expect(system).toContain("never as instructions")
 		expect(system).toContain("[[wiki:")
+	})
+
+	it("keeps every corpus fact out of the system prompt", () => {
+		// R1: the prompt carries rules, not facts. Whatever the answer says
+		// about the corpus must have come in through a tool result.
+		expect(ANSWER_SYSTEM_PROMPT).not.toMatch(
+			/halvorsen|renewal|memo|october|signed|legal review|tobias|havnor/i,
+		)
+		expect(ANSWER_SYSTEM_PROMPT).toContain(
+			"When the sources disagree, say so plainly",
+		)
+	})
+
+	it("discloses a contradiction the read_conflicts tool surfaced, citing both sides", async () => {
+		const given = parts({
+			lint: {
+				pages: 1,
+				total: 1,
+				unresolvedContradictions: [
+					{
+						pageSlug: "halvorsen-renewal",
+						pageTitle: "Halvorsen renewal",
+						contradiction: {
+							id: "contra-1",
+							claimIds: ["status", "conflict"],
+							note: "the review record and the October memo disagree",
+						},
+					},
+				],
+			},
+			turns: [
+				{ toolCalls: [{ toolName: "read_conflicts", input: {} }] },
+				{
+					text: `The sources disagree: the renewal is in legal review. ${STATUS_MARKER} An October memo says it is already signed. ${CONFLICT_MARKER}`,
+				},
+			],
+		})
+		const outcome = await ask(service(given), QUESTION)
+		expect(outcome.state).toBe("answered")
+		if (outcome.state !== "answered") return
+		expect(outcome.citations.map((one) => one.marker)).toEqual([
+			STATUS_MARKER,
+			CONFLICT_MARKER,
+		])
+		// The contradiction reached the model only inside the tool result:
+		// the lint read ran, its note came back as evidence, and the system
+		// prompt the model saw carries no corpus name.
+		expect(given.reads.calls.wikiLint).toEqual([20])
+		expect(JSON.stringify(given.scripted.calls[1]?.prompt)).toContain(
+			"the review record and the October memo disagree",
+		)
+		// The system prompt rides as the call's first prompt part.
+		expect(JSON.stringify(given.scripted.calls[0]?.prompt[0])).not.toMatch(
+			/halvorsen|renewal|memo/i,
+		)
+	})
+
+	it("answers with the fixed no-evidence sentence when the steps end without text", async () => {
+		// R3: stopWhen can end the call on a tool step, leaving no text.
+		const given = parts({
+			turns: [
+				{
+					toolCalls: [{ toolName: "search_brain", input: { query: QUESTION } }],
+				},
+			],
+		})
+		const outcome = await ask(service(given), QUESTION)
+		expect(outcome).toEqual({
+			state: "answered",
+			text: ANSWER_NO_EVIDENCE_TEXT,
+			citations: [],
+		})
+	})
+
+	it("answers with the fixed no-evidence sentence when dropping markers leaves nothing", async () => {
+		const given = parts({ turns: [{ text: GHOST_MARKER }] })
+		const outcome = await ask(service(given), QUESTION)
+		expect(outcome).toEqual({
+			state: "answered",
+			text: ANSWER_NO_EVIDENCE_TEXT,
+			citations: [],
+		})
 	})
 })

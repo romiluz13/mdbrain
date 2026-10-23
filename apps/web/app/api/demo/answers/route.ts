@@ -7,6 +7,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { operatorCeiling } from "@mdbrain/lib/budget"
 import { randomUUID } from "node:crypto"
+import { answerRequestDenied } from "@/lib/demo-data/answer-guards.js"
 import { createAnswerService } from "@/lib/demo-data/answer-service.js"
 import { createAnswerStore } from "@/lib/demo-data/answer-store.js"
 import { readDemoProxyEnv } from "@/lib/demo-data/proxy.js"
@@ -65,6 +66,15 @@ const cookieFor = (visitorId: string): string =>
 	`${VISITOR_COOKIE}=${visitorId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${VISITOR_COOKIE_MAX_AGE_S}`
 
 export async function POST(request: Request): Promise<Response> {
+	// R4: a cross-site text/plain form post needs no preflight, so the
+	// route refuses it here, before any env, store or key is touched.
+	const denied = answerRequestDenied(request)
+	if (denied) {
+		return new Response(
+			JSON.stringify({ error: { code: denied.code, message: denied.message } }),
+			{ status: denied.status, headers: jsonHeaders },
+		)
+	}
 	const env = readDemoProxyEnv(process.env)
 	if (!env) {
 		return notConfigured()

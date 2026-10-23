@@ -69,3 +69,8 @@ export const ANSWER_MAX_INPUT_TOKENS = 8000
 export const ANSWER_DEADLINE_MS = 30_000
 /** The daily budget key, counted in mdbrain_demo_control. */
 export const ANSWER_BUDGET_KEY_PREFIX = "answers:"
+/** The fixed sentence for a question the stored sources do not answer: the
+ * one the prompt asks the model for, and the one the service substitutes
+ * when the steps end without text or every marker is dropped. */
+export const ANSWER_NO_EVIDENCE_TEXT =
+	"Not enough evidence in the stored sources to answer this."
