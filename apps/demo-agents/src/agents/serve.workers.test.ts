@@ -88,7 +88,8 @@ describe("two workers on one run", () => {
 		// The presenter pressed Run again: the request is queued once more and
 		// worker B claims it while A's run is live.
 		const request = queue.docs.get("run-a")
-		queue.docs.set("run-a", { ...request!, state: "queued" })
+		if (!request) throw new Error("the request was never queued")
+		queue.docs.set("run-a", { ...request, state: "queued" })
 		await serveRunRequests(
 			depsFor("worker-b", async (claimed, owner) => {
 				if (!(await manifests.markAgentRunStarted(claimed._id, owner))) {
@@ -98,9 +99,11 @@ describe("two workers on one run", () => {
 			}),
 		)
 		expect((await manifests.get("run-a"))?.agentRun?.state).toBe("running")
+		expect(queue.docs.get("run-a")).toMatchObject({ state: "claimed" })
 
 		finishA()
 		await aRuns
 		expect((await manifests.get("run-a"))?.agentRun?.state).toBe("complete")
+		expect(queue.docs.get("run-a")).toMatchObject({ state: "done" })
 	})
 })

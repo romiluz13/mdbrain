@@ -24,7 +24,7 @@ function request(
 function rig(
 	docs: RunRequestDoc[],
 	execute: ServeDeps["execute"],
-	options: { clockMs?: number } = {},
+	options: { clockMs?: number; runState?: string } = {},
 ) {
 	const store = new FakeCollection<RunRequestDoc>(docs)
 	const clock = { ms: options.clockMs ?? 0 }
@@ -43,6 +43,8 @@ function rig(
 				incomplete.push({ runId, reason, ...(owner ? { owner } : {}) })
 				return null
 			},
+			get: async () =>
+				options.runState ? { agentRun: { state: options.runState } } : null,
 		},
 		execute,
 		workerId: "worker-1",
@@ -177,6 +179,23 @@ describe("serveRunRequests", () => {
 			state: "failed",
 			failureReason: "run run-a's agent run is already running",
 		})
+	})
+
+	it("leaves the request claimed when its run is live under another attempt, so that attempt ends it", async () => {
+		const { store, deps, incomplete } = rig(
+			[request("run-a")],
+			async () => {
+				throw new RunNotStartableError(
+					"run run-a's agent run is already running",
+				)
+			},
+			{ clockMs: 10, runState: "running" },
+		)
+		await serveRunRequests({ ...deps, once: true })
+		expect(incomplete).toEqual([])
+		expect(store.docs.get("run-a")).toMatchObject({ state: "claimed" })
+		expect(store.docs.get("run-a")?.failureReason).toBeUndefined()
+		expect(await deps.requests.finish("run-a", { state: "done" })).toBe(true)
 	})
 
 	it("hands execute the owner it must start the run with", async () => {

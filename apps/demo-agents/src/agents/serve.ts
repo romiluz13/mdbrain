@@ -12,6 +12,7 @@ import type { RunRequestDoc, RunRequests } from "./run-requests.js"
 export type ServeDeps = {
 	requests: RunRequests
 	manifests: {
+		get(runId: string): Promise<{ agentRun?: { state?: string } } | null>
 		markAgentRunIncomplete(
 			runId: string,
 			reason: string,
@@ -47,6 +48,11 @@ async function sweep(deps: ServeDeps, log: (line: string) => void) {
 	}
 }
 
+async function liveElsewhere(deps: ServeDeps, runId: string): Promise<boolean> {
+	const view = await deps.manifests.get(runId).catch(() => null)
+	return view?.agentRun?.state === "running"
+}
+
 async function handle(
 	deps: ServeDeps,
 	request: RunRequestDoc,
@@ -76,6 +82,11 @@ async function handle(
 			await deps.manifests
 				.markAgentRunIncomplete(request._id, reason, owner)
 				.catch(() => undefined)
+		} else if (await liveElsewhere(deps, request._id)) {
+			// The request is the other attempt's too: leave it claimed, so that
+			// attempt's finish ends it, or the deadline sweep does if it died.
+			log(`request ${request._id}: its run is live under another attempt`)
+			return
 		}
 		await deps.requests.finish(request._id, { state: "failed", reason })
 		log(`request ${request._id}: failed (${reason})`)
