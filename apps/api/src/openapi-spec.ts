@@ -1279,6 +1279,82 @@ const openApiDocument = {
 				},
 			},
 		},
+		"/v1/principal/self": {
+			get: {
+				summary: "Read the calling key's own authority",
+				description:
+					"Returns the calling principal's subject ID, trust tier, capabilities and exact scope grants. A grant of `*` matches any scope or scopeRef. The request names no scope and needs no capability; it never returns another principal or any token.",
+				responses: {
+					"200": {
+						description: "The calling principal's own authority",
+						content: {
+							"application/json": {
+								schema: {
+									type: "object",
+									required: [
+										"subjectId",
+										"trustTier",
+										"capabilities",
+										"grants",
+									],
+									properties: {
+										subjectId: { type: "string" },
+										trustTier: {
+											type: "string",
+											enum: ["restricted", "standard", "admin", "development"],
+										},
+										capabilities: {
+											type: "array",
+											items: {
+												type: "string",
+												enum: [
+													"read",
+													"write",
+													"write-trusted",
+													"administer",
+													"change-permissions",
+													"hard-delete",
+													"export",
+													"manage-connectors",
+													"propose",
+												],
+											},
+										},
+										grants: {
+											type: "array",
+											items: {
+												type: "object",
+												required: ["scope", "scopeRef"],
+												properties: {
+													scope: { type: "string" },
+													scopeRef: { type: "string" },
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					"401": {
+						description: "Missing or unknown bearer key (UNAUTHORIZED)",
+						content: {
+							"application/json": {
+								schema: { $ref: "#/components/schemas/ApiError" },
+							},
+						},
+					},
+					"403": {
+						description: "The key's identity is not active (FORBIDDEN)",
+						content: {
+							"application/json": {
+								schema: { $ref: "#/components/schemas/ApiError" },
+							},
+						},
+					},
+				},
+			},
+		},
 		"/v1/state": {
 			get: {
 				summary: "Get the unified state family (profile, blocks, bundle)",

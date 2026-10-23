@@ -3,5 +3,8 @@ import { defineConfig } from "vitest/config"
 
 export default defineConfig({
 	plugins: [react({})],
-	resolve: { alias: { "@": __dirname } },
+	resolve: {
+		// The tsconfig `@/*` path, for route handlers under test.
+		alias: { "@": __dirname },
+	},
 })

@@ -5,9 +5,12 @@
 //
 // Which run a request reads is decided here, on the server, for every request
 // (lib/demo-presenter/target.ts): a signed-in presenter's leased slot, else the
-// pinned run. The browser names neither.
+// pinned run. The browser names neither. Whichever key that target reads with
+// must be an exact read-only reader of the target's scope (see
+// proxy-principal.ts); anything else counts as missing configuration.
 
 import { handleDemoRead } from "@/lib/demo-data/proxy.js"
+import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
 import { createRunManifestSource } from "@/lib/demo-data/run-store.js"
 import { readRunDeadlineMs } from "@/lib/demo-presenter/config.js"
 import { presenterRuntime } from "@/lib/demo-presenter/server.js"
@@ -15,20 +18,27 @@ import { presenterRuntime } from "@/lib/demo-presenter/server.js"
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
+const checkReadKey = createReadKeyCheck()
+
+const refused = (status: number, code: string, message: string): Response =>
+	new Response(JSON.stringify({ error: { code, message } }), {
+		status,
+		headers: { "content-type": "application/json" },
+	})
+
 export async function GET(request: Request): Promise<Response> {
 	const resolved = await presenterRuntime().resolver.resolve(request)
 	if (!resolved.ok) {
-		return new Response(
-			JSON.stringify({
-				error: { code: resolved.code, message: resolved.message },
-			}),
-			{
-				status: resolved.status,
-				headers: { "content-type": "application/json" },
-			},
-		)
+		return refused(resolved.status, resolved.code, resolved.message)
 	}
 	const { env, run, mode } = resolved.target
+	if (!(await checkReadKey(env, fetch))) {
+		return refused(
+			503,
+			"PROXY_NOT_CONFIGURED",
+			"the demo read proxy is missing its server configuration",
+		)
+	}
 	const response = await handleDemoRead(request, env, fetch, {
 		run,
 		manifest: run ? createRunManifestSource(run) : async () => null,

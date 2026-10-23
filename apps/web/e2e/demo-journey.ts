@@ -3,9 +3,11 @@
 // source. The input mode (keyboard or touch) is passed in.
 import { expect, type Locator, type Page } from "@playwright/test"
 import { CHAPTERS } from "../app/demo/chapters"
+import type { AnswerOutcome } from "../lib/demo-data/answer-types.js"
 import {
 	chapterTitle,
 	expectCitationMatchesCites,
+	listPages,
 	mapReady,
 	openDemo,
 	refusedReads,
@@ -15,7 +17,12 @@ import {
 	type DemoProxy,
 	unexplainedBrowserErrors,
 } from "./demo-helpers"
-import { GENERATED, SLOW_LIST, SLOW_READ } from "./demo-proxy"
+import {
+	GENERATED,
+	installAnswerRoute,
+	SLOW_LIST,
+	SLOW_READ,
+} from "./demo-proxy"
 import { PENDING_PROPOSAL } from "./demo-run"
 
 export type Act = (target: Locator) => Promise<void>
@@ -90,11 +97,14 @@ async function nextChapter(page: Page, act: Act, from: number): Promise<void> {
 	await expect(page.getByTestId("synthetic-label")).toBeVisible()
 }
 
+/** The answer lane step is opt-in: the live recorder never stubs the answers
+ * route, whose server side needs the control store and an Anthropic key. */
 export async function journey(
 	page: Page,
 	proxy: DemoProxy,
 	act: Act,
 	how: "escape" | "close",
+	walksTheAnswerLane = false,
 ): Promise<void> {
 	const browserErrors: string[] = []
 	page.on("console", (message) => {
@@ -142,6 +152,58 @@ export async function journey(
 		how,
 	)
 
+	// 2b The answer lane: a written answer from the stubbed route, its citation
+	// opening like any other. The journey walks the lane wherever the route can
+	// be stubbed; the live recorder does not, because the real route needs the
+	// control store and an Anthropic key no test may call.
+	if (walksTheAnswerLane) {
+		const firstPage = listPages(proxy).find(
+			(candidate) => candidate.claims.length > 0,
+		)
+		const claim = firstPage?.claims[0]
+		const marker = claim?.marker ?? ""
+		if (!firstPage || !claim || !marker) {
+			throw new Error("the fixture has no claim to cite")
+		}
+		const answered: AnswerOutcome = {
+			state: "answered",
+			text: `The stored record answers it: ${marker} and the answer lane cites only what the brain holds.`,
+			citations: [
+				{
+					marker,
+					response: {
+						status: "resolved",
+						kind: "claim",
+						marker,
+						page: {
+							slug: firstPage.slug,
+							title: firstPage.title,
+							revision: firstPage.revision,
+							revisionCreatedAt: firstPage.updatedAt,
+						},
+						claim,
+					},
+				},
+			],
+		}
+		const answers = await installAnswerRoute(page, () => ({
+			kind: "outcome",
+			body: answered,
+		}))
+		await act(page.getByTestId("answer-submit"))
+		await expect(page.getByTestId("answer-text")).toBeVisible()
+		await citeAndReturn(
+			page,
+			proxy,
+			act,
+			page
+				.getByTestId("answer-text")
+				.getByRole("button", { name: /^Open citation for:/ })
+				.first(),
+			how,
+		)
+		expect(answers.served[0]?.question ?? "").not.toBe("")
+	}
 	// 3 Sources arrive: the run's record in arrival order, or an honest note that
 	// this server has no run record, and a source opened down to its text.
 	await nextChapter(page, act, 1)

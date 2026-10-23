@@ -11,7 +11,7 @@ import {
 	BudgetExhaustedError,
 	type BudgetUsage,
 	type ModelBudget,
-} from "../../budget.js"
+} from "@mdbrain/lib/budget"
 import type { AgentRole } from "../config.js"
 
 export function delay(ms: number): Promise<void> {

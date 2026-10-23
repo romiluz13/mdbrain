@@ -2036,6 +2036,20 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		}
 	})
 
+	// The caller's own authority only: never another principal, never a token.
+	v1.get("/principal/self", (c) => {
+		const principal = getApiPrincipal(c)
+		return c.json({
+			subjectId: principal.subjectId,
+			trustTier: principal.trustTier,
+			capabilities: principal.capabilities,
+			grants: principal.allowedScopes.map(({ scope, scopeRef }) => ({
+				scope,
+				scopeRef,
+			})),
+		})
+	})
+
 	v1.get("/state", async (c) => {
 		const query = c.req.query() as Record<string, unknown>
 		const scopeError = readScopeInputError(query)

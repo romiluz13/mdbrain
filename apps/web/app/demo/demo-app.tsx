@@ -86,7 +86,11 @@ export function DemoApp() {
 	const [index, setIndex] = useState(0)
 	const [pinned, setPinned] = useState<string | null>(null)
 	const [citation, setCitation] = useState<CitationTarget | null>(null)
-	const [ask, setAsk] = useState<AskState>({ query: "", result: null })
+	const [ask, setAsk] = useState<AskState>({
+		query: "",
+		result: null,
+		answer: { status: "idle" },
+	})
 	const headingRef = useRef<HTMLHeadingElement>(null)
 	const mainRef = useRef<HTMLElement>(null)
 	const headRef = useRef<HTMLElement>(null)

@@ -1,7 +1,13 @@
 "use client"
 
-import { createContext, useContext } from "react"
+import {
+	createContext,
+	useContext,
+	type Dispatch,
+	type SetStateAction,
+} from "react"
 import type { MdbrainWikiClaim } from "@mdbrain/client"
+import type { AnswerOutcome } from "../../lib/demo-data/answer-types.js"
 import type { Layout } from "../../lib/demo-data/graph-layout.js"
 import type { DemoDataUpstream } from "../../lib/demo-data/loaders.js"
 import type { SearchView } from "../../lib/demo-data/loaders-chapters.js"
@@ -23,9 +29,19 @@ export type CitationTarget = {
 	opener: HTMLElement | null
 }
 
+/** The model answer lane, one step at a time: idle until a question is
+ * sent, answering while its request is live, then the outcome the server
+ * returned. It lives here, not in the chapter, because chapters unmount on
+ * switch and the lane must survive the trip and remember a canceled answer. */
+export type AnswerLane =
+	| { status: "idle" }
+	| { status: "answering"; question: string }
+	| { status: "done"; question: string; outcome: AnswerOutcome }
+
 export type AskState = {
 	query: string
 	result: DataState<SearchView> | null
+	answer: AnswerLane
 }
 
 export type DemoContextValue = {
@@ -47,7 +63,7 @@ export type DemoContextValue = {
 		opener: HTMLElement | null,
 	) => void
 	ask: AskState
-	setAsk: (next: AskState) => void
+	setAsk: Dispatch<SetStateAction<AskState>>
 	goTo: (id: string) => void
 	presenter: Presenter
 	/** The page is showing a presenter's leased slot, live, not the recording. */

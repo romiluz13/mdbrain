@@ -14,20 +14,24 @@
 		"test:e2e:prod": "bunx turbo run build --filter '@mdbrain/web' && playwright test --config playwright.prod.config.ts e2e/demo"
 	},
 	"dependencies": {
+		"@ai-sdk/anthropic": "2.0.109",
 		"@fontsource-variable/archivo": "5.3.0",
 		"@fontsource-variable/source-serif-4": "5.3.1",
 		"@fontsource/ibm-plex-mono": "5.3.0",
 		"@gsap/react": "2.1.2",
 		"@mdbrain/client": "workspace:*",
+		"@mdbrain/lib": "workspace:*",
 		"@react-three/drei": "10.7.9",
 		"@react-three/fiber": "9.8.2",
+		"ai": "5.0.210",
 		"gsap": "3.15.0",
 		"mongodb": "^7.0.0",
 		"next": "16.4.2",
 		"react": "19.3.1",
 		"react-dom": "19.3.1",
 		"three": "0.186.1",
-		"typescript": "^5.8.0"
+		"typescript": "^5.8.0",
+		"zod": "3.25.76"
 	},
 	"optionalDependencies": {
 		"sharp": "^0.35.4"

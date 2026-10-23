@@ -23,15 +23,21 @@ const importing = (pattern: RegExp): string[] =>
 		.map((path) => relative(WEB, path))
 		.sort()
 
-// The connection string reaches the server only: the driver and the store that
-// holds it are imported by the demo API route and by nothing a browser bundle
-// can reach.
+// The connection string reaches the server only: the driver and the store
+// that holds it are imported by the demo routes' server modules and by
+// nothing a browser bundle can reach. The answer service's store follows the
+// same rule: run-store stays the only module that opens the driver, and the
+// answers route the only module that reaches the answer store.
 describe("the control database stays on the server", () => {
-	it("is reached by one module, and that module only by the demo API route", () => {
+	it("is reached by one module, and that module only by the demo routes' stores", () => {
 		expect(importing(/from "mongodb"/)).toEqual(["lib/demo-data/run-store.ts"])
 		expect(importing(/["']\S*run-store(\.js)?["']/)).toEqual([
 			"app/api/demo/v1/[[...path]]/route.ts",
+			"lib/demo-data/answer-store.ts",
 			"lib/demo-presenter/server.ts",
+		])
+		expect(importing(/["']\S*answer-store(\.js)?["']/)).toEqual([
+			"app/api/demo/answers/route.ts",
 		])
 	})
 
