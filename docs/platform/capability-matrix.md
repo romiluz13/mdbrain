@@ -35,3 +35,14 @@ operator workflows; they are not tenant product capabilities.
 CRUD, revisions, governed search, lint, OKF import/export, and maintenance run
 through `WikiStore`. Connector ingestion is read-only discovery. Durable
 delivery state is visible through redacted `GET /v1/admin/deliveries`.
+
+Every `/v1/admin/*` route needs the `administer` capability. A key with scope
+grants must name a scope and scopeRef it holds on the two lists
+(`GET /v1/admin/deliveries`, `GET /v1/admin/wiki-promotions`) and sees only
+that scope. Approve, reject and redrive
+(`POST /v1/admin/wiki-promotions/{operationId}/approve` and `/reject`,
+`POST /v1/admin/deliveries/{operationId}/redrive`) are checked against the
+operation's own stored agent, scope and scopeRef, never a scope the request
+names. For such a key, an operation outside its grants and an unknown
+operationId both answer the same `403 FORBIDDEN`. A key whose grants cover
+every scope, such as `MDBRAIN_API_KEY`, is not limited.

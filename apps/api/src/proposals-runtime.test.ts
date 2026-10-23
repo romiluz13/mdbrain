@@ -51,6 +51,7 @@ import {
 	approvePendingWikiPromotion,
 	deliverMemoryWrite,
 	MemoryDeliveryDispatchError,
+	readMemoryDeliveryOwner,
 	reconcileMemoryDeliveriesOnce,
 	redriveDeadLetteredMemoryDelivery,
 } from "./memory-delivery-runtime.js"
@@ -491,5 +492,30 @@ describe("a rejected proposal stays rejected", () => {
 			status: 409,
 			code: "PROPOSAL_REJECTED",
 		})
+	})
+})
+
+describe("the scope a decision is checked against", () => {
+	it("is the agent and scope the operation was recorded under", async () => {
+		mocks.getMemoryDeliveryIntent.mockResolvedValue(
+			intent({
+				agentId: "agent-7",
+				scope: "workspace",
+				scopeRef: "demo-run-14",
+			}),
+		)
+
+		await expect(readMemoryDeliveryOwner("add:op1")).resolves.toEqual({
+			agentId: "agent-7",
+			scope: "workspace",
+			scopeRef: "demo-run-14",
+		})
+		expect(mocks.getMemoryDeliveryIntent).toHaveBeenCalledWith({}, "add:op1")
+	})
+
+	it("is null for an operation that does not exist", async () => {
+		mocks.getMemoryDeliveryIntent.mockResolvedValue(null)
+
+		await expect(readMemoryDeliveryOwner("add:missing")).resolves.toBeNull()
 	})
 })

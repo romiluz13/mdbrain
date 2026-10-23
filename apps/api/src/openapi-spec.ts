@@ -2119,6 +2119,8 @@ const openApiDocument = {
 		"/v1/admin/deliveries": {
 			get: {
 				summary: "List durable memory delivery state without stored payloads",
+				description:
+					"Requires the administer capability. A key with scope grants must name a scope and scopeRef it holds, and sees only that scope.",
 				parameters: [
 					{
 						in: "query",
@@ -2149,6 +2151,10 @@ const openApiDocument = {
 				responses: {
 					"200": { description: "Redacted memory delivery intents" },
 					"400": { description: "Invalid delivery filter" },
+					"403": {
+						description:
+							"The key lacks the administer capability, or names no scope or one outside its grants",
+					},
 				},
 			},
 		},
@@ -2156,6 +2162,8 @@ const openApiDocument = {
 			post: {
 				summary:
 					"Requeue a dead-lettered memory delivery intent for a fresh delivery lifecycle",
+				description:
+					"Requires the administer capability. The decision is authorized against the operation's own stored scope and scopeRef (and agentId), never a scope the request names: a key whose grants cover every scope may decide any operation, and any other key needs administer plus a grant that covers the operation. For such a key, an operation outside its grants and an unknown operationId get the same 403 FORBIDDEN, so the answer reveals nothing about the operation.",
 				parameters: [
 					{
 						in: "path",
@@ -2168,6 +2176,10 @@ const openApiDocument = {
 				responses: {
 					"200": { description: "Delivery requeued with counters reset" },
 					"400": { description: "Missing operationId path parameter" },
+					"403": {
+						description:
+							"The key lacks the administer capability, or (for a key with scope grants) the operation is outside its grants or does not exist",
+					},
 					"404": { description: "No delivery intent found for operationId" },
 					"409": { description: "Delivery is not in the dead-letter state" },
 					"500": { description: "Redrive failed" },
@@ -2178,7 +2190,7 @@ const openApiDocument = {
 			get: {
 				summary: "List the wiki proposals waiting for a decision",
 				description:
-					"The review queue. Each entry shows the page a proposal would create (slug, title, kind, summary, body, claims) and who proposed it. Requires the administer capability. A proposal-only key (capability `propose`, without `write`) cannot call it. Pending proposals are not wiki pages: they appear in no wiki read until approved.",
+					"The review queue. Each entry shows the page a proposal would create (slug, title, kind, summary, body, claims) and who proposed it. Requires the administer capability. A proposal-only key (capability `propose`, without `write`) cannot call it. Pending proposals are not wiki pages: they appear in no wiki read until approved. A key with scope grants must name a scope and scopeRef it holds, and sees only that scope.",
 				parameters: [
 					{ in: "query", name: "scope", schema: { type: "string" } },
 					{ in: "query", name: "scopeRef", schema: { type: "string" } },
@@ -2191,7 +2203,10 @@ const openApiDocument = {
 				responses: {
 					"200": { description: "Pending proposals, oldest first" },
 					"400": { description: "Invalid limit or scope" },
-					"403": { description: "The key lacks the administer capability" },
+					"403": {
+						description:
+							"The key lacks the administer capability, or names no scope or one outside its grants",
+					},
 					"500": { description: "Unable to list pending proposals" },
 				},
 			},
@@ -2200,7 +2215,7 @@ const openApiDocument = {
 			post: {
 				summary: "Approve a pending wiki proposal and promote its page",
 				description:
-					"Approving twice returns the same result. The proposer is checked again at approval, against the permission it proposed under: a proposal from a key that was removed, or that lost its capability, is refused with PROPOSER_REVOKED. Approval needs the administer capability and never the proposer's direct write permission. A rejected proposal answers PROPOSAL_REJECTED.",
+					"Approving twice returns the same result. The proposer is checked again at approval, against the permission it proposed under: a proposal from a key that was removed, or that lost its capability, is refused with PROPOSER_REVOKED. Approval needs the administer capability and never the proposer's direct write permission. A rejected proposal answers PROPOSAL_REJECTED. The decision is authorized against the operation's own stored scope and scopeRef (and agentId), never a scope the request names: a key whose grants cover every scope may decide any operation, and any other key needs administer plus a grant that covers the operation. For such a key, an operation outside its grants and an unknown operationId get the same 403 FORBIDDEN, so the answer reveals nothing about the operation.",
 				parameters: [
 					{
 						in: "path",
@@ -2213,7 +2228,10 @@ const openApiDocument = {
 				responses: {
 					"200": { description: "Promotion approved and page promoted" },
 					"400": { description: "Missing operationId path parameter" },
-					"403": { description: "The key lacks the administer capability" },
+					"403": {
+						description:
+							"The key lacks the administer capability, or (for a key with scope grants) the operation is outside its grants or does not exist",
+					},
 					"404": { description: "No promotion found for operationId" },
 					"409": {
 						description:
@@ -2227,7 +2245,7 @@ const openApiDocument = {
 			post: {
 				summary: "Reject a pending wiki proposal",
 				description:
-					"Rejection is final: a later approve, redrive, replay of the write or reconciler pass never promotes the proposal, and the page never appears in a wiki read. Rejecting a rejected proposal returns the same result. Approve and reject racing on one proposal leave exactly one winner. Requires the administer capability.",
+					"Rejection is final: a later approve, redrive, replay of the write or reconciler pass never promotes the proposal, and the page never appears in a wiki read. Rejecting a rejected proposal returns the same result. Approve and reject racing on one proposal leave exactly one winner. Requires the administer capability. The decision is authorized against the operation's own stored scope and scopeRef (and agentId), never a scope the request names: a key whose grants cover every scope may decide any operation, and any other key needs administer plus a grant that covers the operation. For such a key, an operation outside its grants and an unknown operationId get the same 403 FORBIDDEN, so the answer reveals nothing about the operation.",
 				parameters: [
 					{
 						in: "path",
@@ -2258,7 +2276,10 @@ const openApiDocument = {
 				responses: {
 					"200": { description: "Proposal rejected (state: rejected)" },
 					"400": { description: "Missing operationId or invalid reason" },
-					"403": { description: "The key lacks the administer capability" },
+					"403": {
+						description:
+							"The key lacks the administer capability, or (for a key with scope grants) the operation is outside its grants or does not exist",
+					},
 					"404": { description: "No proposal found for operationId" },
 					"409": {
 						description:

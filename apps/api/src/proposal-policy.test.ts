@@ -37,6 +37,7 @@ const deliveryMocks = vi.hoisted(() => ({
 	rejectPendingWikiPromotion: vi.fn(),
 	listPendingWikiProposals: vi.fn(),
 	redriveDeadLetteredMemoryDelivery: vi.fn(),
+	readMemoryDeliveryOwner: vi.fn(),
 	MemoryDeliveryDispatchError: class MemoryDeliveryDispatchError extends Error {
 		constructor(
 			readonly operationId: string,
@@ -87,6 +88,9 @@ type Row = {
 	proposer: "allowed" | "refused"
 	// What a key holding `read` and `write` may do: unchanged by this ticket.
 	writer: "allowed" | "refused"
+	// What a key holding only `administer`, granted one scope, may do (D29):
+	// the /v1/admin routes, each checked against a scope, and nothing else.
+	administrator: "allowed" | "refused"
 	// The capability the route asks of a writer, and of a proposer.
 	needs: string
 	proposerNeeds: string
@@ -109,6 +113,8 @@ const row = (
 		writer:
 			options.writer ??
 			(needs === "read" || needs === "write" ? "allowed" : "refused"),
+		administrator:
+			needs === "none" || needs === "administer" ? "allowed" : "refused",
 		proposer:
 			proposerNeeds === "none" ||
 			proposerNeeds === "read" ||
@@ -202,6 +208,12 @@ const WRITER = {
 	grants: [{ scope: "workspace", scopeRef: "demo-run-1" }],
 	capabilities: ["read", "write"],
 }
+const ADMINISTRATOR = {
+	token: "administrator-secret",
+	subjectId: "demo-presenter-1",
+	grants: [{ scope: "workspace", scopeRef: "demo-run-1" }],
+	capabilities: ["administer"],
+}
 
 function send(
 	app: ReturnType<typeof createApp>,
@@ -236,8 +248,16 @@ describe("proposal-only policy", () => {
 	beforeEach(() => {
 		process.env = { ...prevEnv }
 		process.env.MDBRAIN_API_KEY = "admin-secret"
-		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([PROPOSER, WRITER])
+		process.env.MDBRAIN_API_SCOPED_KEYS = JSON.stringify([
+			PROPOSER,
+			WRITER,
+			ADMINISTRATOR,
+		])
 		for (const mock of Object.values(bridgeMocks)) mock.mockReset()
+		deliveryMocks.readMemoryDeliveryOwner.mockResolvedValue({
+			agentId: "agent-1",
+			...SCOPE,
+		})
 		deliveryMocks.deliverMemoryWrite.mockReset()
 		deliveryMocks.deliverMemoryWrite.mockResolvedValue({
 			eventId: "e1",
@@ -272,6 +292,20 @@ describe("proposal-only policy", () => {
 	it.each(TABLE)("writer $method $route is $writer, unchanged", async (r) => {
 		const res = await send(createApp(), r, WRITER.token)
 		if (r.writer === "refused") {
+			expect(res.status).toBe(403)
+			await expect(res.json()).resolves.toEqual({
+				error: { code: "FORBIDDEN", message: DENIED },
+			})
+		} else {
+			expect(res.status).not.toBe(403)
+		}
+	})
+
+	it.each(
+		TABLE,
+	)("scoped administrator $method $route is $administrator", async (r) => {
+		const res = await send(createApp(), r, ADMINISTRATOR.token)
+		if (r.administrator === "refused") {
 			expect(res.status).toBe(403)
 			await expect(res.json()).resolves.toEqual({
 				error: { code: "FORBIDDEN", message: DENIED },

@@ -1,6 +1,7 @@
-// /v1/admin/wiki-promotions: the review list, approve and reject. The runtime
-// is mocked, so these pin the HTTP contract: who may call, the request and
-// response shapes, and how runtime outcomes map to status codes.
+// /v1/admin/wiki-promotions: the review list, approve and reject, and the
+// delivery redrive. The runtime is mocked, so these pin the HTTP contract: who
+// may call, the request and response shapes, and how runtime outcomes map to
+// status codes.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -10,6 +11,7 @@ const runtimeMocks = vi.hoisted(() => ({
 	deliverMemoryWrite: vi.fn(),
 	approvePendingWikiPromotion: vi.fn(),
 	redriveDeadLetteredMemoryDelivery: vi.fn(),
+	readMemoryDeliveryOwner: vi.fn(),
 	wikiPromotionApprovalRequired: vi.fn(() => false),
 	buildMemoryDeliveryOperationId: vi.fn(() => `add:${"a".repeat(64)}`),
 	buildMemoryWikiPromotion: vi.fn(() => ({})),
@@ -58,6 +60,16 @@ const PROPOSER = {
 	Authorization: "Bearer proposer-secret",
 	"Content-Type": "application/json",
 }
+// A presenter key: administer only, granted exactly three demo slots.
+const PRESENTER = {
+	Authorization: "Bearer presenter-secret",
+	"Content-Type": "application/json",
+}
+const WRITER = {
+	Authorization: "Bearer writer-secret",
+	"Content-Type": "application/json",
+}
+const SLOTS = ["demo-run-13", "demo-run-14", "demo-run-15"]
 
 beforeEach(() => {
 	process.env = { ...prevEnv }
@@ -69,10 +81,29 @@ beforeEach(() => {
 			grants: [{ scope: "workspace", scopeRef: "demo-run-1" }],
 			capabilities: ["read", "propose"],
 		},
+		{
+			token: "presenter-secret",
+			subjectId: "demo-presenter",
+			grants: SLOTS.map((scopeRef) => ({ scope: "workspace", scopeRef })),
+			capabilities: ["administer"],
+		},
+		{
+			token: "agent-admin-secret",
+			subjectId: "agent-1-admin",
+			agentIds: ["agent-1"],
+			capabilities: ["administer"],
+		},
+		{
+			token: "writer-secret",
+			subjectId: "demo-writer",
+			grants: SLOTS.map((scopeRef) => ({ scope: "workspace", scopeRef })),
+			capabilities: ["read", "write", "propose"],
+		},
 	])
 	for (const mock of Object.values(proposalMocks)) mock.mockReset()
 	runtimeMocks.approvePendingWikiPromotion.mockReset()
 	runtimeMocks.redriveDeadLetteredMemoryDelivery.mockReset()
+	runtimeMocks.readMemoryDeliveryOwner.mockReset()
 	runtimeMocks.deliverMemoryWrite.mockReset()
 })
 afterEach(() => {
@@ -314,6 +345,203 @@ describe("POST /v1/admin/wiki-promotions/:operationId/reject", () => {
 
 		expect(res.status).toBe(403)
 		expect(proposalMocks.rejectPendingWikiPromotion).not.toHaveBeenCalled()
+	})
+})
+
+describe("a decision is bound to the operation's own scope", () => {
+	it("lets a scoped administer key approve an operation in one of its slots", async () => {
+		runtimeMocks.readMemoryDeliveryOwner.mockResolvedValue({
+			agentId: "agent-1",
+			scope: "workspace",
+			scopeRef: "demo-run-14",
+		})
+		runtimeMocks.approvePendingWikiPromotion.mockResolvedValue({
+			ok: true,
+			operationId: "add:op1",
+			pageSlug: "concepts/x",
+		})
+
+		const res = await createApp().request(
+			"/v1/admin/wiki-promotions/add%3Aop1/approve",
+			{ method: "POST", headers: PRESENTER },
+		)
+
+		expect(res.status).toBe(200)
+		expect(runtimeMocks.readMemoryDeliveryOwner).toHaveBeenCalledWith("add:op1")
+		expect(runtimeMocks.approvePendingWikiPromotion).toHaveBeenCalledWith({
+			operationId: "add:op1",
+		})
+	})
+})
+
+const DECISIONS = [
+	{
+		name: "approve",
+		path: "/v1/admin/wiki-promotions/add%3Aop1/approve",
+		runtime: runtimeMocks.approvePendingWikiPromotion,
+		ok: { ok: true, operationId: "add:op1", pageSlug: "concepts/x" },
+	},
+	{
+		name: "reject",
+		path: "/v1/admin/wiki-promotions/add%3Aop1/reject",
+		runtime: proposalMocks.rejectPendingWikiPromotion,
+		ok: { ok: true, operationId: "add:op1", state: "rejected" },
+	},
+	{
+		name: "redrive",
+		path: "/v1/admin/deliveries/add%3Aop1/redrive",
+		runtime: runtimeMocks.redriveDeadLetteredMemoryDelivery,
+		ok: { ok: true, operationId: "add:op1", state: "recorded" },
+	},
+]
+const OUTSIDE = {
+	error: {
+		code: "FORBIDDEN",
+		message: "operation is not in a scope this API key may administer",
+	},
+}
+const owner = (scope: string, scopeRef: string) => ({
+	agentId: "agent-1",
+	scope,
+	scopeRef,
+})
+
+describe.each(DECISIONS)("$name is bound to the operation's own scope", (d) => {
+	const decide = (headers: Record<string, string>, query = "") =>
+		createApp().request(`${d.path}${query}`, { method: "POST", headers })
+
+	it("is allowed for a scoped administer key when the operation is in its slots", async () => {
+		runtimeMocks.readMemoryDeliveryOwner.mockResolvedValue(
+			owner("workspace", "demo-run-15"),
+		)
+		d.runtime.mockResolvedValue(d.ok)
+
+		const res = await decide(PRESENTER)
+
+		expect(res.status).toBe(200)
+		expect(d.runtime).toHaveBeenCalledWith(
+			expect.objectContaining({ operationId: "add:op1" }),
+		)
+	})
+
+	it.each([
+		["another slot", owner("workspace", "demo-run-12")],
+		["another scope type with a granted ref", owner("user", "demo-run-13")],
+	])("is refused for an operation in %s, even when the request names a granted scope", async (_label, stored) => {
+		runtimeMocks.readMemoryDeliveryOwner.mockResolvedValue(stored)
+		d.runtime.mockResolvedValue(d.ok)
+
+		const res = await decide(PRESENTER, "?scope=workspace&scopeRef=demo-run-13")
+
+		expect(res.status).toBe(403)
+		expect(await asJson(res)).toEqual(OUTSIDE)
+		expect(d.runtime).not.toHaveBeenCalled()
+	})
+
+	it("answers an unknown operation exactly as one outside the key's grants", async () => {
+		runtimeMocks.readMemoryDeliveryOwner.mockResolvedValue(null)
+
+		const res = await decide(PRESENTER)
+
+		expect(res.status).toBe(403)
+		expect(await asJson(res)).toEqual(OUTSIDE)
+		expect(d.runtime).not.toHaveBeenCalled()
+	})
+
+	it("answers a failed scope lookup with a coded 500 and decides nothing", async () => {
+		runtimeMocks.readMemoryDeliveryOwner.mockRejectedValue(new Error("db down"))
+
+		const res = await decide(PRESENTER)
+
+		expect(res.status).toBe(500)
+		expect((await asJson(res)).error?.code).toBe("OPERATION_LOOKUP_FAILED")
+		expect(d.runtime).not.toHaveBeenCalled()
+	})
+
+	it("is unchanged for the full admin key: no scope lookup, any operation", async () => {
+		d.runtime.mockResolvedValue(d.ok)
+
+		const res = await decide(ADMIN, "?scope=workspace&scopeRef=anything")
+
+		expect(res.status).toBe(200)
+		expect(runtimeMocks.readMemoryDeliveryOwner).not.toHaveBeenCalled()
+		expect(d.runtime).toHaveBeenCalled()
+	})
+
+	it("is refused for a key in the same slots without administer", async () => {
+		runtimeMocks.readMemoryDeliveryOwner.mockResolvedValue(
+			owner("workspace", "demo-run-13"),
+		)
+
+		const res = await decide(WRITER, "?scope=workspace&scopeRef=demo-run-13")
+
+		expect(res.status).toBe(403)
+		expect(await asJson(res)).toEqual({
+			error: {
+				code: "FORBIDDEN",
+				message: "capability is not allowed for this API key",
+			},
+		})
+		expect(runtimeMocks.readMemoryDeliveryOwner).not.toHaveBeenCalled()
+		expect(d.runtime).not.toHaveBeenCalled()
+	})
+})
+
+describe("an administer key limited to one agent", () => {
+	const AGENT_ADMIN = {
+		Authorization: "Bearer agent-admin-secret",
+		"Content-Type": "application/json",
+	}
+
+	it.each([
+		["agent-1", 200],
+		["agent-2", 403],
+	])("decides an operation recorded by %s with %i", async (agentId, status) => {
+		runtimeMocks.readMemoryDeliveryOwner.mockResolvedValue({
+			agentId,
+			scope: "workspace",
+			scopeRef: "demo-run-1",
+		})
+		runtimeMocks.approvePendingWikiPromotion.mockResolvedValue({
+			ok: true,
+			operationId: "add:op1",
+			pageSlug: "concepts/x",
+		})
+
+		const res = await createApp().request(
+			"/v1/admin/wiki-promotions/add%3Aop1/approve?agentId=agent-1",
+			{ method: "POST", headers: AGENT_ADMIN },
+		)
+
+		expect(res.status).toBe(status)
+	})
+})
+
+describe("a scoped administer key and the review list", () => {
+	it("lists only the slot it names", async () => {
+		proposalMocks.listPendingWikiProposals.mockResolvedValue([])
+
+		const res = await createApp().request(
+			"/v1/admin/wiki-promotions?scope=workspace&scopeRef=demo-run-13",
+			{ headers: PRESENTER },
+		)
+
+		expect(res.status).toBe(200)
+		expect(proposalMocks.listPendingWikiProposals).toHaveBeenCalledWith(
+			expect.objectContaining({ scope: "workspace", scopeRef: "demo-run-13" }),
+		)
+	})
+
+	it.each([
+		["no scope", ""],
+		["a slot it was not granted", "?scope=workspace&scopeRef=demo-run-12"],
+	])("is refused for %s", async (_label, query) => {
+		const res = await createApp().request(`/v1/admin/wiki-promotions${query}`, {
+			headers: PRESENTER,
+		})
+
+		expect(res.status).toBe(403)
+		expect(proposalMocks.listPendingWikiProposals).not.toHaveBeenCalled()
 	})
 })
 
