@@ -61,6 +61,8 @@ Set with `fly secrets set`:
 | Variable | Meaning |
 |---|---|
 | `MDBRAIN_API_KEY` | The admin key the API boots with (production refuses unauthenticated `/v1`) |
+| `MDBRAIN_WIKI_MONGODB_URI` | The Atlas cluster's connection string. The API does not boot without it |
+| `MDBRAIN_WIKI_DATABASE` | `mdbrain_demo_wiki`. Required: left unset, the wiki engine uses `mdbrain_wiki`, a new database on the cluster |
 | `MEMONGO_API_URL` | Memongo's private-network address (`...internal`), never a public URL |
 | `MEMONGO_API_KEY` | The key the API uses against Memongo |
 | `MDBRAIN_API_SCOPED_KEYS` | The scoped-key policies, including the demo reader policy (below) |
@@ -75,8 +77,12 @@ Set with `fly secrets set`:
 | Variable | Meaning |
 |---|---|
 | `MEMONGO_API_HOST` | `0.0.0.0` |
-| `MEMONGO_MONGODB_URI` | The Atlas cluster's connection string |
+| `MEMONGO_FORCE_MONGODB_URI` | The Atlas cluster's connection string. The force form wins over any URI in a Memongo config file, as the demo stack sets it |
+| `MEMONGO_MONGODB_DATABASE` | `mdbrain_demo_memory`. Required: left unset, Memongo uses `memongo`, a new database on the cluster |
 | `MEMONGO_API_KEY` | The key the API presents |
+| `VOYAGE_API_KEY` | The Atlas Model API key Memongo's reranker and embedding checks call. Its usage bills to the Atlas account that issued it |
+
+The two database names are the only ones the demo may use (`scripts/demo-stack-config.ts` refuses any other). Check them before the first `fly deploy`: a wrong or missing name writes to a database outside the demo.
 
 ### Agent runner (Fly.io, on demand)
 
