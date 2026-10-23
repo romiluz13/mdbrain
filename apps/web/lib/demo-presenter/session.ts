@@ -51,6 +51,10 @@ export function verifyPresenterToken(
 	return expected !== "" && provided !== "" && safeEqual(provided, expected)
 }
 
+/** What `open` issues: 32 random bytes as base64url. A cookie of any other
+ * shape cannot be a session, so it never costs a lookup. */
+const SESSION_ID_SHAPE = /^[A-Za-z0-9_-]{43}$/
+
 export type SessionDeps = {
 	sessions: ControlCollection<SessionDoc>
 	now: () => Date
@@ -76,7 +80,7 @@ export function createSessionService(deps: SessionDeps) {
 			return { sessionId, presenterId: idOf(sessionId), csrf, expiresAt }
 		},
 		async lookup(sessionId: string): Promise<Session | null> {
-			if (sessionId === "") return null
+			if (!SESSION_ID_SHAPE.test(sessionId)) return null
 			const doc = await deps.sessions.findOne({
 				_id: idOf(sessionId),
 				expiresAt: { $gt: deps.now() },

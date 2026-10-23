@@ -83,7 +83,7 @@ export const DEMO_PROXY_FORBIDDEN_PARAMS: readonly string[] = [
 	"containerTag",
 ]
 
-const SCOPE_REF_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+export const SCOPE_REF_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 const SEARCH_RESULTS_DEFAULT = 6
 
 /** Reads the proxy's server-only env. Returns null when any variable is

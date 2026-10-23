@@ -264,6 +264,24 @@ describe("presenter target", () => {
 		})
 	})
 
+	it.each([
+		["scope reference", { scopeRef: "demo-run-13&scope=other" }],
+		["scope reference", { scopeRef: "" }],
+		["agent id", { agentId: "demo run 13" }],
+		["agent id", { agentId: "a".repeat(129) }],
+	])("refuses a leased slot whose stored %s is not the shape the proxy accepts (%j)", async (_name, bad) => {
+		const manifests = [seeded(13)]
+		const { resolver, request, sessions, leases } = rig(manifests)
+		const opened = await sessions.open()
+		await leases.acquire({ presenterId: opened.presenterId })
+		manifests[0] = seeded(13, bad)
+		expect(await resolver.resolve(request(opened.sessionId))).toMatchObject({
+			ok: false,
+			status: 503,
+			code: "SLOT_NOT_READABLE",
+		})
+	})
+
 	it("refuses a leased slot whose run record cannot be read rather than showing the public run as the slot", async () => {
 		const manifests = [seeded(13)]
 		const { resolver, request, sessions, leases } = rig(manifests)

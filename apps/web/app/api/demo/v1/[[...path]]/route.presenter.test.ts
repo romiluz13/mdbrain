@@ -69,7 +69,7 @@ describe("/api/demo/v1 route, target by target", () => {
 		expect(await response.json()).toEqual({ pages: [] })
 	})
 
-	it("leaves the public run's response as the proxy made it", async () => {
+	it("lets the public run's response keep the proxy's cache rule but never cross a presenter's cookie", async () => {
 		resolve.mockResolvedValue({
 			ok: true,
 			target: { mode: "public", env: ENV, run: null },
@@ -77,7 +77,20 @@ describe("/api/demo/v1 route, target by target", () => {
 		const { GET } = await import("./route.js")
 		const response = await GET(request())
 		expect(response.headers.get("cache-control")).toBe("public, max-age=60")
-		expect(response.headers.get("vary")).toBeNull()
+		expect(response.headers.get("vary")).toBe("cookie")
+	})
+
+	it("varies a refusal on the cookie too, because the cookie decided it", async () => {
+		resolve.mockResolvedValue({
+			ok: false,
+			status: 403,
+			code: "RUN_NOT_ALLOWED",
+			message: "no",
+		})
+		const { GET } = await import("./route.js")
+		const response = await GET(request())
+		expect(response.status).toBe(403)
+		expect(response.headers.get("vary")).toBe("cookie")
 	})
 
 	it.each([
@@ -105,6 +118,7 @@ describe("/api/demo/v1 route, target by target", () => {
 		const { GET } = await import("./route.js")
 		const response = await GET(request())
 		expect(response.status).toBe(503)
+		expect(response.headers.get("vary")).toBe("cookie")
 		expect(await response.json()).toEqual({
 			error: {
 				code: "PROXY_NOT_CONFIGURED",

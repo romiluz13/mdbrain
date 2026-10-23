@@ -400,6 +400,13 @@ async function act(
 	if (reason !== undefined && typeof reason !== "string") {
 		return failure(400, "INVALID_REASON", "A reason is text.")
 	}
+	if ((await services.pins.get())?.runId === lease.runId) {
+		return failure(
+			409,
+			"RUN_PINNED",
+			"Public mode plays this run back, so its proposal can no longer be decided.",
+		)
+	}
 	return json(
 		await services.proposals.decide(
 			scopeRef,

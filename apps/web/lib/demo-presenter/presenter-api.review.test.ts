@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { handlePresenterRequest } from "./presenter-api.js"
 import { SESSION_COOKIE } from "./session.js"
-import {
-	call,
-	ORIGIN,
-	rig,
-	seeded,
-	signIn,
-} from "./testing/presenter-rig.js"
+import { call, ORIGIN, rig, seeded, signIn } from "./testing/presenter-rig.js"
 
 describe("presenter API: approve, reject, pin", () => {
 	async function leased() {
@@ -135,5 +129,35 @@ describe("presenter API: approve, reject, pin", () => {
 		expect(context.pinStore.docs.get("public")).toMatchObject({
 			runId: "run-13",
 		})
+	})
+
+	it("decides nothing on the run public mode plays back, so a pinned page cannot change under visitors", async () => {
+		const manifests = [seeded(13)]
+		const context = rig(manifests)
+		const session = await signIn(context.services)
+		await call(context.services, { path: "lease", session })
+		manifests[0] = seeded(13, {
+			state: "used",
+			hasAgentRun: true,
+			agentRunState: "complete",
+		})
+		await call(context.services, { path: "pin", session })
+		for (const decision of ["approve", "reject"]) {
+			const refused = await call(context.services, {
+				path: "proposals/decide",
+				session,
+				body: { operationId: "op-1", decision },
+			})
+			expect(refused.status).toBe(409)
+			expect(refused.body.error.code).toBe("RUN_PINNED")
+		}
+		expect(context.client.approveProposal).not.toHaveBeenCalled()
+		expect(context.client.rejectProposal).not.toHaveBeenCalled()
+		const listed = await call(context.services, {
+			method: "GET",
+			path: "proposals",
+			session,
+		})
+		expect(listed.status).toBe(200)
 	})
 })

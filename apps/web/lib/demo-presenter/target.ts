@@ -7,7 +7,7 @@
 //     run the server env pins, as before.
 // A slot with no read key is refused rather than read with another key.
 
-import type { DemoProxyEnv } from "../demo-data/proxy.js"
+import { SCOPE_REF_PATTERN, type DemoProxyEnv } from "../demo-data/proxy.js"
 import type { DemoRunEnv } from "../demo-data/proxy-run.js"
 import { readKeyOf, type PresenterConfig } from "./config.js"
 import type { LeaseManifest, LeaseService, ManifestReader } from "./lease.js"
@@ -63,6 +63,14 @@ export function slotEnv(
 ): DemoProxyEnv | undefined {
 	const readKey = readKeyOf(config, manifest.slotIndex)
 	if (!readKey) return undefined
+	// The control database is trusted, but these two ride in the query string
+	// of every read, so they meet the shape the env pin must meet.
+	if (
+		!SCOPE_REF_PATTERN.test(manifest.scopeRef) ||
+		!SCOPE_REF_PATTERN.test(manifest.agentId)
+	) {
+		return undefined
+	}
 	return {
 		apiBaseUrl: config.apiBaseUrl,
 		readKey,

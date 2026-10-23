@@ -103,6 +103,30 @@ describe("sessions", () => {
 		expect(await service.lookup(other.sessionId)).toBeNull()
 	})
 
+	it("refuses a cookie of the wrong shape without asking the store", async () => {
+		const sessions = new MemoryCollection<SessionDoc>()
+		const asked: unknown[] = []
+		const findOne = sessions.findOne.bind(sessions)
+		sessions.findOne = async (filter) => {
+			asked.push(filter)
+			return findOne(filter)
+		}
+		const service = createSessionService({ sessions, now: () => NOW })
+		const opened = await service.open()
+		for (const forged of [
+			"x".repeat(42),
+			"x".repeat(44),
+			`${opened.sessionId.slice(0, 42)}=`,
+			`${opened.sessionId.slice(0, 42)}!`,
+			"a".repeat(10_000),
+		]) {
+			expect(await service.lookup(forged)).toBeNull()
+		}
+		expect(asked).toEqual([])
+		expect(await service.lookup(opened.sessionId)).not.toBeNull()
+		expect(asked).toHaveLength(1)
+	})
+
 	it("survives a restart of the service", async () => {
 		const { service, restart } = rig()
 		const opened = await service.open()

@@ -20,10 +20,12 @@ export const runtime = "nodejs"
 
 const checkReadKey = createReadKeyCheck()
 
+// The presenter's cookie decides which run a URL reads, so no answer at a URL,
+// refusal or body, may be reused for a request with another cookie.
 const refused = (status: number, code: string, message: string): Response =>
 	new Response(JSON.stringify({ error: { code, message } }), {
 		status,
-		headers: { "content-type": "application/json" },
+		headers: { "content-type": "application/json", vary: "cookie" },
 	})
 
 export async function GET(request: Request): Promise<Response> {
@@ -44,10 +46,9 @@ export async function GET(request: Request): Promise<Response> {
 		manifest: run ? createRunManifestSource(run) : async () => null,
 		deadline: { now: () => new Date(), ms: readRunDeadlineMs(process.env) },
 	})
-	if (mode !== "presenter") return response
-	// A presenter's slot is theirs alone: no shared cache may keep it.
 	const headers = new Headers(response.headers)
-	headers.set("cache-control", "private, no-store")
 	headers.set("vary", "cookie")
+	// A presenter's slot is theirs alone: no shared cache may keep it.
+	if (mode === "presenter") headers.set("cache-control", "private, no-store")
 	return new Response(response.body, { status: response.status, headers })
 }
