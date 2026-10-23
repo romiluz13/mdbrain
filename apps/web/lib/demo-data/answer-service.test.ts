@@ -765,14 +765,19 @@ describe("answerQuestion", () => {
 // result passed the cap although its real input was a few thousand tokens,
 // so nearly every visitor question was refused. In tokens, the same steps fit.
 describe("the context cap in tokens", () => {
-	function anthropicOverFakeHttp(countedTokens: number) {
+	function anthropicOverFakeHttp(counts: number | number[]) {
 		const requests: string[] = []
 		let messages = 0
+		let countCalls = 0
+		const countedTokens = Array.isArray(counts) ? (counts[0] ?? 0) : counts
 		const http = (async (input: RequestInfo | URL) => {
 			const url = String(input)
 			requests.push(new URL(url).pathname)
 			if (url.endsWith("/count_tokens")) {
-				return Response.json({ input_tokens: countedTokens })
+				const step = countCalls++
+				return Response.json({
+					input_tokens: Array.isArray(counts) ? counts[step] : counts,
+				})
 			}
 			messages++
 			const usage = { input_tokens: countedTokens, output_tokens: 40 }
@@ -875,5 +880,22 @@ describe("the context cap in tokens", () => {
 			},
 		])
 		expect(given.limits.state.leaseHolder).toBeNull()
+	})
+
+	it("refuses the step that counts over the cap after settling the step before it", async () => {
+		const given = parts()
+		const { model, requests } = anthropicOverFakeHttp([1_200, 2_990])
+		const outcome = await ask(transportService(given, model), QUESTION)
+		expect(outcome).toEqual({ state: "refused", reason: "limits" })
+		expect(requests).toEqual([
+			"/v1/messages/count_tokens",
+			"/v1/messages",
+			"/v1/messages/count_tokens",
+		])
+		expect(given.budget.events.settled.map((s) => s.usage)).toEqual([
+			{ uncachedInput: 1_200, cacheRead: 0, cacheWrite: 0, output: 40 },
+			{ uncachedInput: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+		])
+		expect(given.budget.events.uncertain).toEqual([])
 	})
 })

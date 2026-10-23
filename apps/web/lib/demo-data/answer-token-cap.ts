@@ -24,15 +24,17 @@ const COUNTED_FIELDS = [
 	"thinking",
 ] as const
 
-function isMessagesRequest(
-	url: string,
-	init: RequestInit | undefined,
-): boolean {
-	return (
-		(init?.method ?? "GET").toUpperCase() === "POST" &&
-		new URL(url).pathname.endsWith("/v1/messages")
-	)
-}
+/** Fields the provider may send that carry no input the count misses. A
+ * body with any other field is refused, so the count cannot run low. */
+const UNCOUNTED_FIELDS = new Set([
+	"max_tokens",
+	"stream",
+	"temperature",
+	"top_p",
+	"top_k",
+	"stop_sequences",
+	"metadata",
+])
 
 export function tokenCappedFetch(options: {
 	maxInputTokens: number
@@ -75,14 +77,34 @@ export function tokenCappedFetch(options: {
 	}
 
 	return (async (input: RequestInfo | URL, init?: RequestInit) => {
-		const url = input instanceof Request ? input.url : String(input)
-		if (!isMessagesRequest(url, init) || !init) return send(input, init)
+		// Fail closed: the middleware leaves this transport the cap, so every
+		// POST is counted whatever the base URL, and a call whose body cannot be
+		// read here is never sent.
+		if (input instanceof Request || !init) {
+			throw new TransportInputRefusedError(
+				"the model request cannot be read before it is sent",
+			)
+		}
+		const url = String(input)
+		if ((init.method ?? "GET").toUpperCase() !== "POST") {
+			return send(input, init)
+		}
 		let request: Record<string, unknown>
 		try {
 			request = JSON.parse(String(init.body)) as Record<string, unknown>
 		} catch {
 			throw new TransportInputRefusedError(
 				"the model request body cannot be counted",
+			)
+		}
+		const unknown = Object.keys(request).filter(
+			(field) =>
+				!UNCOUNTED_FIELDS.has(field) &&
+				!(COUNTED_FIELDS as readonly string[]).includes(field),
+		)
+		if (unknown.length > 0) {
+			throw new TransportInputRefusedError(
+				`the model request carries fields the count would not see: ${unknown.join(", ")}`,
 			)
 		}
 		const tokens = await count(url, init, request)
@@ -94,6 +116,9 @@ export function tokenCappedFetch(options: {
 			}
 			return send(input, init)
 		}
+		console.warn(
+			"demo answers: no token count came back, so the byte bound applies",
+		)
 		const tools = Array.isArray(request.tools) && request.tools.length > 0
 		const bound =
 			Buffer.byteLength(String(init.body), "utf8") +

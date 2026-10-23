@@ -31,7 +31,7 @@ function upstream(count: () => Response | Promise<Response>) {
 	const base = (async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = String(input)
 		sent.push({ url, init: init ?? {} })
-		if (url === COUNT_URL) return count()
+		if (url.endsWith("/count_tokens")) return count()
 		return new Response(JSON.stringify({ ok: true }), { status: 200 })
 	}) as typeof fetch
 	return { base, sent }
@@ -128,5 +128,34 @@ describe("tokenCappedFetch", () => {
 		expect(sent.map((s) => s.url)).toEqual([
 			"https://api.anthropic.com/v1/models",
 		])
+	})
+
+	it("caps every POST whatever the base URL, and refuses a call it cannot read", async () => {
+		const { base, sent } = upstream(counted(9_000))
+		const capped = tokenCappedFetch({ maxInputTokens: 8_000, fetch: base })
+		await expect(
+			capped("https://gateway.example/anthropic/messages", post(request)),
+		).rejects.toBeInstanceOf(TransportInputRefusedError)
+		expect(sent.map((s) => s.url)).toEqual([
+			"https://gateway.example/anthropic/messages/count_tokens",
+		])
+		for (const unreadable of [
+			() => capped(new Request(MESSAGES_URL, post(request))),
+			() => capped(MESSAGES_URL),
+		]) {
+			await expect(unreadable()).rejects.toBeInstanceOf(
+				TransportInputRefusedError,
+			)
+		}
+		expect(sent).toHaveLength(1)
+	})
+
+	it("refuses a body with a field the count would not see", async () => {
+		const { base, sent } = upstream(counted(1))
+		const capped = tokenCappedFetch({ maxInputTokens: 8_000, fetch: base })
+		await expect(
+			capped(MESSAGES_URL, post({ ...request, container: "skills" })),
+		).rejects.toBeInstanceOf(TransportInputRefusedError)
+		expect(sent).toEqual([])
 	})
 })
