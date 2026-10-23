@@ -1,5 +1,6 @@
 "use client"
 
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import {
 	type KeyboardEvent,
@@ -11,6 +12,8 @@ import {
 } from "react"
 import { createEventReader } from "../../lib/demo-data/event-reader.js"
 import { claimSourceRefs } from "../../lib/demo-data/loaders-chapters.js"
+import { graphAt } from "../../lib/demo-data/playback.js"
+import { viewAt } from "../../lib/demo-data/playback-view.js"
 import {
 	createSourceReader,
 	readInLanes,
@@ -34,11 +37,33 @@ import {
 } from "./demo-context.js"
 import styles from "./demo.module.css"
 import { CitationDialog } from "./parts/citation-dialog.js"
+import { ModeLabel } from "./parts/mode-label.js"
+import { PlaybackBar } from "./parts/playback-bar.js"
 import { gsap, useGSAP } from "./motion/gsap-react.js"
 import { DURATION, EASE, STAGGER } from "./motion/tokens.js"
 import { useReducedMotion } from "./motion/use-reduced-motion.js"
 import { DEMO_UPSTREAM, useDemoData } from "./use-demo-data.js"
 import { useLayout } from "./use-layout.js"
+import { type PlaybackPhase, usePlayback } from "./use-playback.js"
+import { usePresenter } from "./use-presenter.js"
+
+// Only a confirmed presenter's page asks for the controls' code.
+const PresenterBar = dynamic(
+	() => import("./parts/presenter-bar.js").then((m) => m.PresenterBar),
+	{ ssr: false },
+)
+
+/** Chapters 3 to 7 follow the recording; where the cursor sits when one opens. */
+const PLAYBACK_CHAPTERS: Partial<Record<ChapterId, PlaybackPhase>> = {
+	sources: "sources",
+	agents: "agents",
+	contradiction: "agents",
+	growth: "approval",
+	changes: "end",
+}
+
+/** How often a live run's reads are taken again while its agents write. */
+const LIVE_REFRESH_MS = 2_500
 
 const BODY: Record<ChapterId, () => React.JSX.Element> = {
 	brain: BrainChapter,
@@ -53,7 +78,8 @@ const BODY: Record<ChapterId, () => React.JSX.Element> = {
 }
 
 export function DemoApp() {
-	const { data, reload } = useDemoData()
+	const { data: stored, reload, refresh } = useDemoData()
+	const presenter = usePresenter()
 	const reduced = useReducedMotion()
 	const [index, setIndex] = useState(0)
 	const [pinned, setPinned] = useState<string | null>(null)
@@ -67,42 +93,79 @@ export function DemoApp() {
 	const focusHeading = useRef(false)
 
 	const baseGraph = useMemo(
-		() => (data.map.kind === "ready" ? buildGraph(data.map.data) : null),
-		[data.map],
+		() => (stored.map.kind === "ready" ? buildGraph(stored.map.data) : null),
+		[stored.map],
 	)
 	const flagged = useMemo(
 		() =>
 			new Set(
-				data.contradiction.kind === "ready"
-					? data.contradiction.data.claims.map((claim) => claim.pageSlug)
+				stored.contradiction.kind === "ready"
+					? stored.contradiction.data.claims.map((claim) => claim.pageSlug)
 					: [],
 			),
-		[data.contradiction],
+		[stored.contradiction],
 	)
-	const graph = useMemo(
+	const storedGraph = useMemo(
 		() => (baseGraph ? flagPages(baseGraph, flagged) : null),
 		[baseGraph, flagged],
 	)
-	const layout = useLayout(baseGraph)
+	const storedLayout = useLayout(baseGraph)
+
+	// The recording is the default view. A presenter holding a slot sees that
+	// slot live instead, and a page that has not heard from the server yet
+	// shows neither.
+	const live = presenter.mode === "presenter" && presenter.lease !== null
+	const recorded = presenter.mode !== "loading" && !live
+	const playback = usePlayback({
+		enabled: recorded,
+		map: stored.map.kind === "ready" ? stored.map.data : null,
+		changes: stored.changes.kind === "ready" ? stored.changes.data : null,
+		run:
+			stored.run.kind === "ready"
+				? stored.run.data
+				: stored.run.kind === "incomplete"
+					? (stored.run.data ?? null)
+					: null,
+	})
+	const chapterId = CHAPTERS[index]?.id
+	const phase = chapterId ? PLAYBACK_CHAPTERS[chapterId] : undefined
+	const following = recorded && phase !== undefined
+	const cursorView = following && playback.status === "ready" ? playback : null
+	const data = useMemo(
+		() =>
+			cursorView
+				? viewAt(stored, cursorView.state, cursorView.timeline)
+				: stored,
+		[stored, cursorView],
+	)
+	const cut = useMemo(
+		() =>
+			cursorView && storedGraph && storedLayout
+				? graphAt(storedGraph, storedLayout, cursorView.state.visible)
+				: null,
+		[cursorView, storedGraph, storedLayout],
+	)
+	const graph = cursorView ? (cut?.graph ?? null) : storedGraph
+	const layout = cursorView ? (cut?.layout ?? null) : storedLayout
 	const sources = useMemo(() => createSourceReader(DEMO_UPSTREAM), [])
 	const events = useMemo(() => createEventReader({ sources }), [sources])
 
 	// The recorded contradiction's own sources are read as soon as it is
 	// known, a few at a time, and chapter 5 finds them waiting.
 	useEffect(() => {
-		if (data.contradiction.kind !== "ready") {
+		if (stored.contradiction.kind !== "ready") {
 			return
 		}
 		void readInLanes(
 			sources,
-			data.contradiction.data.claims.flatMap(({ claim }) => {
+			stored.contradiction.data.claims.flatMap(({ claim }) => {
 				const named = claimSourceRefs(claim)
 				return named.kind === "ready"
 					? named.data.refs.map((ref) => ({ claim, ref }))
 					: []
 			}),
 		)
-	}, [data.contradiction, sources])
+	}, [stored.contradiction, sources])
 
 	useEffect(() => {
 		const fromHash = chapterIndex(window.location.hash.slice(1))
@@ -110,6 +173,48 @@ export function DemoApp() {
 			setIndex(fromHash)
 		}
 	}, [])
+
+	// A chapter opens the recording where its story is: sources in, agents
+	// done, the proposal approved, or the end.
+	const jumpTo = useRef<((phase: PlaybackPhase) => void) | null>(null)
+	jumpTo.current = playback.status === "ready" ? playback.jump : null
+	const ready = playback.status === "ready"
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the cursor moves when the chapter changes, not on every scrub
+	useEffect(() => {
+		jumpTo.current?.(phase ?? "end")
+	}, [chapterId, ready])
+
+	// The leased slot is another brain: reading it again, from a clear screen,
+	// when the lease starts, ends or changes hands.
+	const slot =
+		presenter.mode === "loading" ? undefined : (presenter.lease?.slotIndex ?? 0)
+	const lastSlot = useRef<number | undefined>(undefined)
+	useEffect(() => {
+		if (slot === undefined) {
+			return
+		}
+		if (lastSlot.current !== undefined && lastSlot.current !== slot) {
+			reload()
+		}
+		lastSlot.current = slot
+	}, [slot, reload])
+
+	// While the agents write, chapters 3 and 4 read the slot again as it moves.
+	const requestState = presenter.request?.state
+	const agentRunState =
+		stored.run.kind === "ready" ? stored.run.data.agentRun?.state : undefined
+	const runActive =
+		live &&
+		(requestState === "queued" ||
+			requestState === "claimed" ||
+			agentRunState === "running")
+	useEffect(() => {
+		if (!runActive) {
+			return
+		}
+		const timer = setInterval(refresh, LIVE_REFRESH_MS)
+		return () => clearInterval(timer)
+	}, [runActive, refresh])
 
 	// After a chapter change, not on first paint, move focus to the new heading.
 	useEffect(() => {
@@ -206,6 +311,7 @@ export function DemoApp() {
 			events,
 			data,
 			reload,
+			refresh,
 			graph,
 			layout,
 			pinned,
@@ -214,8 +320,25 @@ export function DemoApp() {
 			ask,
 			setAsk,
 			goTo: (id) => goToIndex(chapterIndex(id)),
+			presenter,
+			live,
+			playback,
 		}),
-		[data, sources, events, reload, graph, layout, pinned, ask, goToIndex],
+		[
+			data,
+			sources,
+			events,
+			reload,
+			refresh,
+			graph,
+			layout,
+			pinned,
+			ask,
+			goToIndex,
+			presenter,
+			live,
+			playback,
+		],
 	)
 
 	const citationRef = useRef(citation)
@@ -300,6 +423,15 @@ export function DemoApp() {
 						<p className={styles.lede}>{chapter.lede}</p>
 					</header>
 					<div ref={screenRef} className={styles.screen} data-testid="screen">
+						{presenter.mode === "presenter" ? <PresenterBar /> : null}
+						{presenter.mode === "loading" ? null : (
+							<ModeLabel
+								live={live}
+								slotIndex={presenter.lease?.slotIndex}
+								name={presenter.lease?.name}
+							/>
+						)}
+						{following ? <PlaybackBar /> : null}
 						<Body />
 					</div>
 					<footer className={styles.pager}>

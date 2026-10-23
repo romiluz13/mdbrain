@@ -18,8 +18,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 import type { ControlCollection } from "./collections.js"
 
-export const SESSION_COOKIE = "demo_presenter"
-export const CSRF_HEADER = "x-demo-csrf"
+import { CSRF_HEADER, SESSION_COOKIE } from "./session-names.js"
+
+export { CSRF_HEADER, SESSION_COOKIE }
 export const DEFAULT_SESSION_TTL_MS = 8 * 3_600_000
 
 export type SessionDoc = {

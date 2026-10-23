@@ -23,7 +23,7 @@ export type RunProgress = { stage: RunStage; label: string }
 const EXPIRED_REASON = "no runner picked the request up in time"
 
 export function runProgress(input: {
-	request: RunRequestDoc | null
+	request: Pick<RunRequestDoc, "state" | "requestedAt" | "failureReason"> | null
 	agentRun: Pick<AgentRunRecord, "state"> | undefined
 	now: Date
 }): RunProgress {
