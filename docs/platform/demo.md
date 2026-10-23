@@ -80,7 +80,7 @@ Server-only variables, in addition to the ones above:
 | Variable | Meaning |
 | --- | --- |
 | `MDBRAIN_DEMO_PRESENTER_TOKEN` | The token the presenter signs in with: at least 32 characters, at least two of lower case, upper case, digits and symbols, and at least 10 distinct characters. The check is a floor, not a measure of entropy, so generate the token randomly. A weaker token turns presenter mode off |
-| `MDBRAIN_DEMO_PRESENTER_API_KEY` | An API key whose capabilities are exactly `["administer"]`, used for the review queue only. It must not also be a read key |
+| `MDBRAIN_DEMO_PRESENTER_API_KEY` | An API key whose capabilities are exactly `["administer"]`, used for the review queue only. It must not also be a read key. On the local demo stack, the same variable in the secrets file makes `scripts/demo-stack-config.ts` register it with one exact grant per slot |
 | `MDBRAIN_DEMO_READ_KEYS` | JSON array of read keys; entry i-1 reads slot i. Each must be an exact reader of its slot (see Presenter credentials) |
 | `MDBRAIN_DEMO_RUN_DEADLINE_MS` | The whole-run limit, default 335000 |
 

@@ -506,3 +506,89 @@ describe("demo read keys", () => {
 		)
 	})
 })
+
+describe("demo presenter key", () => {
+	const stackDir = "/tmp/demo-stack"
+	const base = {
+		...secrets,
+		MDBRAIN_DEMO_SLOT_KEYS: '["slot-token-one", "slot-token-two"]',
+		MDBRAIN_DEMO_READ_KEYS: '["reader-token-one", "reader-token-two"]',
+	}
+	const withPresenter = {
+		...base,
+		MDBRAIN_DEMO_PRESENTER_API_KEY: "presenter-token",
+	}
+	const policiesOf = (all: Record<string, string>) =>
+		JSON.parse(
+			buildDemoStackEnv(all, { stackDir }).api.MDBRAIN_API_SCOPED_KEYS ?? "",
+		)
+
+	it("grants the presenter key administer only, with one exact grant per slot", () => {
+		expect(policiesOf(withPresenter)["presenter-token"]).toEqual({
+			subjectId: "demo-presenter",
+			displayName: "Demo presenter",
+			grants: [
+				{ scope: "workspace", scopeRef: "demo-run-1" },
+				{ scope: "workspace", scopeRef: "demo-run-2" },
+			],
+			capabilities: ["administer"],
+		})
+	})
+
+	it("produces a principal the API refuses to read or administer outside the slots", () => {
+		const credentials = parseScopedApiKeyPolicies(
+			buildDemoStackEnv(withPresenter, { stackDir }).api
+				.MDBRAIN_API_SCOPED_KEYS,
+		)
+		const presenter = credentials.find(
+			(credential) => credential.principal.subjectId === "demo-presenter",
+		)
+		if (!presenter) throw new Error("presenter missing")
+		expect(presenter.principal.capabilities).toEqual(["administer"])
+		const slot = { scope: "workspace", scopeRef: "demo-run-2" } as const
+		expect(
+			authorizePrincipalRequest(presenter.principal, {
+				...slot,
+				capability: "administer",
+			}),
+		).toBeNull()
+		expect(
+			authorizePrincipalRequest(presenter.principal, {
+				...slot,
+				capability: "read",
+			}),
+		).not.toBeNull()
+		expect(
+			authorizePrincipalRequest(presenter.principal, {
+				scope: "workspace",
+				scopeRef: "demo-run-3",
+				capability: "administer",
+			}),
+		).not.toBeNull()
+	})
+
+	it("adds nothing when no presenter key is configured", () => {
+		expect(policiesOf(base)["presenter-token"]).toBeUndefined()
+	})
+
+	it("requires the slot keys and refuses a reused token", () => {
+		expect(() =>
+			buildDemoStackEnv(
+				{ ...secrets, MDBRAIN_DEMO_PRESENTER_API_KEY: "presenter-token" },
+				{ stackDir },
+			),
+		).toThrow(/MDBRAIN_DEMO_PRESENTER_API_KEY.*MDBRAIN_DEMO_SLOT_KEYS/)
+		for (const token of [
+			"slot-token-one",
+			"reader-token-two",
+			"demo-local-api",
+		]) {
+			expect(() =>
+				buildDemoStackEnv(
+					{ ...base, MDBRAIN_DEMO_PRESENTER_API_KEY: token },
+					{ stackDir },
+				),
+			).toThrow(/MDBRAIN_DEMO_PRESENTER_API_KEY must not reuse/)
+		}
+	})
+})

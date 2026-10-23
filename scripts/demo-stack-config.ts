@@ -59,6 +59,10 @@ export const DEMO_READ_KEYS_SECRET = "MDBRAIN_DEMO_READ_KEYS"
  * the demo API. The default stack limit (100) is too low for corpus seeding. */
 export const DEMO_API_RATE_LIMIT_SECRET = "MDBRAIN_DEMO_API_RATE_LIMIT"
 
+/** Secrets-file key holding the presenter's review-queue API token: the same
+ * value the web reads as MDBRAIN_DEMO_PRESENTER_API_KEY. */
+export const DEMO_PRESENTER_KEY_SECRET = "MDBRAIN_DEMO_PRESENTER_API_KEY"
+
 export type DemoSlotScopedKeyPolicy = {
 	grants: Array<{ scope: "workspace"; scopeRef: string }>
 }
@@ -195,6 +199,33 @@ export function buildDemoReadScopedKeys(
 		}
 	})
 	return policies
+}
+
+export type DemoPresenterScopedKeyPolicy = {
+	subjectId: string
+	displayName: string
+	grants: Array<{ scope: "workspace"; scopeRef: string }>
+	capabilities: ["administer"]
+}
+
+/** Scoped-key policy for the presenter's review-queue key: administer only,
+ * one exact grant per slot and never a wildcard (decision D29), so it can
+ * decide proposals in the slots and read nothing. */
+export function buildDemoPresenterScopedKey(
+	token: string,
+	slotCount: number,
+): Record<string, DemoPresenterScopedKeyPolicy> {
+	return {
+		[token]: {
+			subjectId: "demo-presenter",
+			displayName: "Demo presenter",
+			grants: Array.from({ length: slotCount }, (_, index) => ({
+				scope: "workspace" as const,
+				scopeRef: `demo-run-${index + 1}`,
+			})),
+			capabilities: ["administer"],
+		},
+	}
 }
 
 function parseAgentKeyPairs(
@@ -358,6 +389,25 @@ export function buildDemoStackEnv(
 			}
 		}
 	}
+	const presenterToken = secrets[DEMO_PRESENTER_KEY_SECRET]?.trim() || undefined
+	if (presenterToken) {
+		if (!slotTokens) {
+			throw new Error(
+				`${DEMO_PRESENTER_KEY_SECRET} requires the slot tokens from ${DEMO_SLOT_KEYS_SECRET}: it is granted every slot`,
+			)
+		}
+		if (
+			presenterToken === apiKey ||
+			slotTokens.includes(presenterToken) ||
+			proposerTokens?.includes(presenterToken) ||
+			agentPairs?.some((pair) => pair.includes(presenterToken)) ||
+			readTokens?.includes(presenterToken)
+		) {
+			throw new Error(
+				`${DEMO_PRESENTER_KEY_SECRET} must not reuse the admin, slot, proposer, agent or read keys`,
+			)
+		}
+	}
 	const rateLimitMax = parseRateLimitMax(secrets)
 
 	const base: Record<string, string> = { HOME: home }
@@ -399,6 +449,9 @@ export function buildDemoStackEnv(
 								: {}),
 							...(agentPairs ? buildDemoAgentScopedKeys(agentPairs) : {}),
 							...(readTokens ? buildDemoReadScopedKeys(readTokens) : {}),
+							...(presenterToken && slotTokens
+								? buildDemoPresenterScopedKey(presenterToken, slotTokens.length)
+								: {}),
 						}),
 					}
 				: {}),
