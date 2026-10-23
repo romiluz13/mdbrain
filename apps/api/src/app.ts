@@ -125,7 +125,7 @@ async function authorizeScopedApiKey(
 }> {
 	// A key reading its own authority names no scope and needs no capability:
 	// a scoped key could not otherwise ask which scopes it holds.
-	if (c.req.path === "/v1/principal/self") {
+	if (c.req.method === "GET" && c.req.path === "/v1/principal/self") {
 		return {
 			requestScope: {},
 			validationError: null,

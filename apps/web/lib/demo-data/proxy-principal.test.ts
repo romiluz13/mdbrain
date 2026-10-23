@@ -161,4 +161,20 @@ describe("the read key check", () => {
 			"Bearer admin-secret",
 		)
 	})
+
+	it("gives up on an API that does not answer in time, and asks again next read", async () => {
+		const calls: number[] = []
+		const hanging = ((_input: RequestInfo | URL, init?: RequestInit) => {
+			calls.push(1)
+			return new Promise<Response>((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () =>
+					reject(init.signal?.reason),
+				)
+			})
+		}) as typeof fetch
+		const check = createReadKeyCheck({ timeoutMs: 20 })
+		expect(await check(env, hanging)).toBe(false)
+		expect(await check(env, hanging)).toBe(false)
+		expect(calls).toHaveLength(2)
+	})
 })

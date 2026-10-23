@@ -15,6 +15,8 @@ export type ReadKeyCheck = (
 
 const SERVABLE_TIERS = new Set(["restricted", "standard"])
 
+const CHECK_TIMEOUT_MS = 5_000
+
 function isExactReader(body: unknown, env: DemoProxyEnv): boolean {
 	if (typeof body !== "object" || body === null) {
 		return false
@@ -40,6 +42,7 @@ function isExactReader(body: unknown, env: DemoProxyEnv): boolean {
 async function askApi(
 	env: DemoProxyEnv,
 	fetchImpl: typeof fetch,
+	timeoutMs: number,
 ): Promise<Verdict> {
 	let body: unknown
 	try {
@@ -51,6 +54,7 @@ async function askApi(
 					authorization: `Bearer ${env.readKey}`,
 					accept: "application/json",
 				},
+				signal: AbortSignal.timeout(timeoutMs),
 			},
 		)
 		if (!response.ok) {
@@ -66,7 +70,10 @@ async function askApi(
 /** One check per process: a settled verdict is kept for the env it was asked
  * about; a check that could not finish is not kept, so the next read asks
  * again, and it never passes. */
-export function createReadKeyCheck(): ReadKeyCheck {
+export function createReadKeyCheck(
+	options: { timeoutMs?: number } = {},
+): ReadKeyCheck {
+	const timeoutMs = options.timeoutMs ?? CHECK_TIMEOUT_MS
 	let settled: { id: string; reader: boolean } | null = null
 	return async (env, fetchImpl) => {
 		const id = JSON.stringify([
@@ -78,7 +85,7 @@ export function createReadKeyCheck(): ReadKeyCheck {
 		if (settled?.id === id) {
 			return settled.reader
 		}
-		const verdict = await askApi(env, fetchImpl)
+		const verdict = await askApi(env, fetchImpl, timeoutMs)
 		if (verdict !== "unknown") {
 			settled = { id, reader: verdict === "reader" }
 		}

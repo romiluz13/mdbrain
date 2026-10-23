@@ -130,4 +130,12 @@ describe("GET /v1/principal/self", () => {
 			error: { code: "FORBIDDEN", message: "identity is not active" },
 		})
 	})
+
+	it("keeps the scope check for any other method on the same path", async () => {
+		const res = await createApp().request("/v1/principal/self", {
+			method: "POST",
+			headers: bearer(READER.token),
+		})
+		expect(res.status).toBe(403)
+	})
 })
