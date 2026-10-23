@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest"
 import type { LeaseManifest } from "./lease.js"
 import {
 	createRunRequestService,
+	EXPIRED_REASON,
+	RUN_REQUEST_CLAIM_MAX_AGE_MS,
 	RUN_REQUEST_QUEUE_MAX_AGE_MS,
+	requestIsStale,
 	type RunRequestDoc,
 } from "./run-requests.js"
 import { MemoryCollection } from "./testing/memory-collection.js"
@@ -129,6 +132,58 @@ describe("run requests", () => {
 		)
 	})
 
+	it("queues a claimed request again when its runner never started the run, and keeps a fresh claim", async () => {
+		const { service, requests, tick } = rig()
+		await service.enqueue(LEASE, MANIFEST, "presenter-1")
+		requests.docs.set("run-13", {
+			...requests.docs.get("run-13")!,
+			state: "claimed",
+			claimedAt: T0.toISOString(),
+			workerId: "worker-a",
+		})
+		tick(RUN_REQUEST_CLAIM_MAX_AGE_MS - 1)
+		expect((await service.enqueue(LEASE, MANIFEST, "presenter-1")).state).toBe(
+			"claimed",
+		)
+		tick(2)
+		const again = await service.enqueue(LEASE, MANIFEST, "presenter-1")
+		expect(again.state).toBe("queued")
+		expect(again.claimedAt).toBeUndefined()
+		expect(again.workerId).toBeUndefined()
+	})
+
+	it("calls a request stale once its queue or claim age passes, and only then", () => {
+		const base = { requestedAt: T0.toISOString() }
+		const at = (ms: number) => new Date(T0.getTime() + ms)
+		expect(
+			requestIsStale(
+				{ ...base, state: "queued" },
+				at(RUN_REQUEST_QUEUE_MAX_AGE_MS),
+			),
+		).toBe(false)
+		expect(
+			requestIsStale(
+				{ ...base, state: "queued" },
+				at(RUN_REQUEST_QUEUE_MAX_AGE_MS + 1),
+			),
+		).toBe(true)
+		const claimed = {
+			...base,
+			state: "claimed" as const,
+			claimedAt: at(5_000).toISOString(),
+		}
+		expect(
+			requestIsStale(claimed, at(5_000 + RUN_REQUEST_CLAIM_MAX_AGE_MS)),
+		).toBe(false)
+		expect(
+			requestIsStale(claimed, at(5_000 + RUN_REQUEST_CLAIM_MAX_AGE_MS + 1)),
+		).toBe(true)
+		expect(requestIsStale({ ...base, state: "failed" }, at(10 ** 9))).toBe(
+			false,
+		)
+		expect(requestIsStale({ ...base, state: "done" }, at(10 ** 9))).toBe(false)
+	})
+
 	it("reads a run's request, or null", async () => {
 		const { service } = rig()
 		expect(await service.get("run-13")).toBeNull()
@@ -151,5 +206,27 @@ describe("the contract with the runner worker", () => {
 		expect(worker).toContain(
 			`DEFAULT_MAX_QUEUE_AGE_MS = ${RUN_REQUEST_QUEUE_MAX_AGE_MS.toLocaleString("en-US").replace(/,/g, "_")}`,
 		)
+	})
+
+	it("stores the same fields and the same expiry reason", () => {
+		const fields: Record<keyof RunRequestDoc, true> = {
+			_id: true,
+			slotIndex: true,
+			state: true,
+			requestedAt: true,
+			requestedBy: true,
+			claimedAt: true,
+			workerId: true,
+			finishedAt: true,
+			failureReason: true,
+		}
+		const type = /export type RunRequestDoc = \{([\s\S]*?)\n\}/.exec(
+			worker,
+		)?.[1]
+		const declared = [...(type ?? "").matchAll(/^\t(\w+)\??:/gm)].map(
+			(match) => match[1],
+		)
+		expect(declared.sort()).toEqual(Object.keys(fields).sort())
+		expect(worker).toContain(`EXPIRED_REASON = "${EXPIRED_REASON}"`)
 	})
 })

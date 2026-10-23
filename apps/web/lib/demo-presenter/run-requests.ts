@@ -23,8 +23,35 @@ export type RunRequestDoc = {
 	failureReason?: string
 }
 
+/** The failure reason the worker writes when it expires a request nobody
+ * picked up. */
+export const EXPIRED_REASON = "no runner picked the request up in time"
+
 /** A queued request older than this was not picked up: no worker is running. */
 export const RUN_REQUEST_QUEUE_MAX_AGE_MS = 120_000
+
+/** A claimed request whose run record is still missing this long after the
+ * claim lost its runner: claiming to starting the run takes seconds. */
+export const RUN_REQUEST_CLAIM_MAX_AGE_MS = 120_000
+
+export function requestIsStale(
+	request: Pick<RunRequestDoc, "state" | "requestedAt" | "claimedAt">,
+	now: Date,
+): boolean {
+	if (request.state === "queued") {
+		return (
+			now.getTime() - Date.parse(request.requestedAt) >
+			RUN_REQUEST_QUEUE_MAX_AGE_MS
+		)
+	}
+	if (request.state === "claimed") {
+		return (
+			now.getTime() - Date.parse(request.claimedAt ?? request.requestedAt) >
+			RUN_REQUEST_CLAIM_MAX_AGE_MS
+		)
+	}
+	return false
+}
 
 export class RunRequestError extends Error {
 	name = "RunRequestError"
@@ -47,8 +74,8 @@ export function createRunRequestService(deps: RunRequestDeps) {
 			deps.requests.findOne({ _id: runId }),
 
 		/** Queues the leased run, or returns the request already there. A failed
-		 * request, or a queued one nobody picked up, is queued again while the
-		 * run has not started. */
+		 * request, a queued one nobody picked up, or a claimed one whose runner
+		 * went quiet, is queued again while the run has not started. */
 		async enqueue(
 			lease: Pick<LeaseDoc, "runId" | "slotIndex">,
 			manifest: LeaseManifest | null,
@@ -56,10 +83,7 @@ export function createRunRequestService(deps: RunRequestDeps) {
 		): Promise<RunRequestDoc> {
 			const now = deps.now().toISOString()
 			const existing = await deps.requests.findOne({ _id: lease.runId })
-			const stale =
-				existing?.state === "queued" &&
-				Date.parse(existing.requestedAt) <
-					deps.now().getTime() - RUN_REQUEST_QUEUE_MAX_AGE_MS
+			const stale = existing !== null && requestIsStale(existing, deps.now())
 			if (existing && existing.state !== "failed" && !stale) return existing
 			if (!manifest || !isFullySeeded(manifest)) {
 				if (existing) return existing
@@ -91,7 +115,12 @@ export function createRunRequestService(deps: RunRequestDeps) {
 				{ _id: lease.runId, state: existing.state },
 				{
 					$set: { state: "queued", requestedAt: now, requestedBy: presenterId },
-					$unset: { failureReason: "", finishedAt: "" },
+					$unset: {
+						failureReason: "",
+						finishedAt: "",
+						claimedAt: "",
+						workerId: "",
+					},
 				},
 				{ returnDocument: "after" },
 			)

@@ -6,6 +6,7 @@
 // shared admin key could otherwise reach.
 
 import type { MdbrainClient } from "@mdbrain/client"
+import { hasControlCharacters } from "./lease.js"
 
 export type ProposalsClient = Pick<
 	MdbrainClient,
@@ -39,8 +40,6 @@ export class ProposalError extends Error {
 export type Decision = { kind: "approve" } | { kind: "reject"; reason?: string }
 
 export const REASON_MAX = 200
-// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this rejects
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 
 export function createProposalService(client: ProposalsClient) {
 	async function list(scopeRef: string): Promise<ProposalView[]> {
@@ -80,7 +79,7 @@ export function createProposalService(client: ProposalsClient) {
 				decision.kind === "reject" ? decision.reason?.trim() : undefined
 			if (
 				reason !== undefined &&
-				(reason.length > REASON_MAX || CONTROL_CHARACTERS.test(reason))
+				(reason.length > REASON_MAX || hasControlCharacters(reason))
 			) {
 				throw new ProposalError(
 					"INVALID_REASON",

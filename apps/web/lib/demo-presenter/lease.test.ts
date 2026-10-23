@@ -56,6 +56,8 @@ describe("isFullySeeded", () => {
 		expect(isFullySeeded(manifest(1, { state: "seeding" }))).toBe(false)
 		expect(isFullySeeded(manifest(1, { state: "used" }))).toBe(false)
 		expect(isFullySeeded(manifest(1, { hasAgentRun: true }))).toBe(false)
+		expect(isFullySeeded(manifest(1, { limitSources: null }))).toBe(true)
+		expect(isFullySeeded(manifest(1, { limitSources: 5 }))).toBe(false)
 		expect(
 			isFullySeeded(
 				manifest(1, { eventsPlanned: 0, eventsWritten: 0, pagesPlanned: 0 }),
@@ -89,7 +91,12 @@ describe("leaseManifestOf", () => {
 			pagesWritten: 2,
 			hasAgentRun: false,
 			agentRunState: "",
+			limitSources: null,
 		})
+		expect(leaseManifestOf({ ...doc, limitSources: 5 })?.limitSources).toBe(5)
+		expect(
+			leaseManifestOf({ ...doc, limitSources: null })?.limitSources,
+		).toBeNull()
 		expect(
 			leaseManifestOf({ ...doc, agentRun: { state: "running" } })?.hasAgentRun,
 		).toBe(true)

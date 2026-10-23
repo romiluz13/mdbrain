@@ -18,7 +18,7 @@ const manifest = (runId: string, agentRunState: string): LeaseManifest => ({
 	agentRunState,
 })
 
-function rig(runs: LeaseManifest[]) {
+function rig(runs: LeaseManifest[], readable = (_: LeaseManifest) => true) {
 	const pins = new MemoryCollection<PinDoc>()
 	return {
 		pins,
@@ -27,6 +27,7 @@ function rig(runs: LeaseManifest[]) {
 			manifests: {
 				get: async (runId) => runs.find((run) => run.runId === runId) ?? null,
 			},
+			readable,
 			now: () => NOW,
 		}),
 	}
@@ -72,6 +73,18 @@ describe("pin", () => {
 				code: runId === "run-99" ? "RUN_NOT_FOUND" : "RUN_NOT_COMPLETE",
 			})
 		}
+		expect((await service.get())?.runId).toBe("run-12")
+	})
+
+	it("never pins a run whose slot the server cannot read, and keeps the earlier pin", async () => {
+		const { service } = rig(
+			[manifest("run-12", "complete"), manifest("run-13", "complete")],
+			(run) => run.runId !== "run-13",
+		)
+		await service.pin("run-12", "p1")
+		await expect(service.pin("run-13", "p1")).rejects.toMatchObject({
+			code: "RUN_NOT_READABLE",
+		})
 		expect((await service.get())?.runId).toBe("run-12")
 	})
 })

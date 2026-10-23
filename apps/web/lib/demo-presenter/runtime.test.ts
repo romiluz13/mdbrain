@@ -143,4 +143,58 @@ describe("createPresenterRuntime", () => {
 			target: { mode: "public", env: BASELINE },
 		})
 	})
+
+	it("never leases a fully seeded slot the server holds no read key for", async () => {
+		const unreadable = stores()
+		unreadable.manifests = new MemoryCollection<{ _id: string }>(
+			[],
+			[manifestDoc(16)],
+		)
+		const runtime = createPresenterRuntime({
+			config: CONFIG,
+			baselineEnv: BASELINE,
+			baselineRun: null,
+			stores: unreadable,
+			proposalsClient: {
+				listProposals: async () => ({ proposals: [] }),
+				approveProposal: async () => {
+					throw new Error("unused")
+				},
+				rejectProposal: async () => {
+					throw new Error("unused")
+				},
+			},
+		})
+		const login = await handlePresenterRequest(
+			new Request(`${ORIGIN}/api/demo/presenter/session`, {
+				method: "POST",
+				headers: { "content-type": "application/json", origin: ORIGIN },
+				body: JSON.stringify({ token: TOKEN }),
+			}),
+			["session"],
+			runtime.services,
+		)
+		const sessionId = /demo_presenter=([^;]+)/.exec(
+			login.headers.get("set-cookie") ?? "",
+		)![1]!
+		const { csrf } = (await login.json()) as { csrf: string }
+		const lease = await handlePresenterRequest(
+			new Request(`${ORIGIN}/api/demo/presenter/lease`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					origin: ORIGIN,
+					cookie: `${SESSION_COOKIE}=${sessionId}`,
+					[CSRF_HEADER]: csrf,
+				},
+				body: "{}",
+			}),
+			["lease"],
+			runtime.services,
+		)
+		expect(lease.status).toBe(409)
+		expect(await lease.json()).toMatchObject({
+			error: { code: "NO_SLOT_AVAILABLE" },
+		})
+	})
 })

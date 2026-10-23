@@ -113,7 +113,7 @@ export function usePlayback(input: {
 							: phase === "approval"
 								? (marks?.approval ?? marks?.agentsEnd)
 								: total
-			setCursorState(Math.max(1, Math.min(total, target || total)))
+			setCursorState(Math.max(1, Math.min(total, target ?? total)))
 		},
 		[marks, total],
 	)

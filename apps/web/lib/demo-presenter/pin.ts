@@ -5,7 +5,7 @@
 // web instance reads the same run.
 
 import { DuplicateKeyError, type ControlCollection } from "./collections.js"
-import type { ManifestReader } from "./lease.js"
+import type { LeaseManifest, ManifestReader } from "./lease.js"
 
 export type PinDoc = {
 	_id: "public"
@@ -17,7 +17,7 @@ export type PinDoc = {
 export class PinError extends Error {
 	name = "PinError"
 	constructor(
-		readonly code: "RUN_NOT_FOUND" | "RUN_NOT_COMPLETE",
+		readonly code: "RUN_NOT_FOUND" | "RUN_NOT_COMPLETE" | "RUN_NOT_READABLE",
 		message: string,
 	) {
 		super(message)
@@ -27,6 +27,9 @@ export class PinError extends Error {
 export function createPinService(deps: {
 	pins: ControlCollection<PinDoc>
 	manifests: ManifestReader
+	/** Whether the server can read this run: a pin it cannot read would leave
+	 * public mode on another run while the page says it pinned this one. */
+	readable: (manifest: LeaseManifest) => boolean
 	now: () => Date
 }) {
 	return {
@@ -41,6 +44,12 @@ export function createPinService(deps: {
 				throw new PinError(
 					"RUN_NOT_COMPLETE",
 					"only a run whose agents finished can be pinned for public mode",
+				)
+			}
+			if (!deps.readable(manifest)) {
+				throw new PinError(
+					"RUN_NOT_READABLE",
+					"this server has no read key for that run's slot, so it could not play it back",
 				)
 			}
 			const fields = {

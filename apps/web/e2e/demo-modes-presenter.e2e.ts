@@ -224,6 +224,42 @@ test.describe("presenter mode: the slot", () => {
 	})
 })
 
+test.describe("presenter mode: a flaky connection", () => {
+	test("keeps the presenter's controls while the state read fails, says so, and recovers when it answers again", async ({
+		page,
+		context,
+	}) => {
+		test.slow()
+		const world = createWorld()
+		await installWorld(context, world)
+		await signIn(page)
+		await lease(page)
+		let failing = false
+		await context.route("**/api/demo/presenter/state", (route) =>
+			failing ? route.fulfill({ status: 500, body: "boom" }) : route.fallback(),
+		)
+		failing = true
+		await page.getByTestId("slot-rename-input").fill("Board demo")
+		await page.getByTestId("slot-rename").click()
+		await expect(page.getByTestId("presenter-message")).toContainText(
+			"did not answer",
+			POLL,
+		)
+		await expect(page.getByTestId("presenter-bar")).toBeVisible()
+		await expect(page.getByTestId("lease-slot")).toBeVisible()
+		await expect(page.getByTestId("live-label")).toBeVisible()
+
+		failing = false
+		await page.getByTestId("slot-rename-input").fill("Board demo 2")
+		await page.getByTestId("slot-rename").click()
+		await expect(page.getByTestId("lease-slot")).toHaveText(
+			"Slot 13, Board demo 2",
+			POLL,
+		)
+		await expect(page.getByTestId("presenter-message")).toHaveCount(0, POLL)
+	})
+})
+
 test.describe("presenter mode: the run", () => {
 	test("runs the agents with progress, reviews the proposal, pins the run, and the public then plays that run back", async ({
 		page,
@@ -389,6 +425,37 @@ test.describe("presenter mode: the run", () => {
 		await world.runner.fail("e2e-slot-13")
 		await expect(stage(page)).toHaveAttribute("data-stage", "incomplete", POLL)
 		expect(await page.content()).not.toContain("mongodb+srv")
+	})
+
+	test("says the runner went quiet when it claimed the run and never started it, and runs again on request", async ({
+		page,
+		context,
+	}) => {
+		test.slow()
+		const world = createWorld()
+		await installWorld(context, world)
+		await signIn(page)
+		await lease(page)
+		const runId = world.runIdOf(13)
+		await page.getByTestId("run-agents").click()
+		await world.runner.claim(runId)
+		await expect(stage(page)).toHaveAttribute("data-stage", "queued", POLL)
+		await expect(stage(page)).toContainText("starting")
+
+		const claimed = world.stores.runRequests.docs.get(runId)
+		expect(claimed?.state).toBe("claimed")
+		world.stores.runRequests.docs.set(runId, {
+			...claimed!,
+			claimedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+		})
+		await expect(stage(page)).toHaveAttribute("data-stage", "no-runner", POLL)
+		await expect(stage(page)).toContainText("went quiet")
+		await page.getByTestId("run-agents").click()
+		await expect(stage(page)).toHaveAttribute("data-stage", "queued", POLL)
+		expect(world.stores.runRequests.docs.get(runId)).toMatchObject({
+			state: "queued",
+		})
+		expect(world.stores.runRequests.docs.get(runId)?.claimedAt).toBeUndefined()
 	})
 
 	test("refuses a pin for a run that has not finished, even if the page is made to ask", async ({

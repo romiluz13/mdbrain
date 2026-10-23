@@ -36,6 +36,8 @@ export type LeaseManifest = {
 	hasAgentRun: boolean
 	/** "" until an agent run starts, then running, complete or incomplete. */
 	agentRunState?: string
+	/** A seed cut to the first N sources; its planned counts are the cut's. */
+	limitSources?: number | null
 }
 
 export type LeaseErrorCode =
@@ -57,11 +59,17 @@ export const SLOT_NAME_MAX = 40
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this rejects
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 
-/** Ready, every planned event and page written, and no agent run yet. */
+export const hasControlCharacters = (text: string): boolean =>
+	CONTROL_CHARACTERS.test(text)
+
+/** Ready, every planned event and page written, no agent run yet, and the
+ * whole corpus planned: a seed cut with --limit-sources writes everything it
+ * planned and is still not the demo's wiki. */
 export function isFullySeeded(manifest: LeaseManifest): boolean {
 	return (
 		manifest.state === "ready" &&
 		!manifest.hasAgentRun &&
+		(manifest.limitSources ?? null) === null &&
 		manifest.eventsPlanned > 0 &&
 		manifest.pagesPlanned > 0 &&
 		manifest.eventsWritten === manifest.eventsPlanned &&
@@ -119,6 +127,7 @@ export function leaseManifestOf(doc: unknown): LeaseManifest | null {
 			(isDoc(doc.agentRun) ? text(doc.agentRun.state) : undefined) ??
 			text(doc.agentRunState) ??
 			"",
+		limitSources: count(doc.limitSources) ?? null,
 	}
 }
 
@@ -155,7 +164,7 @@ export function normalizeSlotName(raw: string): string {
 	if (
 		name.length === 0 ||
 		name.length > SLOT_NAME_MAX ||
-		CONTROL_CHARACTERS.test(name)
+		hasControlCharacters(name)
 	) {
 		throw new LeaseError(
 			"INVALID_NAME",

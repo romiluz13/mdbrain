@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { dataOf } from "../../../lib/demo-data/states.js"
 import { leaseLabel } from "../../../lib/demo-presenter/client.js"
 import { runProgress } from "../../../lib/demo-presenter/progress.js"
 import { useDemo } from "../demo-context.js"
@@ -17,12 +18,7 @@ export function PresenterBar() {
 	const [rename, setRename] = useState("")
 	const [confirmingPin, setConfirmingPin] = useState(false)
 	const { lease, request, busy, message, actions } = presenter
-	const record =
-		data.run.kind === "ready"
-			? data.run.data
-			: data.run.kind === "incomplete"
-				? data.run.data
-				: undefined
+	const record = dataOf(data.run)
 	const progress = runProgress({
 		request,
 		agentRun: lease ? record?.agentRun : undefined,

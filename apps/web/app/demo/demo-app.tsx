@@ -144,13 +144,15 @@ export function DemoApp() {
 				: stored,
 		[stored, cursorView],
 	)
-	const cut = useMemo(
-		() =>
-			cursorView && storedGraph && storedLayout
-				? graphAt(storedGraph, storedLayout, cursorView.state.visible)
-				: null,
-		[cursorView, storedGraph, storedLayout],
-	)
+	// A ring on the graph is the recorded contradiction, so a cursor before the
+	// detector recorded it draws the pages unflagged.
+	const ringed = data.contradiction.kind === "ready"
+	const cut = useMemo(() => {
+		const source = ringed ? storedGraph : baseGraph
+		return cursorView && source && storedLayout
+			? graphAt(source, storedLayout, cursorView.state.visible)
+			: null
+	}, [cursorView, ringed, storedGraph, baseGraph, storedLayout])
 	const graph = cursorView ? (cut?.graph ?? null) : storedGraph
 	const layout = cursorView ? (cut?.layout ?? null) : storedLayout
 	const sources = useMemo(() => createSourceReader(DEMO_UPSTREAM), [])

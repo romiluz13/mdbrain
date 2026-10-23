@@ -46,6 +46,60 @@ function storedAt(changes: MdbrainWikiChange[], cursor: number) {
 	return { pages: pages.size, claims }
 }
 
+type ListedPage = { slug: string; createdAt: string; links: string[] }
+
+/** The pages as the API's own list stored them, with when each was created and
+ * what it links to: a record the revision feed does not derive from. */
+function listedPages(world: World): ListedPage[] {
+	const bySlug = new Map<string, ListedPage>()
+	for (const entry of world.responses) {
+		if (entry.url.pathname !== "/api/demo/v1/wiki" || entry.status !== 200) {
+			continue
+		}
+		const body = entry.body as {
+			pages: Array<{
+				slug: string
+				createdAt: string
+				relationships: Array<{ targetPageSlug?: unknown }>
+			}>
+		}
+		for (const page of body.pages) {
+			bySlug.set(page.slug, {
+				slug: page.slug,
+				createdAt: page.createdAt,
+				links: page.relationships.flatMap((r) =>
+					typeof r.targetPageSlug === "string" ? [r.targetPageSlug] : [],
+				),
+			})
+		}
+	}
+	return [...bySlug.values()]
+}
+
+/** A mid-recording cursor that ends an instant (the next revision was stored
+ * later), so the order within one instant does not matter. The pages' own
+ * creation times then settle which pages exist, and with them the graph: its
+ * pages and the distinct links among them. */
+function settledCursor(changes: MdbrainWikiChange[], listed: ListedPage[]) {
+	for (let n = Math.floor(changes.length / 2); n < changes.length; n++) {
+		const at = Date.parse(changes[n - 1]?.createdAt ?? "")
+		const next = Date.parse(changes[n]?.createdAt ?? "")
+		if (!(next > at)) continue
+		const existing = listed.filter((p) => Date.parse(p.createdAt) <= at)
+		const visible = new Set(existing.map((p) => p.slug))
+		const pairs = new Set<string>()
+		for (const page of existing) {
+			for (const target of page.links) {
+				if (visible.has(target) && target !== page.slug) {
+					pairs.add([page.slug, target].sort().join("|"))
+				}
+			}
+		}
+		return { cursor: n, pages: existing.length, links: pairs.size }
+	}
+	throw new Error("the fixture has no mid-recording instant to stop at")
+}
+
 const plural = (n: number, noun: string) =>
 	`${n} ${n === 1 ? noun : `${noun}s`}`
 
@@ -241,21 +295,51 @@ test.describe("public mode", () => {
 		const slider = page.getByTestId("playback-slider")
 		await expect(slider).toBeVisible()
 		const changes = changesOf(world)
-		const cursor = Math.max(2, Math.floor(changes.length / 2))
+		const listed = listedPages(world)
+		const settled = settledCursor(changes, listed)
+		const cursor = settled.cursor
 		await slider.fill(String(cursor))
 		await expect(page.getByTestId("change-row").first()).toBeVisible()
-		const rows = await page.getByTestId("change-row").count()
-		expect(rows).toBeLessThanOrEqual(Math.min(12, cursor))
+		const rows = page.getByTestId("change-row")
+		await expect(rows).toHaveCount(Math.min(12, cursor))
+		const stored = new Set(
+			changes
+				.slice(0, cursor)
+				.map(
+					(change) =>
+						`${change.title ?? change.pageSlug} revision ${change.revision}`,
+				),
+		)
+		for (const row of await rows.all()) {
+			const heading = (await row.locator("p").first().innerText())
+				.replace(/\s+/g, " ")
+				.trim()
+			expect(
+				stored.has(heading),
+				`${heading} was not stored by revision ${cursor}`,
+			).toBe(true)
+		}
 		await expect(page.locator('[data-stat="revisions"]')).toContainText(
 			String(cursor),
 		)
 		await expect(page.locator('[data-stat="pages-touched"]')).toContainText(
-			String(storedAt(changes, cursor).pages),
+			String(settled.pages),
 		)
+		await expect(
+			page.getByText(
+				`${plural(settled.links, "link")} between ${plural(settled.pages, "page")}`,
+			),
+		).toBeVisible()
+
 		await openChapter(page, "growth")
 		await expect(slider).toBeVisible()
+		const there = await revisionOf(page)
 		await expect(page.locator('[data-stat="pages"]').first()).toContainText(
-			String(storedAt(changes, await revisionOf(page)).pages),
+			String(storedAt(changes, there).pages),
+		)
+		await slider.fill(String(cursor))
+		await expect(page.locator('[data-stat="pages"]').first()).toContainText(
+			String(settled.pages),
 		)
 	})
 
@@ -292,6 +376,24 @@ test.describe("public mode", () => {
 		)
 		expect(await rows.count()).toBe(Math.min(30, changes.length))
 		await expect(page.getByTestId("change-row").first()).toBeVisible()
+	})
+
+	test("says so, and still shows the final state, when the change feed cannot be read", async ({
+		page,
+		context,
+	}) => {
+		test.slow()
+		const world = createWorld()
+		await installWorld(context, world)
+		await context.route("**/api/demo/v1/wiki/changes*", (route) =>
+			route.fulfill({ status: 502, body: "bad gateway" }),
+		)
+		await openChapter(page, "changes")
+		const fallback = page.getByTestId("playback-fallback")
+		await expect(fallback).toBeVisible()
+		await expect(fallback).toContainText("The change feed could not be read.")
+		await expect(page.getByTestId("playback-slider")).toHaveCount(0)
+		await expect(page.getByTestId("recorded-label")).toBeVisible()
 	})
 
 	test("has no serious accessibility violations with the recording on screen", async ({

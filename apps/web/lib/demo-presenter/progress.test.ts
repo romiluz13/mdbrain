@@ -51,6 +51,19 @@ describe("runProgress", () => {
 		expect(late.label).toContain("runner")
 	})
 
+	it("says the runner went quiet when it claimed the run and no run record followed", () => {
+		const quiet = runProgress({
+			request: request({
+				state: "claimed",
+				claimedAt: "2026-10-23T12:07:00.000Z",
+			}),
+			agentRun: undefined,
+			now: NOW,
+		})
+		expect(quiet.stage).toBe("no-runner")
+		expect(quiet.label).toContain("quiet")
+	})
+
 	it("follows the agent run itself once it exists", () => {
 		for (const state of ["running", "complete", "incomplete"] as const) {
 			expect(

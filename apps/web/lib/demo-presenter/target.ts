@@ -9,7 +9,7 @@
 
 import type { DemoProxyEnv } from "../demo-data/proxy.js"
 import type { DemoRunEnv } from "../demo-data/proxy-run.js"
-import type { PresenterConfig } from "./config.js"
+import { readKeyOf, type PresenterConfig } from "./config.js"
 import type { LeaseManifest, LeaseService, ManifestReader } from "./lease.js"
 import type { PinService } from "./pin.js"
 import { sessionIdOf, type SessionService } from "./session.js"
@@ -45,20 +45,20 @@ export type TargetDeps = {
 
 const PIN_TTL_MS = 5_000
 
+const notReadable = (message: string): TargetResult => ({
+	ok: false,
+	status: 503,
+	code: "SLOT_NOT_READABLE",
+	message,
+})
+
 function slotTarget(
 	config: PresenterConfig,
 	manifest: LeaseManifest,
 	mode: DemoTarget["mode"],
 ): TargetResult {
-	const readKey = config.readKeys[manifest.slotIndex - 1]
-	if (!readKey) {
-		return {
-			ok: false,
-			status: 503,
-			code: "SLOT_NOT_READABLE",
-			message: "this slot has no read key on the server",
-		}
-	}
+	const readKey = readKeyOf(config, manifest.slotIndex)
+	if (!readKey) return notReadable("this slot has no read key on the server")
 	return {
 		ok: true,
 		target: {
@@ -118,8 +118,14 @@ export function createTargetResolver(deps: TargetDeps) {
 				const lease = session
 					? await deps.leases.current(session.presenterId)
 					: null
-				const manifest = lease ? await deps.manifests.get(lease.runId) : null
-				if (manifest) return slotTarget(deps.config, manifest, "presenter")
+				if (lease) {
+					const manifest = await deps.manifests.get(lease.runId)
+					// The page says it is live on this slot, so a slot that cannot be
+					// read is an error, not the public run.
+					return manifest
+						? slotTarget(deps.config, manifest, "presenter")
+						: notReadable("this slot's run record could not be read")
+				}
 			}
 			return publicTarget()
 		},

@@ -47,3 +47,14 @@ export function viewAt<T extends Parts>(
 		contradiction: recorded ? contradiction : { kind: "empty" },
 	}
 }
+
+/** Why a recording page has nothing to play: the read that is missing. */
+export function noRecordingReason(
+	data: Pick<Parts, "map" | "changes">,
+): string {
+	if (data.map.kind !== "ready") return "The page list could not be read."
+	if (data.changes.kind === "empty") {
+		return "The run stored no revisions to play back."
+	}
+	return "The change feed could not be read."
+}

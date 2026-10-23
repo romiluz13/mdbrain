@@ -50,21 +50,31 @@ const KEEPALIVE_MS = 10_000
 /** While a run is queued or claimed the request's state is what moves. */
 const WATCH_MS = 2_500
 
-const DEFAULT: PresenterSnapshot | null = null
+const LOST = "The server did not answer. The page keeps trying."
 
 /** The presenter's state and actions. A visitor's page never gets a presenter
  * control: anything but a confirmed presenter state reads as public. */
 export function usePresenter(): Presenter {
 	const client = useMemo(() => createPresenterClient(), [])
-	const [snapshot, setSnapshot] = useState<PresenterSnapshot | null>(DEFAULT)
+	const [snapshot, setSnapshot] = useState<PresenterSnapshot | null>(null)
 	const [busy, setBusy] = useState<string | null>(null)
 	const [message, setMessage] = useState<PresenterMessage | null>(null)
 	const csrf = useRef("")
+	const presentingNow = useRef(false)
 
 	const refresh = useCallback(async () => {
 		const next = await client.state()
+		if (next.mode === "unavailable") {
+			// One failed read must not end a presenter's session on screen; the
+			// poll keeps going and the next good read puts the page right.
+			if (presentingNow.current) setMessage({ tone: "info", text: LOST })
+			else setSnapshot({ mode: "public" })
+			return
+		}
+		presentingNow.current = next.mode === "presenter"
 		csrf.current = next.mode === "presenter" ? next.csrf : ""
 		setSnapshot(next)
+		setMessage((current) => (current?.text === LOST ? null : current))
 	}, [client])
 
 	useEffect(() => {

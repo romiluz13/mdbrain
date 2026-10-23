@@ -5,7 +5,8 @@
 
 import type { AgentRunRecord } from "../demo-data/run-record.js"
 import {
-	RUN_REQUEST_QUEUE_MAX_AGE_MS,
+	EXPIRED_REASON,
+	requestIsStale,
 	type RunRequestDoc,
 } from "./run-requests.js"
 
@@ -20,10 +21,11 @@ export type RunStage =
 
 export type RunProgress = { stage: RunStage; label: string }
 
-const EXPIRED_REASON = "no runner picked the request up in time"
-
 export function runProgress(input: {
-	request: Pick<RunRequestDoc, "state" | "requestedAt" | "failureReason"> | null
+	request: Pick<
+		RunRequestDoc,
+		"state" | "requestedAt" | "claimedAt" | "failureReason"
+	> | null
 	agentRun: Pick<AgentRunRecord, "state"> | undefined
 	now: Date
 }): RunProgress {
@@ -59,13 +61,18 @@ export function runProgress(input: {
 		return { stage: "failed", label: "The runner ended without a run record." }
 	}
 	if (request.state === "claimed") {
-		return {
-			stage: "queued",
-			label: "The runner has the run and is starting it.",
-		}
+		return requestIsStale(request, now)
+			? {
+					stage: "no-runner",
+					label:
+						"The runner took the run and went quiet. Restart the runner worker, then run the agents again.",
+				}
+			: {
+					stage: "queued",
+					label: "The runner has the run and is starting it.",
+				}
 	}
-	return now.getTime() - Date.parse(request.requestedAt) >
-		RUN_REQUEST_QUEUE_MAX_AGE_MS
+	return requestIsStale(request, now)
 		? noRunner
 		: { stage: "queued", label: "Waiting for the runner to pick the run up." }
 }

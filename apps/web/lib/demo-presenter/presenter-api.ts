@@ -16,6 +16,7 @@ import {
 import { PinError, type PinService } from "./pin.js"
 import { ProposalError, type ProposalService } from "./proposals.js"
 import {
+	EXPIRED_REASON,
 	RunRequestError,
 	type RunRequestDoc,
 	type RunRequestService,
@@ -45,7 +46,6 @@ export type PresenterServices = {
 }
 
 const BODY_MAX = 2_000
-const EXPIRED_REASON = "no runner picked the request up in time"
 
 type Route = {
 	method: "GET" | "POST"
@@ -135,6 +135,7 @@ const leaseView = (lease: LeaseDoc) => ({
 const requestView = (request: RunRequestDoc) => ({
 	state: request.state,
 	requestedAt: request.requestedAt,
+	...(request.claimedAt ? { claimedAt: request.claimedAt } : {}),
 	...(request.failureReason === EXPIRED_REASON
 		? { failureReason: EXPIRED_REASON }
 		: {}),

@@ -18,6 +18,7 @@ export function leaseLabel(lease: LeaseView): string {
 export type RequestView = {
 	state: "queued" | "claimed" | "done" | "failed"
 	requestedAt: string
+	claimedAt?: string
 	failureReason?: string
 }
 export type PresenterSnapshot =
@@ -28,6 +29,10 @@ export type PresenterSnapshot =
 			lease: LeaseView | null
 			request: RequestView | null
 	  }
+
+/** What a state read came back with. "unavailable" is a read that failed or
+ * made no sense, which says nothing about who is looking. */
+export type StateRead = PresenterSnapshot | { mode: "unavailable" }
 
 export type ActionResult =
 	| { ok: true; body: Record<string, unknown> }
@@ -76,21 +81,22 @@ export function createPresenterClient(
 	}
 
 	return {
-		async state(): Promise<PresenterSnapshot> {
+		async state(): Promise<StateRead> {
 			try {
 				const response = await fetchImpl(`${base}/state`, {
 					credentials: "same-origin",
 					cache: "no-store",
 				})
-				if (!response.ok) return { mode: "public" }
+				if (!response.ok) return { mode: "unavailable" }
 				const body = (await response.json()) as Partial<PresenterSnapshot> & {
 					csrf?: unknown
 				}
+				if (body.mode === "public") return { mode: "public" }
 				return body.mode === "presenter" && typeof body.csrf === "string"
 					? (body as PresenterSnapshot)
-					: { mode: "public" }
+					: { mode: "unavailable" }
 			} catch {
-				return { mode: "public" }
+				return { mode: "unavailable" }
 			}
 		},
 		signIn: (token: string) => send("session", { token }, null),

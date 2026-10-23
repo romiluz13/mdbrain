@@ -397,4 +397,18 @@ describe("mapAt", () => {
 		expect(mapAt(withOne, state, true).unresolvedContradictionCount).toBe(1)
 		expect(mapAt(withOne, state, false).unresolvedContradictionCount).toBe(0)
 	})
+
+	it("flags a page's contradicted claims only once the detector has recorded them", () => {
+		const flagged = {
+			...MAP,
+			pages: MAP.pages.map((p) => ({ ...p, contradictedClaims: 1 })),
+		}
+		const state = stateAt(built(), 3)
+		expect(
+			mapAt(flagged, state, true).pages.map((p) => p.contradictedClaims),
+		).toEqual([1, 1])
+		expect(
+			mapAt(flagged, state, false).pages.map((p) => p.contradictedClaims),
+		).toEqual([0, 0])
+	})
 })

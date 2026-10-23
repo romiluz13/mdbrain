@@ -1,6 +1,7 @@
 "use client"
 
 import { countOf } from "../../../lib/demo-data/plural.js"
+import { noRecordingReason } from "../../../lib/demo-data/playback-view.js"
 import { formatUtc } from "../../../lib/demo-data/views.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../modes.module.css"
@@ -39,8 +40,9 @@ function ReadyBar({ playback }: { playback: Ready }) {
 			<div className={styles.playbackHead}>
 				<h2 id="playback-heading">Watch how it was built</h2>
 				<span className={styles.playbackNote}>
-					Every number on this chapter is derived from the revisions the run
-					stored.
+					Pages, claims, revisions, the graph and the change feed follow the
+					recording. Source counts and the run's own record show their stored
+					final values.
 				</span>
 			</div>
 			<input
@@ -166,8 +168,10 @@ function Fallback({ reason }: { reason: string }) {
 			</div>
 			<p className={styles.modeText}>
 				This recording cannot be stepped through. {reason} The chapter shows the
-				final state, and the stored revisions follow in the order they were
-				stored.
+				final state
+				{rows.length > 0
+					? ", and the stored revisions follow in the order they were stored."
+					: "."}
 			</p>
 			{rows.length > 0 ? (
 				<section
@@ -197,8 +201,8 @@ function Fallback({ reason }: { reason: string }) {
 	)
 }
 
-/** The recording's controls for chapters 3 to 7. Renders nothing when the page
- * has no recording to play (the chapters then show their own states). */
+/** The recording's controls for chapters 3 to 7. A page with no recording to
+ * play says so and shows the feed it has. */
 export function PlaybackBar() {
 	const { playback, data } = useDemo()
 	if (playback.status === "ready") return <ReadyBar playback={playback} />
@@ -214,5 +218,7 @@ export function PlaybackBar() {
 		>
 			<p className={styles.modeText}>Reading the recording…</p>
 		</div>
-	) : null
+	) : (
+		<Fallback reason={noRecordingReason(data)} />
+	)
 }

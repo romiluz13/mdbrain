@@ -29,6 +29,14 @@ export function isReady<T>(
 	return state.kind === "ready"
 }
 
+/** What a state carries to show: its data when ready, or the partial data an
+ * incomplete run still has. */
+export function dataOf<T>(state: DataState<T>): T | undefined {
+	return state.kind === "ready" || state.kind === "incomplete"
+		? state.data
+		: undefined
+}
+
 /** Replaces every occurrence of a secret with "[redacted]". Used on upstream
  * error text before it can reach a response, a log line or a test assertion. */
 export function redactSecret(text: string, secret: string): string {

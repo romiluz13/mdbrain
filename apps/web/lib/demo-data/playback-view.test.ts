@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import type { ChangesView, WikiMapPage, WikiMapView } from "./loaders.js"
 import type { ContradictionCase } from "./loaders-chapters.js"
 import { buildTimeline, stateAt } from "./playback.js"
-import { viewAt } from "./playback-view.js"
+import { noRecordingReason, viewAt } from "./playback-view.js"
 import type { DataState } from "./states.js"
 
 const T = (minute: number) =>
@@ -119,5 +119,22 @@ describe("viewAt", () => {
 			contradiction: { kind: "loading" } as DataState<ContradictionCase>,
 		}
 		expect(viewAt(data, stateAt(timeline, 1), timeline)).toEqual(data)
+	})
+})
+
+describe("noRecordingReason", () => {
+	it("names which read left the page without a recording", () => {
+		const ready = { kind: "ready", data: map } as const
+		const feed = { kind: "ready", data: changes } as const
+		const down = { kind: "error", code: "X", message: "down" } as const
+		expect(noRecordingReason({ map: down, changes: feed })).toContain(
+			"page list",
+		)
+		expect(noRecordingReason({ map: ready, changes: down })).toContain(
+			"change feed",
+		)
+		expect(
+			noRecordingReason({ map: ready, changes: { kind: "empty" } }),
+		).toContain("no revisions")
 	})
 })

@@ -167,11 +167,11 @@ export function createWorld(options: WorldOptions = {}) {
 	const world = {
 		proposal: "none" as ProposalState,
 		decisions,
-		/** Every read target the resolver chose, for what the browser asked. */
 		/** Every read the proxy answered, parsed, for checks against the API. */
 		responses: [] as Array<{ url: URL; status: number; body: unknown }>,
 		/** Rewrites a served body, to model a feed the playback cannot trust. */
 		tamper: undefined as ((url: URL, body: unknown) => unknown) | undefined,
+		/** Every read target the resolver chose, for what the browser asked. */
 		resolutions: [] as Array<{
 			mode: string
 			runId: string | undefined

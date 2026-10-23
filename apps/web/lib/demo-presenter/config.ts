@@ -19,6 +19,14 @@ export type PresenterConfig = {
 	runDeadlineMs: number
 }
 
+/** The read key the server holds for a slot, or undefined when it has none. */
+export function readKeyOf(
+	config: Pick<PresenterConfig, "readKeys">,
+	slotIndex: number,
+): string | undefined {
+	return config.readKeys[slotIndex - 1]
+}
+
 const MONGO_URI = /^mongodb(\+srv)?:\/\/\S+$/
 
 /** The whole-run limit the run record is held to; it applies to public reads

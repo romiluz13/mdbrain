@@ -26,19 +26,19 @@ describe("presenter client", () => {
 		expect((init?.method ?? "GET").toUpperCase()).toBe("GET")
 	})
 
-	it("answers public when the state cannot be read, so a visitor never sees a presenter control", async () => {
+	it("answers unavailable when the state cannot be read, so the page can tell a blip from a visitor", async () => {
 		const client = createPresenterClient(
 			vi.fn(async () => {
 				throw new Error("offline")
 			}),
 		)
-		expect(await client.state()).toEqual({ mode: "public" })
+		expect(await client.state()).toEqual({ mode: "unavailable" })
 		const broken = createPresenterClient(fakeFetch({ status: 500, body: {} }))
-		expect(await broken.state()).toEqual({ mode: "public" })
+		expect(await broken.state()).toEqual({ mode: "unavailable" })
 		const odd = createPresenterClient(
 			fakeFetch({ body: { mode: "presenter" } }),
 		)
-		expect(await odd.state()).toEqual({ mode: "public" })
+		expect(await odd.state()).toEqual({ mode: "unavailable" })
 	})
 
 	it("posts JSON with the csrf token and returns the body", async () => {

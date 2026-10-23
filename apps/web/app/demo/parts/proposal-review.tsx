@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { recordedApproval } from "../../../lib/demo-data/recorded-approval.js"
+import { dataOf } from "../../../lib/demo-data/states.js"
 import { formatUtc } from "../../../lib/demo-data/views.js"
 import { useDemo } from "../demo-context.js"
 import chapter from "../chapters.module.css"
@@ -12,12 +13,7 @@ const REASON_MAX = 200
 
 function RecordedApproval() {
 	const { data, playback } = useDemo()
-	const run =
-		data.run.kind === "ready"
-			? data.run.data
-			: data.run.kind === "incomplete"
-				? (data.run.data ?? null)
-				: null
+	const run = dataOf(data.run) ?? null
 	const map = data.map.kind === "ready" ? data.map.data : null
 	const found = recordedApproval(
 		run,

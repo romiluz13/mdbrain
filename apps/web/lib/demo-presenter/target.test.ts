@@ -74,6 +74,7 @@ function rig(
 	const pins = createPinService({
 		pins: pinStore,
 		manifests: reader,
+		readable: () => true,
 		now: () => clock,
 	})
 	const pinGet = vi.spyOn(pins, "get")
@@ -256,6 +257,19 @@ describe("presenter target", () => {
 		})
 		const opened = await sessions.open()
 		await leases.acquire({ presenterId: opened.presenterId })
+		expect(await resolver.resolve(request(opened.sessionId))).toMatchObject({
+			ok: false,
+			status: 503,
+			code: "SLOT_NOT_READABLE",
+		})
+	})
+
+	it("refuses a leased slot whose run record cannot be read rather than showing the public run as the slot", async () => {
+		const manifests = [seeded(13)]
+		const { resolver, request, sessions, leases } = rig(manifests)
+		const opened = await sessions.open()
+		await leases.acquire({ presenterId: opened.presenterId })
+		manifests.length = 0
 		expect(await resolver.resolve(request(opened.sessionId))).toMatchObject({
 			ok: false,
 			status: 503,

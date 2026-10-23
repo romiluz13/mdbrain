@@ -32,8 +32,6 @@ export type TimelinePoint = {
 
 export type Timeline = {
 	points: TimelinePoint[]
-	pageTotal: number
-	claimTotal: number
 	/** Page slug to the cursor at which the page exists. */
 	createdAt: Map<string, number>
 }
@@ -119,8 +117,6 @@ export function buildTimeline(
 		ok: true,
 		timeline: {
 			points,
-			pageTotal: map.pageTotal,
-			claimTotal: [...claims.values()].reduce((sum, n) => sum + n, 0),
 			createdAt,
 		},
 	}
@@ -323,7 +319,8 @@ export function changesAt(
 
 /** The page list as it stood at the cursor. A page's trust tier, lifecycle
  * state and claim texts are the stored final values; its revision and claim
- * count are the cursor's. */
+ * count are the cursor's. Contradicted claims are counted only once the
+ * detector has recorded the contradiction. */
 export function mapAt(
 	map: WikiMapView,
 	state: PlaybackState,
@@ -337,6 +334,7 @@ export function mapAt(
 				...page,
 				revision: state.revisionByPage.get(page.slug) ?? page.revision,
 				claimCount: state.claimsByPage.get(page.slug) ?? page.claimCount,
+				contradictedClaims: contradictionRecorded ? page.contradictedClaims : 0,
 				links,
 				linkCount: links.length,
 			}

@@ -5,7 +5,7 @@
 import type { DemoProxyEnv } from "../demo-data/proxy.js"
 import type { DemoRunEnv } from "../demo-data/proxy-run.js"
 import type { ControlCollection } from "./collections.js"
-import type { PresenterConfig } from "./config.js"
+import { readKeyOf, type PresenterConfig } from "./config.js"
 import {
 	createLeaseService,
 	manifestReader,
@@ -73,11 +73,22 @@ export function createPresenterRuntime(input: {
 		}
 	}
 	const manifests = manifestReader(stores.manifests)
-	const pins = createPinService({ pins: stores.publicRun, manifests, now })
+	const readable = (manifest: { slotIndex: number }) =>
+		readKeyOf(config, manifest.slotIndex) !== undefined
+	const pins = createPinService({
+		pins: stores.publicRun,
+		manifests,
+		readable,
+		now,
+	})
 	const sessions = createSessionService({ sessions: stores.sessions, now })
+	const readySlots = readyManifestSource(stores.manifests)
 	const leases = createLeaseService({
 		leases: stores.leases,
-		manifests: readyManifestSource(stores.manifests),
+		// A slot the server cannot read would lease and then answer 503.
+		manifests: {
+			listReady: async () => (await readySlots.listReady()).filter(readable),
+		},
 		pinnedRunId: async () => (await pins.get())?.runId,
 		now,
 	})
