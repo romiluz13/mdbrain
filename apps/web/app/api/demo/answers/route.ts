@@ -4,14 +4,12 @@
 // the whole answer path server-side under D18; force-dynamic keeps Next
 // from caching it.
 
-import { createAnthropic } from "@ai-sdk/anthropic"
 import { operatorCeiling } from "@mdbrain/lib/budget"
 import { randomUUID } from "node:crypto"
 import { answerRequestDenied } from "@/lib/demo-data/answer-guards.js"
 import { createAnswerService } from "@/lib/demo-data/answer-service.js"
 import { createAnswerStore } from "@/lib/demo-data/answer-store.js"
-import { tokenCappedFetch } from "@/lib/demo-data/answer-token-cap.js"
-import { ANSWER_MAX_INPUT_TOKENS } from "@/lib/demo-data/answer-types.js"
+import { answerModel } from "@/lib/demo-data/answer-token-cap.js"
 import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
 import { readsFor } from "@/lib/demo-data/reads.js"
 import { presenterRuntime } from "@/lib/demo-presenter/server.js"
@@ -131,11 +129,7 @@ export async function POST(request: Request): Promise<Response> {
 		budget: store.budget,
 		// The spec's 8,000-token context is held in tokens: the transport counts
 		// each request before sending it, and the middleware leaves it the cap.
-		model: createAnthropic({
-			apiKey,
-			fetch: tokenCappedFetch({ maxInputTokens: ANSWER_MAX_INPUT_TOKENS }),
-		})(ANSWER_MODEL),
-		inputCap: "transport",
+		...answerModel(apiKey, { modelId: ANSWER_MODEL }),
 		ceiling,
 		agentId: env.agentId,
 	})

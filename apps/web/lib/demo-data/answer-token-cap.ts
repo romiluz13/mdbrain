@@ -4,7 +4,10 @@
 // the budget middleware runs with inputCap "transport" and keeps the same
 // reservation. When no count can be had, the byte bound applies instead,
 // which never admits more than the token cap would.
+import { createAnthropic } from "@ai-sdk/anthropic"
+import type { LanguageModelV2 } from "@ai-sdk/provider"
 import { TransportInputRefusedError } from "@mdbrain/lib/budget"
+import { ANSWER_MAX_INPUT_TOKENS } from "./answer-types.js"
 
 /** The count is an estimate that can differ from the billed input by a small
  * amount, so a request is sent only when it counts at most 98% of the cap and
@@ -130,4 +133,22 @@ export function tokenCappedFetch(options: {
 		}
 		return send(input, init)
 	}) as typeof fetch
+}
+
+/** The answer route's model: Anthropic behind the token-capped transport,
+ * with the middleware told the transport holds the cap. */
+export function answerModel(
+	apiKey: string,
+	options: { modelId: string; fetch?: typeof fetch },
+): { model: LanguageModelV2; inputCap: "transport" } {
+	return {
+		model: createAnthropic({
+			apiKey,
+			fetch: tokenCappedFetch({
+				maxInputTokens: ANSWER_MAX_INPUT_TOKENS,
+				fetch: options.fetch,
+			}),
+		})(options.modelId),
+		inputCap: "transport",
+	}
 }
