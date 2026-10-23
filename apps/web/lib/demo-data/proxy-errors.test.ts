@@ -154,6 +154,18 @@ describe("any other upstream failure", () => {
 		}
 	})
 
+	it.each([
+		"constructor",
+		"toString",
+		"__proto__",
+		"hasOwnProperty",
+		"valueOf",
+	])("treats the inherited name %s as an unknown code", async (code) => {
+		const result = await read(upstream(500, { error: { code, message: "x" } }))
+		expect(result.status).toBe(502)
+		expect(result.json).toEqual(generic)
+	})
+
 	it("never lets the read key through, even when an error echoes it", async () => {
 		const result = await read(
 			upstream(500, {
