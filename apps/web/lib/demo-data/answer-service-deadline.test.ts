@@ -21,7 +21,7 @@ const DEADLINE_MS = 50
 
 type Turn = { text: string } | { search: string }
 
-function scriptedModel(turns: Turn[]) {
+function scriptedModel(turns: Turn[], options: { slow?: boolean } = {}) {
 	const calls: number[] = []
 	let index = 0
 	const model: LanguageModelV2 = {
@@ -33,6 +33,8 @@ function scriptedModel(turns: Turn[]) {
 			// Like the provider fetch: an aborted signal sends nothing.
 			if (params.abortSignal?.aborted) throw new Error("aborted")
 			calls.push(Date.now())
+			// A provider call that keeps running past the abort.
+			if (options.slow) await new Promise((r) => setTimeout(r, SLOW_READ_MS))
 			const turn = turns[Math.min(index++, turns.length - 1)]
 			if ("search" in turn) {
 				return {
@@ -134,7 +136,11 @@ function slowReads(options: { ignoresAbort?: boolean } = {}) {
 
 function harness(
 	turns: Turn[],
-	options: { ignoresAbort?: boolean; spent?: boolean } = {},
+	options: {
+		ignoresAbort?: boolean
+		spent?: boolean
+		slowModel?: boolean
+	} = {},
 ) {
 	const lease = { holder: null as string | null, releasedAt: [] as number[] }
 	const limits: AnswerLimits = {
@@ -149,9 +155,10 @@ function harness(
 		},
 		countQuestion: async () => 1,
 	}
-	const charges = { settled: 0, uncertain: 0 }
+	const charges = { reserved: 0, settled: 0, uncertain: 0 }
 	const budget: ModelBudget = {
 		reserve: async () => {
+			charges.reserved++
 			if (options.spent) {
 				throw new BudgetExhaustedError("spent")
 			}
@@ -165,7 +172,7 @@ function harness(
 		},
 		read: async () => null,
 	}
-	const scripted = scriptedModel(turns)
+	const scripted = scriptedModel(turns, { slow: options.slowModel })
 	const given = slowReads({ ignoresAbort: options.ignoresAbort })
 	const service = createAnswerService({
 		reads: given.reads,
@@ -207,6 +214,8 @@ describe("the answer deadline covers the whole answer", () => {
 		expect(Date.now() - started).toBeLessThan(SLOW_READ_MS / 2)
 		expect(given.reads.signals[0]?.aborted).toBe(true)
 		expect(given.model.calls).toHaveLength(1)
+		// No step starts after the abort, so none is reserved and charged.
+		expect(given.charges).toEqual({ reserved: 1, settled: 1, uncertain: 0 })
 		expect(given.lease.holder).toBeNull()
 	})
 
@@ -224,13 +233,46 @@ describe("the answer deadline covers the whole answer", () => {
 		expect(given.lease.holder).toBeNull()
 	})
 
-	it("holds the lease until a read that ignores the abort has settled", async () => {
-		const given = harness(
-			[{ text: `The renewal is signed. ${EVENT_MARKER}` }],
-			{
-				ignoresAbort: true,
-			},
-		)
+	it("cancels before any model call when the visitor left while the lease was taken", async () => {
+		const given = harness([{ text: `The renewal is signed. ${EVENT_MARKER}` }])
+		const visitor = new AbortController()
+		visitor.abort()
+		const outcome = await given.service.answer({
+			question: QUESTION,
+			visitorId: "visitor-1",
+			signal: visitor.signal,
+		})
+		expect(outcome).toEqual({ state: "canceled" })
+		expect(given.model.calls).toHaveLength(0)
+		expect(given.charges.reserved).toBe(0)
+		expect(given.lease.holder).toBeNull()
+	})
+
+	it.each([
+		{
+			read: "the cite validation",
+			turns: [{ text: `The renewal is signed. ${EVENT_MARKER}` }],
+			spent: false,
+			charges: { reserved: 1, settled: 1, uncertain: 0 },
+		},
+		{
+			read: "a tool read",
+			turns: [{ search: "renewal" }, { text: "Done." }],
+			spent: false,
+			charges: { reserved: 1, settled: 1, uncertain: 0 },
+		},
+		{
+			read: "the spent-budget fallback",
+			turns: [{ text: "unused" }],
+			spent: true,
+			charges: { reserved: 1, settled: 0, uncertain: 0 },
+		},
+	])("holds the lease until $read, ignoring the abort, has settled", async ({
+		turns,
+		spent,
+		charges,
+	}) => {
+		const given = harness(turns, { ignoresAbort: true, spent })
 		const pending = given.service.answer({
 			question: QUESTION,
 			visitorId: "visitor-1",
@@ -242,8 +284,26 @@ describe("the answer deadline covers the whole answer", () => {
 		expect(await pending).toEqual({ state: "refused", reason: "deadline" })
 		expect(given.reads.settled).toBe(1)
 		expect(given.lease.holder).toBeNull()
-		// The completed model call stays charged at its reported usage.
-		expect(given.charges).toEqual({ settled: 1, uncertain: 0 })
+		// A completed model call stays charged at its reported usage.
+		expect(given.charges).toEqual(charges)
+	})
+
+	it("holds the lease and the model's reservation while a model call that ignores the abort runs", async () => {
+		const given = harness([{ text: "The renewal is signed." }], {
+			slowModel: true,
+		})
+		const pending = given.service.answer({
+			question: QUESTION,
+			visitorId: "visitor-1",
+		})
+		await new Promise((resolve) => setTimeout(resolve, SLOW_READ_MS / 2))
+		// Past the deadline the call still runs: the lane and the reservation
+		// stay held, and nothing is released at zero.
+		expect(given.lease.holder).toBe("visitor-1")
+		expect(given.charges).toEqual({ reserved: 1, settled: 0, uncertain: 0 })
+		expect(await pending).toEqual({ state: "refused", reason: "deadline" })
+		expect(given.charges).toEqual({ reserved: 1, settled: 1, uncertain: 0 })
+		expect(given.lease.holder).toBeNull()
 	})
 
 	it("bounds the spent-budget fallback read by the same deadline", async () => {

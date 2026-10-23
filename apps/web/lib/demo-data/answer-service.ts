@@ -327,6 +327,8 @@ export function createAnswerService(input: {
 		const deadline = setTimeout(() => controller.abort(), deadlineMs)
 		const disconnect = () => controller.abort()
 		signal?.addEventListener("abort", disconnect, { once: true })
+		// The visitor may have left while the lease was being taken.
+		if (signal?.aborted) controller.abort()
 		const stopped = (): AnswerOutcome | undefined => {
 			// The visitor disconnected: nothing to show, nothing owed.
 			if (signal?.aborted) return { state: "canceled" }
@@ -336,6 +338,7 @@ export function createAnswerService(input: {
 		}
 		let outcome: AnswerOutcome
 		try {
+			controller.signal.throwIfAborted()
 			const result = await generateText({
 				model,
 				system: ANSWER_SYSTEM_PROMPT,
@@ -347,7 +350,12 @@ export function createAnswerService(input: {
 					read_conflicts: readConflicts,
 					cite_source: citeSource,
 				},
-				stopWhen: stepCountIs(ANSWER_MAX_TOOL_STEPS),
+				// A stopped answer starts no further step: the SDK would reserve it
+				// and the abort would charge the full reservation, unsent.
+				stopWhen: [
+					stepCountIs(ANSWER_MAX_TOOL_STEPS),
+					() => controller.signal.aborted,
+				],
 				abortSignal: controller.signal,
 				// The reservation is the whole retry allowance: none beyond it.
 				maxRetries: 0,
