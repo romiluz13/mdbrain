@@ -67,14 +67,17 @@ async function askApi(
 	return isExactReader(body, env) ? "reader" : "refused"
 }
 
-/** One check per process: a settled verdict is kept for the env it was asked
- * about; a check that could not finish is not kept, so the next read asks
- * again, and it never passes. */
+/** One verdict per key and scope for the process: a settled verdict is kept
+ * for the env it was asked about, so a public read and a presenter's slot read
+ * ask once each however they alternate. A check that could not finish is not
+ * kept, so the next read asks again, and it never passes. Reads that arrive
+ * while a check is out share it. */
 export function createReadKeyCheck(
 	options: { timeoutMs?: number } = {},
 ): ReadKeyCheck {
 	const timeoutMs = options.timeoutMs ?? CHECK_TIMEOUT_MS
-	let settled: { id: string; reader: boolean } | null = null
+	const settled = new Map<string, boolean>()
+	const asking = new Map<string, Promise<boolean>>()
 	return async (env, fetchImpl) => {
 		const id = JSON.stringify([
 			env.apiBaseUrl,
@@ -82,13 +85,25 @@ export function createReadKeyCheck(
 			env.scope,
 			env.scopeRef,
 		])
-		if (settled?.id === id) {
-			return settled.reader
+		const known = settled.get(id)
+		if (known !== undefined) {
+			return known
 		}
-		const verdict = await askApi(env, fetchImpl, timeoutMs)
-		if (verdict !== "unknown") {
-			settled = { id, reader: verdict === "reader" }
+		const pending = asking.get(id)
+		if (pending) {
+			return pending
 		}
-		return verdict === "reader"
+		const check = askApi(env, fetchImpl, timeoutMs).then((verdict) => {
+			if (verdict !== "unknown") {
+				settled.set(id, verdict === "reader")
+			}
+			return verdict === "reader"
+		})
+		asking.set(id, check)
+		try {
+			return await check
+		} finally {
+			asking.delete(id)
+		}
 	}
 }

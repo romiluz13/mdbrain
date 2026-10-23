@@ -27,9 +27,10 @@ export class PinError extends Error {
 export function createPinService(deps: {
 	pins: ControlCollection<PinDoc>
 	manifests: ManifestReader
-	/** Whether the server can read this run: a pin it cannot read would leave
-	 * public mode on another run while the page says it pinned this one. */
-	readable: (manifest: LeaseManifest) => boolean
+	/** Whether the server can read this run as a visitor would, with a key that
+	 * reads exactly its scope: a pin it cannot read would leave public mode on
+	 * another run while the page says it pinned this one. */
+	readable: (manifest: LeaseManifest) => boolean | Promise<boolean>
 	now: () => Date
 }) {
 	return {
@@ -46,10 +47,10 @@ export function createPinService(deps: {
 					"only a run whose agents finished can be pinned for public mode",
 				)
 			}
-			if (!deps.readable(manifest)) {
+			if (!(await deps.readable(manifest))) {
 				throw new PinError(
 					"RUN_NOT_READABLE",
-					"this server has no read key for that run's slot, so it could not play it back",
+					"this server has no exact read-only key for that run's slot, so it could not play it back",
 				)
 			}
 			const fields = {

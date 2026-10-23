@@ -162,6 +162,40 @@ describe("the read key check", () => {
 		)
 	})
 
+	it("keeps one verdict per key, so alternating keys ask once each", async () => {
+		const check = createReadKeyCheck()
+		const other: DemoProxyEnv = {
+			...env,
+			readKey: "write-capable-key",
+			scopeRef: "demo-run-13",
+		}
+		const api = upstream(() =>
+			Promise.resolve(
+				api.calls.at(-1)?.headers.get("authorization") ===
+					"Bearer write-capable-key"
+					? json({ ...reader, capabilities: ["read", "write"] })
+					: json(reader),
+			),
+		)
+		const verdicts: boolean[] = []
+		for (const target of [env, other, env, other, env]) {
+			verdicts.push(await check(target, api.fetch))
+		}
+		expect(verdicts).toEqual([true, false, true, false, true])
+		expect(api.calls).toHaveLength(2)
+	})
+
+	it("asks once for two reads that arrive together", async () => {
+		const check = createReadKeyCheck()
+		const api = upstream(() => json(reader))
+		const verdicts = await Promise.all([
+			check(env, api.fetch),
+			check(env, api.fetch),
+		])
+		expect(verdicts).toEqual([true, true])
+		expect(api.calls).toHaveLength(1)
+	})
+
 	it("gives up on an API that does not answer in time, and asks again next read", async () => {
 		const calls: number[] = []
 		const hanging = ((_input: RequestInfo | URL, init?: RequestInit) => {

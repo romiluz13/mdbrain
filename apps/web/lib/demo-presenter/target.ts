@@ -52,24 +52,36 @@ const notReadable = (message: string): TargetResult => ({
 	message,
 })
 
+/** How the server reads a slot's run: the slot's own key from the ring, over
+ * the scope and agent its manifest names. Undefined when the ring has no key
+ * for the slot. */
+export function slotEnv(
+	config: PresenterConfig,
+	manifest: Pick<LeaseManifest, "slotIndex" | "scopeRef" | "agentId">,
+): DemoProxyEnv | undefined {
+	const readKey = readKeyOf(config, manifest.slotIndex)
+	if (!readKey) return undefined
+	return {
+		apiBaseUrl: config.apiBaseUrl,
+		readKey,
+		scope: "workspace",
+		scopeRef: manifest.scopeRef,
+		agentId: manifest.agentId,
+	}
+}
+
 function slotTarget(
 	config: PresenterConfig,
 	manifest: LeaseManifest,
 	mode: DemoTarget["mode"],
 ): TargetResult {
-	const readKey = readKeyOf(config, manifest.slotIndex)
-	if (!readKey) return notReadable("this slot has no read key on the server")
+	const env = slotEnv(config, manifest)
+	if (!env) return notReadable("this slot has no read key on the server")
 	return {
 		ok: true,
 		target: {
 			mode,
-			env: {
-				apiBaseUrl: config.apiBaseUrl,
-				readKey,
-				scope: "workspace",
-				scopeRef: manifest.scopeRef,
-				agentId: manifest.agentId,
-			},
+			env,
 			run: { controlUri: config.controlUri, runId: manifest.runId },
 		},
 	}
