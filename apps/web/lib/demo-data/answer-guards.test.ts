@@ -76,4 +76,31 @@ describe("answerRequestDenied", () => {
 			),
 		).toMatchObject({ status: 403, code: "ANSWER_CROSS_SITE" })
 	})
+
+	it("allows a same-origin post whose server URL names another host, as next start reports localhost", () => {
+		const behind = (headers: Record<string, string>): Request =>
+			new Request("http://localhost:3060/api/demo/answers", {
+				method: "POST",
+				headers: { "content-type": "application/json", ...headers },
+			})
+		expect(
+			answerRequestDenied(
+				behind({ host: "127.0.0.1:3060", origin: "http://127.0.0.1:3060" }),
+			),
+		).toBeNull()
+		expect(
+			answerRequestDenied(
+				behind({
+					host: "127.0.0.1:3060",
+					"x-forwarded-host": "demo.example.org",
+					origin: "https://demo.example.org",
+				}),
+			),
+		).toBeNull()
+		expect(
+			answerRequestDenied(
+				behind({ host: "127.0.0.1:3060", origin: "http://127.0.0.1:4000" }),
+			),
+		).toMatchObject({ status: 403, code: "ANSWER_CROSS_SITE" })
+	})
 })

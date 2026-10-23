@@ -15,14 +15,24 @@ const JSON_CONTENT_TYPE = /^application\/json(?:\s*;|$)/i
 
 const CROSS_SITE_MESSAGE = "the answer route only serves its own site"
 
-/** An Origin header value is a URL whose origin must be the request's own. */
+/** An Origin header value is a URL whose host must be the request's own.
+ * `next start` reports `localhost` in request.url whatever the browser
+ * used, so the Host and forwarded host count too, as the presenter's
+ * same-origin check does. */
 function namesAnotherOrigin(request: Request, origin: string): boolean {
+	let originHost: string
 	try {
-		return new URL(origin).origin !== new URL(request.url).origin
+		originHost = new URL(origin).host
 	} catch {
 		// Not a URL: treat it as a foreign origin and refuse.
 		return true
 	}
+	const hosts = [
+		request.headers.get("host"),
+		request.headers.get("x-forwarded-host"),
+		new URL(request.url).host,
+	]
+	return !hosts.some((host) => host !== null && host === originHost)
 }
 
 export function answerRequestDenied(
