@@ -10,10 +10,9 @@ import { randomUUID } from "node:crypto"
 import { answerRequestDenied } from "@/lib/demo-data/answer-guards.js"
 import { createAnswerService } from "@/lib/demo-data/answer-service.js"
 import { createAnswerStore } from "@/lib/demo-data/answer-store.js"
-import { readDemoProxyEnv } from "@/lib/demo-data/proxy.js"
 import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
-import { readDemoRunEnv } from "@/lib/demo-data/proxy-run.js"
 import { readsFor } from "@/lib/demo-data/reads.js"
+import { presenterRuntime } from "@/lib/demo-presenter/server.js"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -78,10 +77,14 @@ export async function POST(request: Request): Promise<Response> {
 			{ status: denied.status, headers: jsonHeaders },
 		)
 	}
-	const env = readDemoProxyEnv(process.env)
-	if (!env) {
+	// The answer is about the run the page shows: the pinned run for a visitor,
+	// the leased slot for a presenter. The same resolver the read proxy uses
+	// decides it, so a citation in an answer resolves against the same run.
+	const resolved = await presenterRuntime().resolver.resolve(request)
+	if (!resolved.ok) {
 		return notConfigured()
 	}
+	const { env, run } = resolved.target
 	const ceiling = operatorCeiling(process.env, ANSWER_CEILING_ENV)
 	if (ceiling <= 0) {
 		// Off is a public state, not an error: the lane says so.
@@ -91,11 +94,10 @@ export async function POST(request: Request): Promise<Response> {
 		})
 	}
 	// The same gate as the read proxy: only an exact read-only reader of the
-	// pinned scope may answer anonymous visitors.
+	// target's scope may answer anonymous visitors.
 	if (!(await checkReadKey(env, fetch))) {
 		return notConfigured()
 	}
-	const run = readDemoRunEnv(process.env)
 	const apiKey = process.env.ANTHROPIC_API_KEY?.trim() ?? ""
 	if (!run || !apiKey) {
 		return notConfigured()

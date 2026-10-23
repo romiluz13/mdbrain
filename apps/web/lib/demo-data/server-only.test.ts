@@ -43,6 +43,7 @@ describe("the control database stays on the server", () => {
 
 	it("reaches the presenter routes only through the one server module", () => {
 		expect(importing(/["']\S*demo-presenter\/server(\.js)?["']/)).toEqual([
+			"app/api/demo/answers/route.ts",
 			"app/api/demo/presenter/[...action]/route.ts",
 			"app/api/demo/v1/[[...path]]/route.ts",
 		])
