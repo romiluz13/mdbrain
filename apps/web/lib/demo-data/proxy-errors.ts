@@ -74,7 +74,10 @@ export async function upstreamFailureResponse(
 	response: Response,
 ): Promise<Response> {
 	const code = codeOf(await response.text())
-	const known = code ? PASSED_THROUGH[code] : undefined
+	const known =
+		code && Object.hasOwn(PASSED_THROUGH, code)
+			? PASSED_THROUGH[code]
+			: undefined
 	if (!code || !known) {
 		return proxyError(
 			502,

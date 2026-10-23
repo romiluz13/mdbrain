@@ -110,7 +110,9 @@ const row = (
 			options.writer ??
 			(needs === "read" || needs === "write" ? "allowed" : "refused"),
 		proposer:
-			proposerNeeds === "read" || proposerNeeds === "propose"
+			proposerNeeds === "none" ||
+			proposerNeeds === "read" ||
+			proposerNeeds === "propose"
 				? "allowed"
 				: "refused",
 	}
@@ -138,6 +140,9 @@ const TABLE: Row[] = [
 	row("POST", "/v1/write-structured", "/v1/write-structured", "write"),
 	row("POST", "/v1/write-procedure", "/v1/write-procedure", "write"),
 	row("POST", "/v1/profile", "/v1/profile", "read"),
+	row("GET", "/v1/principal/self", "/v1/principal/self", "none", {
+		writer: "allowed",
+	}),
 	row("GET", "/v1/state", "/v1/state", "read"),
 	row("GET", "/v1/admin/deliveries", "/v1/admin/deliveries", "administer"),
 	row(
