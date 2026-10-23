@@ -61,7 +61,7 @@ Set with `fly secrets set`:
 | Variable | Meaning |
 |---|---|
 | `MDBRAIN_API_KEY` | The admin key the API boots with (production refuses unauthenticated `/v1`) |
-| `MDBRAIN_WIKI_MONGODB_URI` | The Atlas cluster's connection string. The API does not boot without it |
+| `MDBRAIN_WIKI_MONGODB_URI` | The Atlas cluster's connection string. Without it the API still listens, but `/ready` answers 503 and every wiki route fails |
 | `MDBRAIN_WIKI_DATABASE` | `mdbrain_demo_wiki`. Required: left unset, the wiki engine uses `mdbrain_wiki`, a new database on the cluster |
 | `MEMONGO_API_URL` | Memongo's private-network address (`...internal`), never a public URL |
 | `MEMONGO_API_KEY` | The key the API uses against Memongo |
@@ -78,11 +78,11 @@ Set with `fly secrets set`:
 |---|---|
 | `MEMONGO_API_HOST` | `0.0.0.0` |
 | `MEMONGO_FORCE_MONGODB_URI` | The Atlas cluster's connection string. The force form wins over any URI in a Memongo config file, as the demo stack sets it |
-| `MEMONGO_MONGODB_DATABASE` | `mdbrain_demo_memory`. Required: left unset, Memongo uses `memongo`, a new database on the cluster |
+| `MEMONGO_MONGODB_DATABASE` | `mdbrain_demo_memory`. Required: left unset, and with no Memongo config file naming one, Memongo uses `memongo`, a new database on the cluster |
 | `MEMONGO_API_KEY` | The key the API presents |
 | `VOYAGE_API_KEY` | The Atlas Model API key Memongo's reranker and embedding checks call. Its usage bills to the Atlas account that issued it |
 
-The two database names are the only ones the demo may use (`scripts/demo-stack-config.ts` refuses any other). Check them before the first `fly deploy`: a wrong or missing name writes to a database outside the demo.
+The two database names are the only ones the demo may use. The local demo stack hard-codes them (`scripts/demo-stack-config.ts`), but nothing checks the Fly secrets, so check both names by hand before the first `fly deploy`: a wrong or missing name writes to a database outside the demo.
 
 ### Agent runner (Fly.io, on demand)
 
@@ -105,7 +105,7 @@ The operator's runbook. Each step is a human action; nothing below runs itself.
 
 1. **Atlas, as is.** The `mdbrain_demo_*` databases exist with the seeded run (decision D3). Note the control-database access-list point above.
 2. **Fly apps.** Create three apps: the API, Memongo, the agent runner. Give Memongo no public IP: `fly ips allocate-v6 --private` (a Flycast address); machines still bind `0.0.0.0` and the proxy terminates TLS.
-3. **Memongo first.** `fly deploy` the Memongo image with its three variables. The API cannot boot healthy without it.
+3. **Memongo first.** `fly deploy` the Memongo image with its five variables. The API cannot boot healthy without it.
 4. **The API.** `fly deploy` from the repo root with `apps/api/Dockerfile`; set the API secrets (table above) with `MEMONGO_API_URL` pointing at Memongo's `...internal` address. Check `fly status` and the health check (`/health`, `/ready`).
 5. **The read key.** Create it as its section above: policy into `MDBRAIN_API_SCOPED_KEYS`, token into the Worker's `MDBRAIN_DEMO_READ_KEY`.
 6. **The web.** In `apps/web`, set the `[vars]`, then `wrangler secret put` the four secrets, then `bun run deploy` (OpenNext build and deploy; the build must exit 0). The route is not public until the smoke passes.

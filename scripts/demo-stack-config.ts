@@ -210,7 +210,7 @@ export type DemoPresenterScopedKeyPolicy = {
 
 /** Scoped-key policy for the presenter's review-queue key: administer only,
  * one exact grant per slot and never a wildcard (decision D29), so it can
- * decide proposals in the slots and read nothing. */
+ * list and decide proposals in the slots, and nothing outside them. */
 export function buildDemoPresenterScopedKey(
 	token: string,
 	slotCount: number,
