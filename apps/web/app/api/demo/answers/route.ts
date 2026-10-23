@@ -11,6 +11,7 @@ import { answerRequestDenied } from "@/lib/demo-data/answer-guards.js"
 import { createAnswerService } from "@/lib/demo-data/answer-service.js"
 import { createAnswerStore } from "@/lib/demo-data/answer-store.js"
 import { readDemoProxyEnv } from "@/lib/demo-data/proxy.js"
+import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
 import { readDemoRunEnv } from "@/lib/demo-data/proxy-run.js"
 import { readsFor } from "@/lib/demo-data/reads.js"
 
@@ -28,6 +29,8 @@ const VISITOR_COOKIE_MAX_AGE_S = 60 * 60 * 24
 const VISITOR_COOKIE_PATTERN = /[A-Za-z0-9_-]{1,64}/
 
 const jsonHeaders = { "content-type": "application/json" } as const
+
+const checkReadKey = createReadKeyCheck()
 
 const notConfigured = (): Response =>
 	new Response(
@@ -86,6 +89,11 @@ export async function POST(request: Request): Promise<Response> {
 			status: 200,
 			headers: jsonHeaders,
 		})
+	}
+	// The same gate as the read proxy: only an exact read-only reader of the
+	// pinned scope may answer anonymous visitors.
+	if (!(await checkReadKey(env, fetch))) {
+		return notConfigured()
 	}
 	const run = readDemoRunEnv(process.env)
 	const apiKey = process.env.ANTHROPIC_API_KEY?.trim() ?? ""
