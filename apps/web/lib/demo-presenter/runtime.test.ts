@@ -373,12 +373,13 @@ describe("createPresenterRuntime", () => {
 		const boot = (over: {
 			fetchImpl?: typeof fetch
 			ensureIndexes?: () => Promise<void>
+			stores?: ReturnType<typeof stores>
 		}) =>
 			createPresenterRuntime({
 				config: CONFIG,
 				baselineEnv: BASELINE,
 				baselineRun: null,
-				stores: stores(),
+				stores: over.stores ?? stores(),
 				proposalsClient: noProposals,
 				fetchImpl: over.fetchImpl ?? principals(),
 				...(over.ensureIndexes ? { ensureIndexes: over.ensureIndexes } : {}),
@@ -438,12 +439,8 @@ describe("createPresenterRuntime", () => {
 		})
 
 		it("serves a signed-in presenter the public run while presenter mode is off", async () => {
-			let failing = false
-			const runtime = boot({
-				ensureIndexes: async () => {
-					if (failing) throw new Error("index build failed")
-				},
-			})
+			const shared = stores()
+			const runtime = boot({ stores: shared })
 			const login = await signInOnce(runtime)
 			const sessionId = /demo_presenter=([^;]+)/.exec(
 				login.headers.get("set-cookie") ?? "",
@@ -470,9 +467,10 @@ describe("createPresenterRuntime", () => {
 					}),
 				)
 			expect(await read()).toMatchObject({ target: { mode: "presenter" } })
-			// A fresh process whose index can no longer be made.
-			failing = true
+			// A fresh process over the same control database, whose index can no
+			// longer be made: the session and the lease are still there.
 			const off = boot({
+				stores: shared,
 				ensureIndexes: async () => {
 					throw new Error("index build failed")
 				},

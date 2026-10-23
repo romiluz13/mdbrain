@@ -12,7 +12,7 @@ import type { DemoRunEnv } from "../demo-data/proxy-run.js"
 import { readKeyOf, type PresenterConfig } from "./config.js"
 import type { LeaseManifest, LeaseService, ManifestReader } from "./lease.js"
 import type { PinService } from "./pin.js"
-import { sessionIdOf, type SessionService } from "./session.js"
+import { isSessionId, sessionIdOf, type SessionService } from "./session.js"
 
 export type DemoTarget = {
 	mode: "public" | "presenter"
@@ -135,7 +135,11 @@ export function createTargetResolver(deps: TargetDeps) {
 	return {
 		async resolve(request: Request): Promise<TargetResult> {
 			const sessionId = sessionIdOf(request)
-			if (deps.config && sessionId !== "" && (await (deps.ready?.() ?? true))) {
+			if (
+				deps.config &&
+				isSessionId(sessionId) &&
+				(await (deps.ready?.() ?? true))
+			) {
 				const session = await deps.sessions.lookup(sessionId)
 				const lease = session
 					? await deps.leases.current(session.presenterId)

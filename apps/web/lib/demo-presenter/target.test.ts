@@ -57,7 +57,11 @@ const seeded = (
 
 function rig(
 	manifests: LeaseManifest[],
-	options: { config?: PresenterConfig | null; baseline?: boolean } = {},
+	options: {
+		config?: PresenterConfig | null
+		baseline?: boolean
+		ready?: () => Promise<boolean>
+	} = {},
 ) {
 	let clock = NOW
 	const sessionStore = new MemoryCollection<SessionDoc>()
@@ -94,6 +98,7 @@ function rig(
 		pins,
 		now: () => clock,
 		pinTtlMs: 5000,
+		...(options.ready ? { ready: options.ready } : {}),
 	})
 	const request = (sessionId?: string) =>
 		new Request("http://demo.test/api/demo/v1/wiki", {
@@ -248,6 +253,20 @@ describe("presenter target", () => {
 			ok: true,
 			target: { mode: "public" },
 		})
+	})
+
+	it("asks whether presenter mode is ready only for a cookie shaped like a session, so a forged one costs nothing", async () => {
+		const ready = vi.fn(async () => true)
+		const { resolver, request, sessions } = rig([seeded(13)], { ready })
+		for (const forged of ["junk", "x".repeat(44), "x".repeat(10_000)]) {
+			expect(await resolver.resolve(request(forged))).toMatchObject({
+				target: { mode: "public" },
+			})
+		}
+		expect(ready).not.toHaveBeenCalled()
+		const opened = await sessions.open()
+		await resolver.resolve(request(opened.sessionId))
+		expect(ready).toHaveBeenCalledTimes(1)
 	})
 
 	it("refuses a leased slot that has no read key rather than reading with another", async () => {

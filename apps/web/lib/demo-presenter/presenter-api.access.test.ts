@@ -177,6 +177,17 @@ describe("presenter API: failed sign-ins", () => {
 		).toBe(200)
 	})
 
+	it("counts a burst of parallel guesses as it arrives, not after the first answers", async () => {
+		const context = rig([seeded(13)])
+		const answers = await Promise.all(
+			Array.from({ length: 15 }, () =>
+				call(context.services, { path: "session", body: { token: "wrong" } }),
+			),
+		)
+		expect(answers.filter((answer) => answer.status === 401)).toHaveLength(10)
+		expect(answers.filter((answer) => answer.status === 429)).toHaveLength(5)
+	})
+
 	it("does not count a successful sign-in", async () => {
 		const context = rig([seeded(13)])
 		for (let attempt = 0; attempt < 12; attempt++) {

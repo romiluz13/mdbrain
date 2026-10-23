@@ -55,6 +55,9 @@ export function verifyPresenterToken(
  * shape cannot be a session, so it never costs a lookup. */
 const SESSION_ID_SHAPE = /^[A-Za-z0-9_-]{43}$/
 
+export const isSessionId = (value: string): boolean =>
+	SESSION_ID_SHAPE.test(value)
+
 export type SessionDeps = {
 	sessions: ControlCollection<SessionDoc>
 	now: () => Date
@@ -80,7 +83,7 @@ export function createSessionService(deps: SessionDeps) {
 			return { sessionId, presenterId: idOf(sessionId), csrf, expiresAt }
 		},
 		async lookup(sessionId: string): Promise<Session | null> {
-			if (!SESSION_ID_SHAPE.test(sessionId)) return null
+			if (!isSessionId(sessionId)) return null
 			const doc = await deps.sessions.findOne({
 				_id: idOf(sessionId),
 				expiresAt: { $gt: deps.now() },

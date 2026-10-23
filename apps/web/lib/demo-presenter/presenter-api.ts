@@ -271,7 +271,7 @@ async function signIn(request: Request, services: PresenterServices) {
 	const refused = checkSameOriginJson(request)
 	if (refused) return refusal(refused)
 	const address = clientAddress(request.headers)
-	const allowed = services.signIns.check(address)
+	const allowed = services.signIns.begin(address)
 	if (allowed === "no-address" || address === undefined) {
 		return failure(
 			403,
@@ -295,9 +295,9 @@ async function signIn(request: Request, services: PresenterServices) {
 	if (fields instanceof Response) return fields
 	const token = typeof fields.token === "string" ? fields.token : ""
 	if (!services.verifyToken(token)) {
-		services.signIns.fail(address)
 		return failure(401, "INVALID_TOKEN", "That is not the presenter token.")
 	}
+	services.signIns.succeed(address)
 	const opened = await services.sessions.open()
 	const secure =
 		new URL(request.url).protocol === "https:" ||
