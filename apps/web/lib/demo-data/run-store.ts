@@ -62,13 +62,19 @@ export function controlClient(
 	return client
 }
 
+export function controlDb(
+	uri: string,
+	timeoutMs: number = SELECTION_TIMEOUT_MS,
+) {
+	return controlClient(uri, timeoutMs).db(CONTROL_DATABASE)
+}
+
 export function createRunManifestSource(
 	env: DemoRunEnv,
 	timeoutMs: number = SELECTION_TIMEOUT_MS,
 ): RunManifestSource {
 	return (runId) =>
-		controlClient(env.controlUri, timeoutMs)
-			.db(CONTROL_DATABASE)
+		controlDb(env.controlUri, timeoutMs)
 			.collection<{ _id: string }>(MANIFESTS)
 			.findOne({ _id: runId }, { projection: PROJECTION })
 }

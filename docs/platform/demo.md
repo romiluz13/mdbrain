@@ -29,6 +29,8 @@ The proxy forwards one fixed list of reads and refuses everything else (other me
 | `MDBRAIN_DEMO_SCOPE` | The scope, default `workspace` |
 | `MDBRAIN_DEMO_CONTROL_URI` | The demo control database's connection string, for the run read only (see below) |
 | `MDBRAIN_DEMO_RUN_ID` | The pinned run's id: the `_id` of its stored record, as the seeding driver named it (for example `live-check-b-2026-10-20T11-29-54.742Z`). It is not the scope reference or the agent id |
+| `MDBRAIN_DEMO_ANSWER_TOKENS` | The answer service's global daily ceiling of counted tokens, counted in the control database alongside the budget. There is no default: unset, `0` or malformed turns the answer lane off. Optional |
+| `ANTHROPIC_API_KEY` | The key the answer service's small model (`claude-haiku-5-5`) runs under. It is used by the answer route only, never by the reads or the browser. Optional: without it the answer route answers `503` |
 
 Without the first four the route answers `503 PROXY_NOT_CONFIGURED`. The scope reference and the agent id must match `[A-Za-z0-9_-]{1,128}`; the run id may also hold `.` and `:`. The last two are optional: without either, the run read answers `503 RUN_NOT_CONFIGURED` and nothing else changes.
 

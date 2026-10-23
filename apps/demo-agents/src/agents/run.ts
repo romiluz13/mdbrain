@@ -13,7 +13,7 @@
 import { parseArgs } from "node:util"
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { MdbrainClient } from "@mdbrain/client"
-import { createModelBudget } from "../budget.js"
+import { createModelBudget } from "@mdbrain/lib/budget"
 import { DEMO_MODEL } from "../corpus/render-config.js"
 import { readRecords, readWorld } from "../corpus/corpus-files.js"
 import {
