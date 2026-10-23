@@ -37,8 +37,8 @@ const PROJECTION = {
 
 // A MongoClient is a pool, and the driver's guidance is one per process, reused
 // across requests. Next re-evaluates a route's modules on a dev reload, and a
-// module-level client would be orphaned each time with its pool open, so the
-// client is held on globalThis under a fixed key in every mode.
+// module-level client would be orphaned each time with its pool open, so on Node
+// the client is held on globalThis under a fixed key (Workers: see below).
 const CLIENT_KEY = Symbol.for("mdbrain.demo.control-client")
 type Holder = typeof globalThis & { [CLIENT_KEY]?: MongoClient }
 
