@@ -1155,7 +1155,8 @@ export class MdbrainClient {
 
 	/** The review queue: new pages proposed through memory add that wait for a
 	 *  decision, oldest first, each with the page it would create and who
-	 *  proposed it. Needs a key with the administer capability. */
+	 *  proposed it. Needs a key with the administer capability; a key with
+	 *  scope grants must pass a scope and scopeRef it holds. */
 	async listProposals(
 		input: MdbrainListProposalsInput = {},
 		requestOptions?: MdbrainRequestOptions,
@@ -1174,7 +1175,9 @@ export class MdbrainClient {
 
 	/** Approves a pending proposal and publishes its page. Approving twice
 	 *  returns the same result, which is why a retry is safe. Needs the
-	 *  administer capability; a proposal whose proposer was revoked rejects with
+	 *  administer capability and, for a key with scope grants, a grant covering
+	 *  the proposal's own scope (the API reads it from the proposal, so no scope
+	 *  is sent); a proposal whose proposer was revoked rejects with
 	 *  PROPOSER_REVOKED. */
 	async approveProposal(
 		input: MdbrainApproveProposalInput,
@@ -1192,7 +1195,8 @@ export class MdbrainClient {
 
 	/** Rejects a pending proposal for good: it is never promoted and its page
 	 *  never appears in a wiki read. Rejecting twice returns the same result.
-	 *  Needs the administer capability. */
+	 *  Needs the administer capability and, for a key with scope grants, a grant
+	 *  covering the proposal's own scope. */
 	async rejectProposal(
 		input: MdbrainRejectProposalInput,
 		requestOptions?: MdbrainRequestOptions,

@@ -739,6 +739,23 @@ function decidedApproveOutcome(
 	return undefined
 }
 
+/** The agent and scope an operation was recorded under, which an admin
+ *  decision on it is authorized against. These fields never change after the
+ *  intent is recorded (a replay with other values is a conflict). */
+export async function readMemoryDeliveryOwner(
+	operationId: string,
+): Promise<{ agentId: string; scope: string; scopeRef: string } | null> {
+	const handle = await getWikiStoreHandle()
+	const intent = await getMemoryDeliveryIntent(handle, operationId)
+	return intent
+		? {
+				agentId: intent.agentId,
+				scope: intent.scope,
+				scopeRef: intent.scopeRef,
+			}
+		: null
+}
+
 /**
  * Approves and executes one promotion-pending intent that was recorded
  * under approval mode. The original principal is re-authorized at its

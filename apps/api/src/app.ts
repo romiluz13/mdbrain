@@ -6,6 +6,7 @@ import { mdbrainBridgeCheckReadiness } from "@mdbrain/memory-bridge"
 import type { ApiEnvironment, AuthorizedRequestScope } from "./api-context.js"
 import { openApiSpec } from "./openapi-spec.js"
 import {
+	authorizePrincipalCapability,
 	authorizePrincipalRequest,
 	createDevelopmentPrincipal,
 	isProposalOnlyPrincipal,
@@ -141,11 +142,6 @@ async function authorizeScopedApiKey(
 			? explicitScopeRefs
 			: stringFieldValues(input, "containerTag")
 	const scope = scopes[0]
-	const requestScope: AuthorizedRequestScope = {
-		...(agentIds[0] ? { agentId: agentIds[0] } : {}),
-		...(scope && isMemoryScope(scope) ? { scope } : {}),
-		...(scopeRefs[0] ? { scopeRef: scopeRefs[0] } : {}),
-	}
 	const conflict =
 		agentIds.length > 1
 			? "conflicting agentId values are not allowed"
@@ -154,12 +150,28 @@ async function authorizeScopedApiKey(
 				: scopeRefs.length > 1
 					? "conflicting scopeRef values are not allowed"
 					: null
+	const validationError =
+		scope !== undefined && !isMemoryScope(scope)
+			? SCOPE_VALIDATION_MESSAGE
+			: null
+	// The route checks the operation's own scope; a scope the request names is
+	// neither authorized nor passed on.
+	if (isOperationDecision(c)) {
+		return {
+			requestScope: {},
+			validationError,
+			forbidden:
+				conflict ?? authorizePrincipalCapability(principal, "administer"),
+		}
+	}
+	const requestScope: AuthorizedRequestScope = {
+		...(agentIds[0] ? { agentId: agentIds[0] } : {}),
+		...(scope && isMemoryScope(scope) ? { scope } : {}),
+		...(scopeRefs[0] ? { scopeRef: scopeRefs[0] } : {}),
+	}
 	return {
 		requestScope,
-		validationError:
-			scope !== undefined && !isMemoryScope(scope)
-				? SCOPE_VALIDATION_MESSAGE
-				: null,
+		validationError,
 		forbidden:
 			conflict ??
 			authorizePrincipalRequest(principal, {
@@ -199,6 +211,21 @@ const WRITE_POST_PATHS = new Set([
 // The two memory writes through which a proposal-only principal may propose a
 // new page; every other write route still asks for `write`.
 const PROPOSE_POST_PATHS = new Set(["/v1/add", "/v1/write-event"])
+
+// Approve, reject and redrive act on one stored operation. They are matched
+// here by the same shapes the router registers, so the scope check moves to
+// the route, which compares the caller's grants with the operation's scope.
+const OPERATION_DECISION_PATHS = [
+	/^\/v1\/admin\/wiki-promotions\/[^/]+\/(approve|reject)$/,
+	/^\/v1\/admin\/deliveries\/[^/]+\/redrive$/,
+]
+
+function isOperationDecision(c: Context<ApiEnvironment>): boolean {
+	return (
+		c.req.method === "POST" &&
+		OPERATION_DECISION_PATHS.some((pattern) => pattern.test(c.req.path))
+	)
+}
 
 function requiredCapability(
 	c: Context<ApiEnvironment>,

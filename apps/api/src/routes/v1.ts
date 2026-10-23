@@ -71,7 +71,10 @@ import {
 	withRevisionMarkers,
 } from "../lib/citations.js"
 import { parseWikiChangesQuery } from "../lib/changes-query.js"
-import { isProposalOnlyPrincipal } from "../principal.js"
+import {
+	authorizePrincipalRequest,
+	isProposalOnlyPrincipal,
+} from "../principal.js"
 import { jsonError } from "../lib/errors.js"
 import {
 	approvePendingWikiPromotion,
@@ -79,6 +82,7 @@ import {
 	buildMemoryWikiPromotion,
 	deliverMemoryWrite,
 	MemoryDeliveryDispatchError,
+	readMemoryDeliveryOwner,
 	redriveDeadLetteredMemoryDelivery,
 	wikiPromotionApprovalRequired,
 } from "../memory-delivery-runtime.js"
@@ -93,6 +97,8 @@ import {
 
 const MAX_LIST_LIMIT = 100
 export const MAX_REJECTION_REASON = 500
+const OPERATION_OUTSIDE_GRANTS =
+	"operation is not in a scope this API key may administer"
 const MAX_HISTORY_LIMIT = 200
 const VALID_SCOPE_VALUES = [
 	"session",
@@ -2154,6 +2160,42 @@ export function createV1Router(): Hono<ApiEnvironment> {
 		}
 	})
 
+	// A decision is authorized against the operation's own agent and scope, not
+	// a scope the request names. A key whose grants cover every scope needs no
+	// lookup. For any other key, an operation outside its grants and one that
+	// does not exist get the same refusal, so the answer tells nothing about
+	// operations the key may not see.
+	async function refuseOperationOutsideGrants(
+		c: Context<ApiEnvironment>,
+		operationId: string,
+	): Promise<Response | null> {
+		const principal = getApiPrincipal(c)
+		if (!authorizePrincipalRequest(principal, { capability: "administer" })) {
+			return null
+		}
+		let owner: Awaited<ReturnType<typeof readMemoryDeliveryOwner>>
+		try {
+			owner = await readMemoryDeliveryOwner(operationId)
+		} catch {
+			return jsonError(
+				c,
+				500,
+				"OPERATION_LOOKUP_FAILED",
+				"Unable to check the operation's scope",
+			)
+		}
+		if (
+			!owner ||
+			authorizePrincipalRequest(principal, {
+				...owner,
+				capability: "administer",
+			})
+		) {
+			return jsonError(c, 403, "FORBIDDEN", OPERATION_OUTSIDE_GRANTS)
+		}
+		return null
+	}
+
 	// Approves a promotion-pending memory delivery that was recorded under
 	// approval mode (MDBRAIN_WIKI_PROMOTION_REQUIRE_APPROVAL, or a proposal-only
 	// principal's write). Approving twice returns the same result. Gated to the
@@ -2170,6 +2212,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"operationId path parameter is required",
 			)
 		}
+		const refusal = await refuseOperationOutsideGrants(c, operationId)
+		if (refusal) return refusal
 		const result = await approvePendingWikiPromotion({ operationId })
 		if (!result.ok) {
 			return jsonError(c, result.status, result.code, result.message)
@@ -2194,6 +2238,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"operationId path parameter is required",
 			)
 		}
+		const refusal = await refuseOperationOutsideGrants(c, operationId)
+		if (refusal) return refusal
 		const body = (await c.req.json().catch(() => ({}))) as Record<
 			string,
 			unknown
@@ -2235,6 +2281,8 @@ export function createV1Router(): Hono<ApiEnvironment> {
 				"operationId path parameter is required",
 			)
 		}
+		const refusal = await refuseOperationOutsideGrants(c, operationId)
+		if (refusal) return refusal
 		const result = await redriveDeadLetteredMemoryDelivery({ operationId })
 		if (!result.ok) {
 			return jsonError(c, result.status, result.code, result.message)

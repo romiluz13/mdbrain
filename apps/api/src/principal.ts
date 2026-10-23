@@ -421,6 +421,21 @@ export function principalIdentityRefusal(
 	return null
 }
 
+/** Identity and capability only, for a request whose scope comes from the
+ *  record it acts on rather than from the request. */
+export function authorizePrincipalCapability(
+	principal: ApiPrincipal,
+	capability: PrincipalCapability,
+	now = new Date(),
+): string | null {
+	return (
+		principalIdentityRefusal(principal, now) ??
+		(principal.capabilities.includes(capability)
+			? null
+			: "capability is not allowed for this API key")
+	)
+}
+
 export function authorizePrincipalRequest(
 	principal: ApiPrincipal,
 	request: PrincipalRequestAuthority,
