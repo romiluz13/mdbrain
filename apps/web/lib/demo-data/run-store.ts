@@ -3,6 +3,7 @@
 // other collection or database. Server-only: the driver and the connection
 // string never reach a browser bundle.
 
+import { AsyncLocalStorage } from "node:async_hooks"
 import { MongoClient } from "mongodb"
 import type { DemoRunEnv, RunManifestSource } from "./proxy-run.js"
 
@@ -41,23 +42,59 @@ const PROJECTION = {
 const CLIENT_KEY = Symbol.for("mdbrain.demo.control-client")
 type Holder = typeof globalThis & { [CLIENT_KEY]?: MongoClient }
 
-/** The process's one client for the control database. Creating it opens no
- * connection: the driver connects on the first operation. */
-export function controlClient(
-	uri: string,
-	timeoutMs: number = SELECTION_TIMEOUT_MS,
-): MongoClient {
-	const holder = globalThis as Holder
-	const held = holder[CLIENT_KEY]
-	if (held !== undefined) {
-		return held
-	}
-	const client = new MongoClient(uri, {
+// Cloudflare Workers forbid I/O on behalf of another request, so a pooled
+// socket made in one request hangs the next one that reuses it. There each
+// request gets its own client, opened in the route's scope and closed when
+// the route's work ends.
+const requestClients = new AsyncLocalStorage<Map<string, MongoClient>>()
+
+const onWorkers = (): boolean =>
+	globalThis.navigator?.userAgent === "Cloudflare-Workers"
+
+const newClient = (uri: string, timeoutMs: number): MongoClient =>
+	new MongoClient(uri, {
 		appName: "mdbrain-demo-web",
 		maxPoolSize: 5,
 		serverSelectionTimeoutMS: timeoutMs,
 		connectTimeoutMS: timeoutMs,
 	})
+
+/** Runs one route's work in its own control scope. On Workers the scope's
+ * clients are closed when the work settles; on Node the process client stays
+ * open. */
+export async function withControlScope<T>(work: () => Promise<T>): Promise<T> {
+	const clients = new Map<string, MongoClient>()
+	try {
+		return await requestClients.run(clients, work)
+	} finally {
+		await Promise.allSettled([...clients.values()].map((c) => c.close()))
+	}
+}
+
+/** The client for the control database: the process's one client on Node,
+ * the current request's own client on Workers. Creating it opens no
+ * connection: the driver connects on the first operation. */
+export function controlClient(
+	uri: string,
+	timeoutMs: number = SELECTION_TIMEOUT_MS,
+): MongoClient {
+	if (onWorkers()) {
+		const clients = requestClients.getStore()
+		if (clients === undefined) {
+			throw new Error(
+				"the control database is reached only inside a request scope on this runtime",
+			)
+		}
+		const scoped = clients.get(uri) ?? newClient(uri, timeoutMs)
+		clients.set(uri, scoped)
+		return scoped
+	}
+	const holder = globalThis as Holder
+	const held = holder[CLIENT_KEY]
+	if (held !== undefined) {
+		return held
+	}
+	const client = newClient(uri, timeoutMs)
 	holder[CLIENT_KEY] = client
 	return client
 }

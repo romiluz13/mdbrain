@@ -32,6 +32,8 @@ describe("the control database stays on the server", () => {
 	it("is reached by one module, and that module only by the demo routes' stores", () => {
 		expect(importing(/from "mongodb"/)).toEqual(["lib/demo-data/run-store.ts"])
 		expect(importing(/["']\S*run-store(\.js)?["']/)).toEqual([
+			"app/api/demo/answers/route.ts",
+			"app/api/demo/presenter/[...action]/route.ts",
 			"app/api/demo/v1/[[...path]]/route.ts",
 			"lib/demo-data/answer-store.ts",
 			"lib/demo-presenter/server.ts",
@@ -39,6 +41,28 @@ describe("the control database stays on the server", () => {
 		expect(importing(/["']\S*answer-store(\.js)?["']/)).toEqual([
 			"app/api/demo/answers/route.ts",
 		])
+	})
+
+	it("is reached by each demo route only inside that request's control scope", () => {
+		const routes = importing(/["']\S*run-store(\.js)?["']/).filter((path) =>
+			path.startsWith("app/"),
+		)
+		expect(routes).toHaveLength(3)
+		for (const route of routes) {
+			const source = readFileSync(join(WEB, route), "utf8")
+			const handlers = source.match(
+				/export (?:async function|const) (GET|POST)\b/g,
+			)
+			expect(handlers, route).not.toBeNull()
+			for (const handler of handlers ?? []) {
+				const name = handler.split(/\s/).pop()
+				expect(source, `${route} ${name}`).toMatch(
+					new RegExp(
+						`export const ${name} =[^\\n]*\\n?[^\\n]*withControlScope\\(`,
+					),
+				)
+			}
+		}
 	})
 
 	it("reaches the presenter routes only through the one server module", () => {

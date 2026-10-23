@@ -30,6 +30,66 @@ describe("controlClient", () => {
 	})
 })
 
+// On Cloudflare Workers a socket made in one request cannot serve another,
+// so a pooled client shared across requests hangs the next request that
+// reuses its connection (measured under workerd: every other back-to-back
+// read was canceled as hung).
+describe("controlClient on the Workers runtime", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+	const onWorkers = () =>
+		vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" })
+
+	it("gives each request scope its own client, reused within the scope and closed when it ends", async () => {
+		onWorkers()
+		const { controlClient, withControlScope } = await import("./run-store.js")
+		const seen: Array<{ close(): Promise<void> }> = []
+		const closes: Array<ReturnType<typeof vi.fn>> = []
+		for (const _ of [1, 2]) {
+			await withControlScope(async () => {
+				const client = controlClient(URI)
+				expect(controlClient(URI)).toBe(client)
+				const close = vi.fn(async () => undefined)
+				client.close = close
+				closes.push(close)
+				seen.push(client)
+			})
+		}
+		expect(seen[0]).not.toBe(seen[1])
+		for (const close of closes) expect(close).toHaveBeenCalledTimes(1)
+	})
+
+	it("closes the scope's client when the work throws, and rethrows", async () => {
+		onWorkers()
+		const { controlClient, withControlScope } = await import("./run-store.js")
+		const close = vi.fn(async () => undefined)
+		await expect(
+			withControlScope(async () => {
+				controlClient(URI).close = close
+				throw new Error("route failed")
+			}),
+		).rejects.toThrow("route failed")
+		expect(close).toHaveBeenCalledTimes(1)
+	})
+
+	it("refuses to open the control database outside a request scope", async () => {
+		onWorkers()
+		const { controlClient } = await import("./run-store.js")
+		expect(() => controlClient(URI)).toThrow(/request scope/)
+	})
+
+	it("keeps the one process client on Node, open across scopes", async () => {
+		const { controlClient, withControlScope } = await import("./run-store.js")
+		const clients = []
+		for (const _ of [1, 2]) {
+			clients.push(await withControlScope(async () => controlClient(URI)))
+		}
+		expect(clients[0]).toBe(clients[1])
+		expect(clients[0]).toBe(controlClient(URI))
+	})
+})
+
 describe("createRunManifestSource", () => {
 	const source = () =>
 		createRunManifestSource({ controlUri: URI, runId: "demo-run-9" }, FAST)

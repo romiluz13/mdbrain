@@ -99,11 +99,22 @@ describe("the driver-bound presenter runtime", () => {
 		expect(opened).not.toHaveBeenCalled()
 	})
 
-	it("builds the runtime once per process", async () => {
+	it("builds the runtime once per process, and reaches the control client at each operation", async () => {
 		const { presenterRuntime } = await freshServer()
-		expect(presenterRuntime(ENV)).toBe(presenterRuntime(ENV))
-		expect(opened).toHaveBeenCalledTimes(1)
-		expect(opened).toHaveBeenCalledWith("mongodb://control.test/")
+		const { handlePresenterRequest } = await import("./presenter-api.js")
+		const runtime = presenterRuntime(ENV)
+		expect(presenterRuntime(ENV)).toBe(runtime)
+		// A held client would carry one request's sockets into the next on
+		// Workers, so the stores ask for the current request's client each time.
+		expect(opened).not.toHaveBeenCalled()
+		await signIn(runtime.services, handlePresenterRequest)
+		const afterFirst = opened.mock.calls.length
+		expect(afterFirst).toBeGreaterThan(0)
+		await signIn(runtime.services, handlePresenterRequest)
+		expect(opened.mock.calls.length).toBeGreaterThan(afterFirst)
+		expect(new Set(opened.mock.calls.map(([uri]) => uri))).toEqual(
+			new Set(["mongodb://control.test/"]),
+		)
 	})
 
 	it("waits for the unique presenter index and the session expiry index before presenter mode is on", async () => {

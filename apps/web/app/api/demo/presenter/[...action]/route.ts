@@ -4,6 +4,7 @@
 // visitors reach only `state`, which answers "public" without a session.
 
 import { handlePresenterRequest } from "@/lib/demo-presenter/presenter-api.js"
+import { withControlScope } from "@/lib/demo-data/run-store.js"
 import { presenterRuntime } from "@/lib/demo-presenter/server.js"
 
 export const dynamic = "force-dynamic"
@@ -16,5 +17,7 @@ async function handle(request: Request, context: Context): Promise<Response> {
 	return handlePresenterRequest(request, action, presenterRuntime().services)
 }
 
-export const GET = handle
-export const POST = handle
+export const GET = (request: Request, context: Context) =>
+	withControlScope(() => handle(request, context))
+export const POST = (request: Request, context: Context) =>
+	withControlScope(() => handle(request, context))

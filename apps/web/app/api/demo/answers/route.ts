@@ -12,6 +12,7 @@ import { createAnswerStore } from "@/lib/demo-data/answer-store.js"
 import { answerModel } from "@/lib/demo-data/answer-token-cap.js"
 import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
 import { readsFor } from "@/lib/demo-data/reads.js"
+import { withControlScope } from "@/lib/demo-data/run-store.js"
 import { presenterRuntime } from "@/lib/demo-presenter/server.js"
 
 export const dynamic = "force-dynamic"
@@ -67,7 +68,10 @@ function readVisitorId(request: Request): {
 const cookieFor = (visitorId: string): string =>
 	`${VISITOR_COOKIE}=${visitorId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${VISITOR_COOKIE_MAX_AGE_S}`
 
-export async function POST(request: Request): Promise<Response> {
+export const POST = (request: Request): Promise<Response> =>
+	withControlScope(() => answer(request))
+
+async function answer(request: Request): Promise<Response> {
 	// R4: a cross-site text/plain form post needs no preflight, so the
 	// route refuses it here, before any env, store or key is touched.
 	const denied = answerRequestDenied(request)

@@ -11,7 +11,10 @@
 
 import { handleDemoRead } from "@/lib/demo-data/proxy.js"
 import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
-import { createRunManifestSource } from "@/lib/demo-data/run-store.js"
+import {
+	createRunManifestSource,
+	withControlScope,
+} from "@/lib/demo-data/run-store.js"
 import { readRunDeadlineMs } from "@/lib/demo-presenter/config.js"
 import { presenterRuntime } from "@/lib/demo-presenter/server.js"
 
@@ -28,7 +31,10 @@ const refused = (status: number, code: string, message: string): Response =>
 		headers: { "content-type": "application/json", vary: "cookie" },
 	})
 
-export async function GET(request: Request): Promise<Response> {
+export const GET = (request: Request): Promise<Response> =>
+	withControlScope(() => read(request))
+
+async function read(request: Request): Promise<Response> {
 	const resolved = await presenterRuntime().resolver.resolve(request)
 	if (!resolved.ok) {
 		return refused(resolved.status, resolved.code, resolved.message)
