@@ -19,9 +19,9 @@ import { serveRunRequests } from "./serve.js"
 
 const POLL_MS = 2_000
 
-async function main(): Promise<void> {
+export async function main(argv = process.argv.slice(2)): Promise<void> {
 	const { values } = parseArgs({
-		args: process.argv.slice(2),
+		args: argv,
 		options: {
 			secrets: { type: "string" },
 			once: { type: "boolean" },
