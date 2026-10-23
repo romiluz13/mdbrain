@@ -76,7 +76,10 @@ beforeEach(() => {
 		return new Response(
 			JSON.stringify(
 				key === "Bearer review-key"
-					? { capabilities: ["administer"], grants: [] }
+					? {
+							capabilities: ["administer"],
+							grants: [{ scope: "workspace", scopeRef: "demo-run-13" }],
+						}
 					: {},
 			),
 			{ headers: { "content-type": "application/json" } },

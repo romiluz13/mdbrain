@@ -17,6 +17,29 @@ const CHECK_TIMEOUT_MS = 5_000
 
 type Verdict = "administer-only" | "refused" | "unknown"
 
+// D29: the API ties a decision to the operation's own scope (347), so a key
+// granted exact slots can decide nothing else; a wildcard grant could.
+function exactGrantsOnly(grants: unknown): boolean {
+	return (
+		Array.isArray(grants) &&
+		grants.length > 0 &&
+		grants.every((grant) => {
+			const { scope, scopeRef } = (grant ?? {}) as {
+				scope?: unknown
+				scopeRef?: unknown
+			}
+			return (
+				typeof scope === "string" &&
+				typeof scopeRef === "string" &&
+				scope.length > 0 &&
+				scopeRef.length > 0 &&
+				scope !== "*" &&
+				scopeRef !== "*"
+			)
+		})
+	)
+}
+
 async function askApi(
 	target: AdminKeyTarget,
 	fetchImpl: typeof fetch,
@@ -40,13 +63,14 @@ async function askApi(
 	} catch {
 		return "unknown"
 	}
-	const capabilities =
+	const { capabilities, grants } =
 		typeof body === "object" && body !== null
-			? (body as { capabilities?: unknown }).capabilities
-			: undefined
+			? (body as { capabilities?: unknown; grants?: unknown })
+			: { capabilities: undefined, grants: undefined }
 	return Array.isArray(capabilities) &&
 		capabilities.length === 1 &&
-		capabilities[0] === "administer"
+		capabilities[0] === "administer" &&
+		exactGrantsOnly(grants)
 		? "administer-only"
 		: "refused"
 }

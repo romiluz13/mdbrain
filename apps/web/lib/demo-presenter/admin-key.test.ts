@@ -14,13 +14,17 @@ function upstream(answer: () => Response | Promise<Response>) {
 	}) as typeof fetch
 	return { fetch: impl, calls }
 }
-const principal = (capabilities: unknown) =>
+const slotGrants = [
+	{ scope: "workspace", scopeRef: "demo-run-13" },
+	{ scope: "workspace", scopeRef: "demo-run-14" },
+]
+const principal = (capabilities: unknown, grants: unknown = slotGrants) =>
 	new Response(
 		JSON.stringify({
 			subjectId: "review",
 			trustTier: "admin",
 			capabilities,
-			grants: [],
+			grants,
 		}),
 		{ headers: { "content-type": "application/json" } },
 	)
@@ -47,6 +51,22 @@ describe("the presenter key check", () => {
 		["missing", undefined],
 	])("refuses a key with %s", async (_name, capabilities) => {
 		const api = upstream(() => principal(capabilities))
+		expect(await createAdminKeyCheck()(target, api.fetch)).toBe(false)
+	})
+
+	it.each([
+		["a wildcard scope reference", [{ scope: "workspace", scopeRef: "*" }]],
+		["a wildcard scope", [{ scope: "*", scopeRef: "demo-run-13" }]],
+		["the full wildcard", [{ scope: "*", scopeRef: "*" }]],
+		[
+			"one exact grant beside a wildcard",
+			[...slotGrants, { scope: "*", scopeRef: "*" }],
+		],
+		["no grant", []],
+		["grants that are not a list", "workspace"],
+		["a grant without a scope reference", [{ scope: "workspace" }]],
+	])("refuses an administer-only key with %s, since it could decide outside the demo slots", async (_name, grants) => {
+		const api = upstream(() => principal(["administer"], grants))
 		expect(await createAdminKeyCheck()(target, api.fetch)).toBe(false)
 	})
 

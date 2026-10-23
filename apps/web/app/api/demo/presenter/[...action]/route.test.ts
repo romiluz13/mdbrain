@@ -90,7 +90,11 @@ function boot() {
 			const slot = Number(/^r(\d+)$/.exec(key)?.[1])
 			const principal =
 				key === REVIEW_KEY
-					? { capabilities: ["administer"], trustTier: "admin", grants: [] }
+					? {
+							capabilities: ["administer"],
+							trustTier: "admin",
+							grants: [{ scope: "workspace", scopeRef: "demo-run-13" }],
+						}
 					: key === "baseline"
 						? readerOf(12)
 						: slot

@@ -59,7 +59,11 @@ type Principal = {
 const reviewer: Principal = {
 	trustTier: "admin",
 	capabilities: ["administer"],
-	grants: [{ scope: "*", scopeRef: "*" }],
+	grants: [
+		{ scope: "workspace", scopeRef: "demo-run-13" },
+		{ scope: "workspace", scopeRef: "demo-run-14" },
+		{ scope: "workspace", scopeRef: "demo-run-15" },
+	],
 }
 const readerOf = (slot: number): Principal => ({
 	trustTier: "standard",
