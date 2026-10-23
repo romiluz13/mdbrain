@@ -1,0 +1,232 @@
+/* Recorded playback and the presenter's controls. Controls set the 44 px
+   target themselves so tokens.test.ts can see it in this module. */
+.modeBar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 12px;
+	margin-bottom: 12px;
+	font-size: var(--t13);
+}
+
+.modeTag {
+	flex: none;
+	padding: 2px 10px;
+	border: 1px solid var(--ink-2);
+	border-radius: var(--r1);
+	background: var(--inset);
+	color: var(--ink);
+	font-size: var(--t12);
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.modeTag[data-mode="live"] {
+	border-color: var(--scope);
+	background: var(--scope);
+	color: var(--scope-ink);
+}
+
+.modeText {
+	color: var(--ink-2);
+	max-width: 70ch;
+}
+
+.control {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: var(--target);
+	min-width: var(--target);
+	padding: 0 14px;
+	border: 1px solid var(--ink-2);
+	border-radius: var(--r1);
+	background: transparent;
+	color: var(--ink);
+	font-size: var(--t15);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.control[data-variant="primary"] {
+	border-color: var(--scope);
+	background: var(--scope);
+	color: var(--scope-ink);
+}
+
+.control:hover:not(:disabled) {
+	background: var(--inset);
+}
+
+.control[data-variant="primary"]:hover:not(:disabled) {
+	background: #1d4650;
+}
+
+.control:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.field {
+	box-sizing: border-box;
+	min-height: var(--target);
+	padding: 0 12px;
+	border: 1px solid var(--ink-2);
+	border-radius: var(--r1);
+	background: var(--panel);
+	color: var(--ink);
+	font-family: inherit;
+	font-size: var(--t15);
+}
+
+.playback {
+	display: grid;
+	gap: 12px;
+	margin-bottom: 16px;
+	padding: 16px;
+	border-radius: var(--r3);
+	background: var(--panel);
+	min-width: 0;
+}
+
+.playbackHead {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 12px;
+}
+
+.playbackHead h2 {
+	font-size: var(--t17);
+	font-weight: 700;
+	font-stretch: 112%;
+}
+
+.modeWide {
+	display: inline;
+}
+
+@media (max-width: 599px) {
+	.modeWide {
+		display: none;
+	}
+}
+
+.playbackNote {
+	color: var(--ink-2);
+	font-size: var(--t13);
+}
+
+@media (max-width: 599px) {
+	.playbackNote {
+		display: none;
+	}
+}
+
+.playbackControls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.slider {
+	width: 100%;
+	min-height: var(--target);
+	margin: 0;
+	accent-color: var(--scope);
+}
+
+.readout {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 16px;
+	color: var(--ink);
+	font-size: var(--t13);
+}
+
+.readout strong {
+	font-weight: 700;
+}
+
+.fallbackList {
+	display: grid;
+	gap: 6px;
+	max-height: 280px;
+	overflow-y: auto;
+	padding: 8px 12px;
+	border-radius: var(--r2);
+	background: var(--inset);
+	font-size: var(--t13);
+}
+
+.fallbackList li {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 12px;
+}
+
+.presenter {
+	display: grid;
+	gap: 12px;
+	margin-bottom: 16px;
+	padding: 16px;
+	border: 2px solid var(--scope);
+	border-radius: var(--r3);
+	background: var(--panel);
+	min-width: 0;
+}
+
+.presenterRow {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+}
+
+.presenterRow label {
+	display: grid;
+	gap: 2px;
+	font-size: var(--t12);
+	font-weight: 600;
+	color: var(--ink-2);
+}
+
+.message {
+	padding: 8px 12px;
+	border-radius: var(--r1);
+	background: var(--inset);
+	font-size: var(--t13);
+}
+
+.message[data-tone="error"] {
+	background: var(--signal-tint);
+	color: var(--ink);
+	border: 1px solid var(--signal-ink);
+}
+
+.proposal {
+	display: grid;
+	gap: 8px;
+	padding: 12px 16px;
+	border-radius: var(--r2);
+	background: var(--inset);
+}
+
+.proposal h3 {
+	font-size: var(--t15);
+	font-weight: 700;
+}
+
+.signIn {
+	display: grid;
+	gap: 12px;
+	max-width: 420px;
+	margin: 0 auto;
+	padding: 24px var(--gutter);
+}
+
+.signIn h1 {
+	font-size: var(--t26);
+}

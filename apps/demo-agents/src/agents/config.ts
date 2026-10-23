@@ -41,3 +41,24 @@ export function agentCeilings(
 		tokens: positiveInt(env.DEMO_AGENT_TOKENS) ?? DEFAULT_AGENT_CEILINGS.tokens,
 	}
 }
+
+/** The runner's waits that sit outside a task: the staging poll for the page
+ * the support role wrote, and the final confirm of the step events. They match
+ * DEFAULT_STAGING_DEADLINE_MS and CONFIRM_DEADLINE_MS in ./runner.ts. */
+export const STAGING_ALLOWANCE_MS = 5_000
+export const CONFIRM_ALLOWANCE_MS = 60_000
+
+/** How long a whole run may take before it counts as stopped: three tasks at
+ * their deadline plus the two waits. The web projection reads the same number
+ * from its own env (MDBRAIN_DEMO_RUN_DEADLINE_MS); a test holds the defaults
+ * equal. */
+export function agentRunDeadlineMs(
+	env: Record<string, string | undefined>,
+): number {
+	return (
+		positiveInt(env.DEMO_AGENT_RUN_DEADLINE_MS) ??
+		AGENT_ROLES.length * agentCeilings(env).taskDeadlineMs +
+			STAGING_ALLOWANCE_MS +
+			CONFIRM_ALLOWANCE_MS
+	)
+}

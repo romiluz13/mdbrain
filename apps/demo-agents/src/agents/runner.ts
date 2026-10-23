@@ -67,7 +67,16 @@ export type AgentRunOutcome = {
 	pendingProposal?: PendingProposal
 }
 
+/** The run cannot begin: it is not ready, or another worker already started
+ * it. Thrown before any state changes, so the caller must leave the run alone;
+ * it belongs to whoever started it. */
+export class RunNotStartableError extends Error {
+	name = "RunNotStartableError"
+}
+
 export type RunRoleAgentsInput = {
+	/** Who is starting the run: only this owner may end or complete it. */
+	owner?: string
 	manifests: ReturnType<typeof createRunManifests>
 	pool: { markUsed(index: number): Promise<unknown> }
 	runId: string
@@ -127,7 +136,11 @@ export async function runRoleAgents(
 		// A failed run still owns the memory it already wrote: let the
 		// fired step events land before the manifest flips.
 		await recorder.confirm(CONFIRM_DEADLINE_MS)
-		await input.manifests.markAgentRunIncomplete(input.runId, reason)
+		await input.manifests.markAgentRunIncomplete(
+			input.runId,
+			reason,
+			input.owner,
+		)
 		return {
 			state: "incomplete",
 			failureReason: reason,
@@ -259,9 +272,14 @@ export async function runRoleAgents(
 		}
 	}
 
-	const started = await input.manifests.markAgentRunStarted(input.runId)
+	const started = await input.manifests.markAgentRunStarted(
+		input.runId,
+		input.owner,
+	)
 	if (!started) {
-		throw new Error(`agent run ${input.runId} is not ready to start`)
+		throw new RunNotStartableError(
+			`agent run ${input.runId} is not ready to start`,
+		)
 	}
 
 	const support = await phase(PHASE_BY_ROLE.support, () => runTask("support"))
@@ -349,13 +367,17 @@ export async function runRoleAgents(
 		return fail(`step events: ${first.name} failed (${first.error})`)
 	}
 
-	await input.manifests.markAgentRunComplete(input.runId, {
-		usage,
-		stepsRecorded,
-		steps: confirmed.steps,
-		reusedPage,
-		pendingProposal,
-	})
+	await input.manifests.markAgentRunComplete(
+		input.runId,
+		{
+			usage,
+			stepsRecorded,
+			steps: confirmed.steps,
+			reusedPage,
+			pendingProposal,
+		},
+		input.owner,
+	)
 	await input.manifests.markUsed(input.runId)
 	await input.pool.markUsed(input.slot.index)
 	return {

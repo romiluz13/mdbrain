@@ -25,6 +25,10 @@ export class FakeCollection<T extends { _id: string }> {
 		return this.query(filter)[0] ?? null
 	}
 
+	async find(filter: Record<string, unknown>): Promise<T[]> {
+		return this.query(filter).map(clone)
+	}
+
 	async findOneAndUpdate(
 		filter: Record<string, unknown>,
 		update: Record<string, unknown>,
@@ -98,9 +102,36 @@ function matches(
 			if ((doc[key] !== undefined) !== value.$exists) return false
 			continue
 		}
+		if (isRangeOperator(value)) {
+			const actual = doc[key] as string | number | undefined
+			if (actual === undefined) return false
+			if (value.$lt !== undefined && !(actual < value.$lt)) return false
+			if (value.$lte !== undefined && !(actual <= value.$lte)) return false
+			if (value.$gt !== undefined && !(actual > value.$gt)) return false
+			if (value.$gte !== undefined && !(actual >= value.$gte)) return false
+			continue
+		}
 		if (doc[key] !== value) return false
 	}
 	return true
+}
+
+type RangeOperator = {
+	$lt?: string | number
+	$lte?: string | number
+	$gt?: string | number
+	$gte?: string | number
+}
+
+function isRangeOperator(value: unknown): value is RangeOperator {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		Object.keys(value).length > 0 &&
+		Object.keys(value).every((key) =>
+			["$lt", "$lte", "$gt", "$gte"].includes(key),
+		)
+	)
 }
 
 function isExistsOperator(value: unknown): value is { $exists: boolean } {

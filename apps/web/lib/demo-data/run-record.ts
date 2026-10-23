@@ -70,6 +70,12 @@ export type RunRecord = {
 }
 
 export const INCOMPLETE_LABEL = "The agent run stopped before it finished."
+export const DEADLINE_LABEL =
+	"The agent run passed its time limit before it finished."
+
+/** The whole-run limit. A run still "running" past it is reported incomplete
+ * instead of showing progress that is not happening (plan decision 4). */
+export type RunDeadline = { now: Date; ms: number }
 export const FAILED_LABEL = "Seeding stopped before the run was ready."
 
 export type RunRecordRefusal = "RUN_RECORD_MISMATCH" | "RUN_RECORD_MALFORMED"
@@ -147,7 +153,10 @@ function stepsOf(value: unknown): AgentStep[] | undefined {
 	return steps
 }
 
-function agentRunOf(value: unknown): AgentRunRecord | undefined {
+function agentRunOf(
+	value: unknown,
+	deadline?: RunDeadline,
+): AgentRunRecord | undefined {
 	if (!isDoc(value)) {
 		return undefined
 	}
@@ -155,6 +164,13 @@ function agentRunOf(value: unknown): AgentRunRecord | undefined {
 	const startedAt = text(value.startedAt)
 	if (!state || !AGENT_RUN_STATES.includes(state) || !startedAt) {
 		return undefined
+	}
+	if (
+		state === "running" &&
+		deadline !== undefined &&
+		deadline.now.getTime() - Date.parse(startedAt) > deadline.ms
+	) {
+		return { state: "incomplete", startedAt, incompleteLabel: DEADLINE_LABEL }
 	}
 	const endedAt = text(value.endedAt)
 	const usage = usageOf(value.usage)
@@ -209,6 +225,7 @@ function arrivalsOf(value: unknown): RunArrival[] | undefined {
 export function projectRunRecord(
 	doc: unknown,
 	pinned: { scopeRef: string; agentId: string },
+	deadline?: RunDeadline,
 ): RunProjection {
 	if (!isDoc(doc)) {
 		return { ok: false, code: "RUN_RECORD_MALFORMED" }
@@ -236,7 +253,7 @@ export function projectRunRecord(
 	const readyAt = text(doc.readyAt)
 	const usedAt = text(doc.usedAt)
 	const failedAt = text(doc.failedAt)
-	const agentRun = agentRunOf(doc.agentRun)
+	const agentRun = agentRunOf(doc.agentRun, deadline)
 	return {
 		ok: true,
 		record: {

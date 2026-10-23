@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { isReady, mapWithStatus, type DataState } from "./states.js"
+import { dataOf, isReady, mapWithStatus, type DataState } from "./states.js"
 
 describe("DataState", () => {
 	it("loading, empty, error and incomplete are distinct kinds", () => {
@@ -58,5 +58,28 @@ describe("DataState", () => {
 		if (error.kind !== "error") throw new Error("expected error")
 		expect(error.message).not.toContain("read-key-1")
 		expect(error.message).toBe("failed at [redacted] boundary [redacted]")
+	})
+})
+
+describe("dataOf", () => {
+	it("is the data of a ready or incomplete state, and nothing otherwise", () => {
+		expect(dataOf({ kind: "ready", data: 1 })).toBe(1)
+		expect(
+			dataOf<number>({
+				kind: "incomplete",
+				reason: "AGENT_RUN_RUNNING",
+				state: "running",
+				data: 2,
+			}),
+		).toBe(2)
+		expect(
+			dataOf<number>({
+				kind: "incomplete",
+				reason: "RUN_NOT_READY",
+				state: null,
+			}),
+		).toBeUndefined()
+		expect(dataOf<number>({ kind: "loading" })).toBeUndefined()
+		expect(dataOf<number>({ kind: "empty" })).toBeUndefined()
 	})
 })

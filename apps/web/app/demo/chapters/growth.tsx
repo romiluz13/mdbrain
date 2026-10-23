@@ -3,6 +3,7 @@
 import { governanceMix } from "../../../lib/demo-data/views.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../chapters.module.css"
+import { ProposalReview } from "../parts/proposal-review.js"
 import { StatePanel } from "../parts/state-panel.js"
 import { StatTile } from "../parts/stat-tile.js"
 
@@ -83,19 +84,7 @@ export function GrowthChapter() {
 								total={map.pageTotal}
 							/>
 						</div>
-						<section
-							className={styles.boundary}
-							aria-labelledby="queue-heading"
-							data-testid="review-queue-boundary"
-						>
-							<h2 id="queue-heading">The review queue is private by design</h2>
-							<p>
-								A proposed page waits for a reviewer. Until it is approved no
-								wiki read returns it, so this public demo cannot list what is
-								pending, and it does not pretend to. What it can show is what
-								governance already let in: the tiers and states above.
-							</p>
-						</section>
+						<ProposalReview />
 					</>
 				)
 			}}

@@ -21,10 +21,15 @@ import {
 	REQUEST_DEADLINE_MS,
 	openControl,
 	readSecrets,
+	type ControlContext,
 } from "../seeding/run.js"
 import { agentCeilings } from "./config.js"
 import { readAgentRoleKeys } from "./keys.js"
-import { runRoleAgents } from "./runner.js"
+import {
+	RunNotStartableError,
+	runRoleAgents,
+	type AgentRunOutcome,
+} from "./runner.js"
 
 /** A client for one role key's exact grant. The key never reaches stdout. */
 function agentClient(key: string): MdbrainClient {
@@ -47,6 +52,62 @@ function anthropicApiKey(secrets: Map<string, string>): string {
 	return key
 }
 
+export type AgentRunContext = {
+	secrets: Map<string, string>
+	control: Pick<ControlContext, "manifests" | "pool" | "db">
+}
+
+/** The run body the CLI and the worker (./serve.ts) share: checks the run is
+ * ready and unstarted, then runs the three role agents inside the shared
+ * budget. Throws before any model call when the run is not startable. */
+export async function executeAgentRun(
+	ctx: AgentRunContext,
+	runId: string,
+	owner?: string,
+): Promise<AgentRunOutcome> {
+	const { secrets, control } = ctx
+	const manifest = await control.manifests.get(runId)
+	if (!manifest) throw new RunNotStartableError(`no manifest for run ${runId}`)
+	if (manifest.state !== "ready") {
+		throw new RunNotStartableError(
+			`run ${runId} is ${manifest.state}, not ready`,
+		)
+	}
+	if (manifest.agentRun?.state) {
+		throw new RunNotStartableError(
+			`run ${runId}'s agent run is already ${manifest.agentRun.state}`,
+		)
+	}
+	const anthropicKey = anthropicApiKey(secrets)
+	const keys = readAgentRoleKeys(
+		Object.fromEntries(secrets),
+		manifest.slotIndex,
+	)
+	const budget = createModelBudget(control.db)
+	return runRoleAgents({
+		owner,
+		manifests: control.manifests,
+		pool: control.pool,
+		runId,
+		slot: {
+			index: manifest.slotIndex,
+			scopeRef: manifest.scopeRef,
+			agentId: manifest.agentId,
+		},
+		clients: {
+			support: agentClient(keys.support),
+			account: agentClient(keys.account),
+			product: agentClient(keys.product),
+		},
+		// D6: the provider and model id are pinned, never chosen per role.
+		modelFor: () => createAnthropic({ apiKey: anthropicKey })(DEMO_MODEL),
+		budget,
+		ceilings: agentCeilings(process.env),
+		world: readWorld(),
+		records: readRecords(),
+	})
+}
+
 async function main(): Promise<void> {
 	const { values } = parseArgs({
 		args: process.argv.slice(2),
@@ -62,46 +123,10 @@ async function main(): Promise<void> {
 		process.exit(2)
 	}
 	const secrets = readSecrets(secretsPath)
-	const anthropicKey = anthropicApiKey(secrets)
 	const control = await openControl(secrets)
 	try {
-		const manifest = await control.manifests.get(runId)
-		if (!manifest) throw new Error(`no manifest for run ${runId}`)
-		if (manifest.state !== "ready") {
-			throw new Error(`run ${runId} is ${manifest.state}, not ready`)
-		}
-		if (manifest.agentRun?.state) {
-			throw new Error(
-				`run ${runId}'s agent run is already ${manifest.agentRun.state}`,
-			)
-		}
-		const keys = readAgentRoleKeys(
-			Object.fromEntries(secrets),
-			manifest.slotIndex,
-		)
-		const budget = createModelBudget(control.db)
 		const startedAt = Date.now()
-		const outcome = await runRoleAgents({
-			manifests: control.manifests,
-			pool: control.pool,
-			runId,
-			slot: {
-				index: manifest.slotIndex,
-				scopeRef: manifest.scopeRef,
-				agentId: manifest.agentId,
-			},
-			clients: {
-				support: agentClient(keys.support),
-				account: agentClient(keys.account),
-				product: agentClient(keys.product),
-			},
-			// D6: the provider and model id are pinned, never chosen per role.
-			modelFor: () => createAnthropic({ apiKey: anthropicKey })(DEMO_MODEL),
-			budget,
-			ceilings: agentCeilings(process.env),
-			world: readWorld(),
-			records: readRecords(),
-		})
+		const outcome = await executeAgentRun({ secrets, control }, runId)
 		const elapsedS = Math.round((Date.now() - startedAt) / 1000)
 		console.log(`agent run ${runId}: ${outcome.state} in ${elapsedS}s`)
 		if (outcome.failureReason) {
