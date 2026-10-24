@@ -11,6 +11,7 @@ vi.mock("@/lib/demo-data/proxy.js", () => ({
 }))
 vi.mock("@/lib/demo-data/run-store.js", () => ({
 	createRunManifestSource: () => async () => null,
+	withControlScope: <T>(work: () => Promise<T>) => work(),
 }))
 
 const ENV = {

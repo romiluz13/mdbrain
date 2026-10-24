@@ -35,6 +35,7 @@ vi.mock("@/lib/demo-presenter/server.js", () => ({
 }))
 vi.mock("@/lib/demo-data/run-store.js", () => ({
 	createRunManifestSource: () => async () => null,
+	withControlScope: <T>(work: () => Promise<T>) => work(),
 }))
 
 const manifestDoc = (slot: number) => ({
