@@ -15,6 +15,18 @@
 			"service": "mdbrain"
 		}
 	],
+	"ratelimits": [
+		{
+			"name": "DEMO_READ_LIMITER",
+			"namespace_id": "3510",
+			"simple": { "limit": 120, "period": 60 }
+		},
+		{
+			"name": "DEMO_ANSWER_LIMITER",
+			"namespace_id": "3511",
+			"simple": { "limit": 10, "period": 60 }
+		}
+	],
 	"observability": {
 		"enabled": true
 	}

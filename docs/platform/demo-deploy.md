@@ -52,6 +52,8 @@ Secrets, set with `wrangler secret put` (run in `apps/web`):
 
 Their behavior is `docs/platform/demo.md`'s table; nothing here changes it.
 
+The two rate limits are `ratelimits` bindings in `apps/web/wrangler.jsonc`, not variables, and they are the primary protection for anonymous traffic: `DEMO_READ_LIMITER` (120 requests per 60 seconds per client IP, every v1 read) and `DEMO_ANSWER_LIMITER` (10 per 60 seconds, every answer POST). Each is keyed on `cf-connecting-ip`, and counts are per Cloudflare location and approximate. Off Workers (local dev, Node) there is no binding and no limit. Step 7 covers the optional WAF rules.
+
 ### API (Fly.io)
 
 Set with `fly secrets set`:
@@ -108,10 +110,13 @@ The operator's runbook. Each step is a human action; nothing below runs itself.
 4. **The API.** `fly deploy` from the repo root with `apps/api/Dockerfile`; set the API secrets (table above) with `MEMONGO_API_URL` pointing at Memongo's `.flycast` address (an `.internal` address skips the Fly proxy and needs the process to listen on IPv6) and `MEMONGO_ALLOW_INSECURE_HTTP=1`; without it `/ready` answers 503 with `dependencies: ["memongo"]` (the URL guard refuses plain HTTP). Check `fly status` and the health check (`/health`, `/ready`).
 5. **The read key.** Create it as its section above: policy into `MDBRAIN_API_SCOPED_KEYS`, token into the Worker's `MDBRAIN_DEMO_READ_KEY`.
 6. **The web.** In `apps/web`, set the `[vars]`, then `wrangler secret put` the four secrets, then `bun run deploy` (OpenNext build and deploy; the build must exit 0). The route is not public until the smoke passes.
-7. **The edge rate rules (D28).** In Cloudflare, in front of the whole web app, two rate-limiting rules, both keyed on the client IP (`ip.src`), both with the Block action (Block answers `429`):
+7. **The rate limits (D28).** Nothing to set by hand. The web Worker enforces both limits itself, through the two bindings in `apps/web/wrangler.jsonc`: 120 requests per 60 seconds per client IP on `/api/demo/v1/`, and 10 per 60 seconds per client IP on the answer route. A limited request gets `429` with `Retry-After: 60`, before any read, control-database call or model call. Counts are per Cloudflare location and approximate, so a few excess requests can pass before the first `429`; the smoke tolerates that.
+
+   Optional, for a custom domain zone: two WAF rate-limiting rules in front of the whole web app, keyed on `ip.src`, with the Block action (Block answers `429`), a 60-second counting period, and these expressions:
    - `starts_with(http.request.uri.path, "/api/demo/v1/")` — 120 requests per minute per IP.
    - `starts_with(http.request.uri.path, "/api/demo/answers")` — 10 requests per minute per IP.
-   Use a 60-second counting period. Counters are per-datacenter with seconds of lag, so a few excess requests can pass before the first `429`; the smoke tolerates that. Check the account's plan first: the Free plan allows one rule with a fixed 10-second period, which cannot express D28's two limits; if the account cannot hold both rules, stop and raise it with the lead rather than approximating.
+
+   They add a limit ahead of the Worker and are not needed for D28. The Free plan allows one such rule with a fixed 10-second period, which cannot express both limits.
 8. **The smoke.** From a repo checkout:
 
    ```sh
@@ -122,7 +127,7 @@ The operator's runbook. Each step is a human action; nothing below runs itself.
      --key <the read key>        # or: export DEMO_DEPLOY_READ_KEY=...
    ```
 
-   `--v1-limit` and `--answers-limit` default to D28's 120 and 10; `--skip-rate` drops the two rate probes for a quick pass. Exit `0` is the gate: it proves the key reads the pinned scope and is refused on a write and on another scope, the public refusals answer the fixed envelope, the key is exactly a reader (and never echoed), the edge answers `429` past both limits, and the answer route refuses non-JSON and cross-site posts and reports the lane off. The key is sent only to the API origin and never printed. Its checks are pinned by tests that use fakes and no network.
+   `--v1-limit` and `--answers-limit` default to D28's 120 and 10; `--skip-rate` drops the two rate probes for a quick pass. Exit `0` is the gate: it proves the key reads the pinned scope and is refused on a write and on another scope, the public refusals answer the fixed envelope, the key is exactly a reader (and never echoed), the rate limits answer `429` past both, and the answer route refuses non-JSON and cross-site posts and reports the lane off. The key is sent only to the API origin and never printed. Its checks are pinned by tests that use fakes and no network.
 9. **The answer lane, after the smoke.** The lane is off while `MDBRAIN_DEMO_ANSWER_TOKENS` is unset. To turn it on, `wrangler secret put MDBRAIN_DEMO_ANSWER_TOKENS` with a positive ceiling (the operator's choice; 500,000 counted tokens a day is the local default, D24). After it is on, the smoke's lane probe honestly reports the lane live instead of off — that check is for the pre-enable state; the 415 and 403 guards still pass.
 
 ## Rollback
@@ -131,7 +136,7 @@ The operator's runbook. Each step is a human action; nothing below runs itself.
 - **Answer lane, off in one step:** unset `MDBRAIN_DEMO_ANSWER_TOKENS` (or set it to `0`). Reads and every other chapter keep working; that is the lane's kill switch.
 - **API:** `fly deploy` the previous image, or `fly secrets unset` the reader policy's variable to re-cut the key. Removing the reader policy from `MDBRAIN_API_SCOPED_KEYS` makes the proxy refuse every read (it checks the key first), which is a safe partial state.
 - **Memongo:** `fly machine stop` — the proxy then answers `502 UPSTREAM_UNREACHABLE` and the page shows its error states; nothing leaks.
-- **Edge rules:** delete or disable the two D28 rules. Anonymous reads then rely on the API's own limiter only, so treat a missing edge rule as a degraded state, not a steady one.
+- **Rate limits:** the bindings ship with the Worker, so a deploy without them removes both in-Worker limits. The optional WAF rules (step 7) can be deleted or disabled on their own. Anonymous traffic then relies on the API's own limiter only, so treat missing limits as a degraded state, not a steady one.
 
 ## Presenter lane (ticket 14)
 

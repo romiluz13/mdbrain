@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { json } from "@/lib/demo-data/test-upstream.js"
 
+const cf = vi.hoisted(() => ({ env: {} as Record<string, unknown> }))
+
+vi.mock("@opennextjs/cloudflare", () => ({
+	getCloudflareContext: () => ({ env: cf.env }),
+}))
+
 function stubApi(principal: () => Response | Promise<Response>): string[] {
 	const calls: string[] = []
 	vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -43,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.unstubAllEnvs()
 	vi.unstubAllGlobals()
+	cf.env = {}
 })
 
 describe("the demo answer route", () => {
@@ -75,5 +82,48 @@ describe("the demo answer route", () => {
 		const response = await POST(ask())
 		expect(response.status).toBe(503)
 		expect(await response.text()).not.toContain("ECONNREFUSED")
+	})
+
+	it("refuses a limited client with 429 before any read, key check or model call", async () => {
+		vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" })
+		cf.env = {
+			DEMO_ANSWER_LIMITER: {
+				limit: vi.fn(async () => ({ success: false })),
+			},
+		}
+		const calls = stubApi(() => json({ trustTier: "standard" }))
+		const { POST } = await freshRoute()
+		const response = await POST(ask())
+		expect(response.status).toBe(429)
+		expect(response.headers.get("retry-after")).toBe("60")
+		expect(response.headers.get("cache-control")).toBe("no-store")
+		expect(await response.json()).toEqual({
+			error: {
+				code: "RATE_LIMITED",
+				message: "Too many questions in a short time. Try again shortly.",
+			},
+		})
+		expect(calls).toEqual([])
+	})
+
+	it("keys each answer by the client address and lets an allowed client through", async () => {
+		vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" })
+		const limit = vi.fn(async () => ({ success: true }))
+		cf.env = { DEMO_ANSWER_LIMITER: { limit } }
+		const calls = stubApi(() =>
+			json({
+				subjectId: "api-key:admin",
+				trustTier: "admin",
+				capabilities: ["read", "write", "administer"],
+				grants: [{ scope: "*", scopeRef: "*" }],
+			}),
+		)
+		const { POST } = await freshRoute()
+		const request = ask()
+		request.headers.set("cf-connecting-ip", "203.0.113.9")
+		const response = await POST(request)
+		expect(limit).toHaveBeenCalledWith({ key: "203.0.113.9" })
+		expect(response.status).toBe(503)
+		expect(calls).toEqual(["http://upstream.test/v1/principal/self"])
 	})
 })

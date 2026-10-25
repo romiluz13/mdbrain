@@ -11,6 +11,7 @@ import { createAnswerService } from "@/lib/demo-data/answer-service.js"
 import { createAnswerStore } from "@/lib/demo-data/answer-store.js"
 import { answerModel } from "@/lib/demo-data/answer-token-cap.js"
 import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
+import { limitByClient, limiterBinding } from "@/lib/demo-data/rate-limit.js"
 import { readsFor } from "@/lib/demo-data/reads.js"
 import { withControlScope } from "@/lib/demo-data/run-store.js"
 import { presenterRuntime } from "@/lib/demo-presenter/server.js"
@@ -29,6 +30,9 @@ const VISITOR_COOKIE_MAX_AGE_S = 60 * 60 * 24
 const VISITOR_COOKIE_PATTERN = /[A-Za-z0-9_-]{1,64}/
 
 const jsonHeaders = { "content-type": "application/json" } as const
+
+const ANSWER_LIMIT_MESSAGE =
+	"Too many questions in a short time. Try again shortly."
 
 const checkReadKey = createReadKeyCheck()
 
@@ -81,6 +85,12 @@ async function answer(request: Request): Promise<Response> {
 			{ status: denied.status, headers: jsonHeaders },
 		)
 	}
+	const limited = await limitByClient(
+		request,
+		limiterBinding("DEMO_ANSWER_LIMITER"),
+		ANSWER_LIMIT_MESSAGE,
+	)
+	if (limited) return limited
 	// The answer is about the run the page shows: the pinned run for a visitor,
 	// the leased slot for a presenter. The same resolver the read proxy uses
 	// decides it, so a citation in an answer resolves against the same run.

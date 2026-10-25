@@ -11,6 +11,7 @@
 
 import { handleDemoRead } from "@/lib/demo-data/proxy.js"
 import { createReadKeyCheck } from "@/lib/demo-data/proxy-principal.js"
+import { limitByClient, limiterBinding } from "@/lib/demo-data/rate-limit.js"
 import {
 	createRunManifestSource,
 	withControlScope,
@@ -22,6 +23,8 @@ export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
 const checkReadKey = createReadKeyCheck()
+
+const READ_LIMIT_MESSAGE = "Too many reads in a short time. Try again shortly."
 
 // The presenter's cookie decides which run a URL reads, so no answer at a URL,
 // refusal or body, may be reused for a request with another cookie.
@@ -35,6 +38,12 @@ export const GET = (request: Request): Promise<Response> =>
 	withControlScope(() => read(request))
 
 async function read(request: Request): Promise<Response> {
+	const limited = await limitByClient(
+		request,
+		limiterBinding("DEMO_READ_LIMITER"),
+		READ_LIMIT_MESSAGE,
+	)
+	if (limited) return limited
 	const resolved = await presenterRuntime().resolver.resolve(request)
 	if (!resolved.ok) {
 		return refused(resolved.status, resolved.code, resolved.message)

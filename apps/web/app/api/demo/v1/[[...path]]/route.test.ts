@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { json } from "@/lib/demo-data/test-upstream.js"
 
+const cf = vi.hoisted(() => ({ env: {} as Record<string, unknown> }))
+
+vi.mock("@opennextjs/cloudflare", () => ({
+	getCloudflareContext: () => ({ env: cf.env }),
+}))
+
 const NOT_CONFIGURED = {
 	error: {
 		code: "PROXY_NOT_CONFIGURED",
@@ -49,6 +55,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.unstubAllEnvs()
 	vi.unstubAllGlobals()
+	cf.env = {}
 })
 
 describe("the demo read route", () => {
@@ -95,5 +102,70 @@ describe("the demo read route", () => {
 			expect(await response.json()).toEqual({ pages: [], total: 0 })
 		}
 		expect(calls).toEqual(["/v1/principal/self", "/v1/wiki", "/v1/wiki"])
+	})
+})
+
+describe("the demo read route's per-client limit", () => {
+	const limiter = (success: boolean) => ({
+		limit: vi.fn(async (_options: { key: string }) => ({ success })),
+	})
+	const onWorkers = () =>
+		vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" })
+
+	it("refuses a limited client with 429 before any upstream call", async () => {
+		onWorkers()
+		cf.env = { DEMO_READ_LIMITER: limiter(false) }
+		const calls = stubApi(() => json(reader))
+		const { GET } = await freshRoute()
+		const response = await GET(
+			new Request("http://demo.local/api/demo/v1/wiki?limit=100", {
+				headers: { "cf-connecting-ip": "203.0.113.9" },
+			}),
+		)
+		expect(response.status).toBe(429)
+		expect(response.headers.get("retry-after")).toBe("60")
+		expect(response.headers.get("cache-control")).toBe("no-store")
+		expect(await response.json()).toEqual({
+			error: {
+				code: "RATE_LIMITED",
+				message: "Too many reads in a short time. Try again shortly.",
+			},
+		})
+		expect(calls).toEqual([])
+	})
+
+	it("keys each read by the client address and serves an allowed client", async () => {
+		onWorkers()
+		const counter = limiter(true)
+		cf.env = { DEMO_READ_LIMITER: counter }
+		const calls = stubApi(() => json(reader))
+		const { GET } = await freshRoute()
+		const response = await GET(
+			new Request("http://demo.local/api/demo/v1/wiki?limit=100", {
+				headers: { "cf-connecting-ip": "203.0.113.9" },
+			}),
+		)
+		expect(response.status).toBe(200)
+		expect(counter.limit).toHaveBeenCalledWith({ key: "203.0.113.9" })
+		expect(calls).toEqual(["/v1/principal/self", "/v1/wiki"])
+	})
+
+	it("counts a client with no address under unknown", async () => {
+		onWorkers()
+		const counter = limiter(true)
+		cf.env = { DEMO_READ_LIMITER: counter }
+		stubApi(() => json(reader))
+		const { GET } = await freshRoute()
+		await GET(visit())
+		expect(counter.limit).toHaveBeenCalledWith({ key: "unknown" })
+	})
+
+	it("limits nothing off Workers", async () => {
+		const counter = limiter(false)
+		cf.env = { DEMO_READ_LIMITER: counter }
+		stubApi(() => json(reader))
+		const { GET } = await freshRoute()
+		expect((await GET(visit())).status).toBe(200)
+		expect(counter.limit).not.toHaveBeenCalled()
 	})
 })
