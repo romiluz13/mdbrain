@@ -15,6 +15,13 @@
 			"service": "mdbrain"
 		}
 	],
+	"vars": {
+		"MDBRAIN_DEMO_API_BASE_URL": "https://mdbrain-api.rombot.uk",
+		"MDBRAIN_DEMO_SCOPE": "workspace",
+		"MDBRAIN_DEMO_SCOPE_REF": "demo-run-12",
+		"MDBRAIN_DEMO_AGENT_ID": "demo-run-12",
+		"MDBRAIN_DEMO_RUN_ID": "demo-e-2026-10-21"
+	},
 	"ratelimits": [
 		{
 			"name": "DEMO_READ_LIMITER",
