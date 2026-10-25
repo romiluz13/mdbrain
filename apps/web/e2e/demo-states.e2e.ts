@@ -2,7 +2,7 @@
 // source with no business time, and a search lane that is down. They force
 // states through the fixture route, so they do not run against a live stack.
 import { expect, test } from "@playwright/test"
-import { CHAPTERS } from "../app/demo/chapters"
+import { CHAPTERS, chapterIndex } from "../app/demo/chapters"
 import { proxyError } from "../lib/demo-data/proxy-errors"
 import {
 	expectCitationMatchesCites,
@@ -44,7 +44,7 @@ test.describe("states", () => {
 				return undefined
 			},
 		})
-		await page.goto("/demo")
+		await page.goto("/demo#brain")
 		await expect(page.locator('[data-state="loading"]').first()).toBeVisible()
 		await expect(stat(page, "pages")).toHaveText("—")
 		release()
@@ -66,10 +66,10 @@ test.describe("states", () => {
 			},
 		})
 		await openDemo(page)
-		await goto(page, 6)
+		await goto(page, chapterIndex("changes"))
 		await expect(page.getByTestId("change-row").first()).toBeVisible()
 		release()
-		await goto(page, 0)
+		await goto(page, chapterIndex("brain"))
 		await mapReady(page)
 	})
 
@@ -93,9 +93,9 @@ test.describe("states", () => {
 		await expect(error).toBeVisible()
 		await expect(error).toContainText("UPSTREAM_ERROR")
 		await expect(error).toContainText("502")
-		await goto(page, 6)
+		await goto(page, chapterIndex("changes"))
 		await expect(page.getByTestId("change-row").first()).toBeVisible()
-		await goto(page, 0)
+		await goto(page, chapterIndex("brain"))
 		broken = false
 		await page.getByRole("button", { name: "Try again" }).first().click()
 		await mapReady(page)
@@ -170,6 +170,10 @@ test.describe("states", () => {
 			mode = stateMode
 			await page.reload()
 			for (const [index, chapter] of CHAPTERS.entries()) {
+				// The story states its own readiness per item; demo-story.e2e.ts checks them.
+				if (chapter.id === "story") {
+					continue
+				}
 				await goto(page, index)
 				const screen = page.getByTestId("screen")
 				// With the run's record unreadable the agents are an error like any
@@ -241,7 +245,7 @@ test.describe("states", () => {
 		const proxy = await installDemoProxy(page, { contradiction: "unsourced" })
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 4)
+		await goto(page, chapterIndex("contradiction"))
 		expect(await settleContradiction(page, proxy)).toBe("recorded")
 		const cards = page.locator('li:has([data-testid="contradiction-claim"])')
 		await expect(cards).toHaveCount(2)
@@ -358,7 +362,7 @@ test.describe("states", () => {
 		})
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 2)
+		await goto(page, chapterIndex("sources"))
 		const rows = page.getByTestId("source-row")
 		await expect(rows.first()).toBeVisible()
 		await expect(
@@ -402,8 +406,8 @@ test.describe("states", () => {
 
 		await page.keyboard.press("Escape")
 		refuse = "failed"
-		await goto(page, 0)
-		await goto(page, 2)
+		await goto(page, chapterIndex("brain"))
+		await goto(page, chapterIndex("sources"))
 		await page
 			.getByRole("button", { name: /^Open source / })
 			.first()
@@ -534,7 +538,7 @@ test.describe("states", () => {
 		})
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 4)
+		await goto(page, chapterIndex("contradiction"))
 		await settleContradiction(page, proxy)
 		await showBeat(page, 2)
 		await expect(page.getByTestId("contradiction-stamp")).toBeVisible()
@@ -568,7 +572,7 @@ test.describe("states", () => {
 		})
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		await page
 			.getByTestId("screen")
 			.getByRole("button", { name: "Ask", exact: true })

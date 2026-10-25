@@ -2,7 +2,7 @@
 // the first frame, 44 px targets, overflow, the synthetic label, accessibility,
 // and the map's cached static layer with its layout Worker.
 import { expect, test, type Page } from "@playwright/test"
-import { CHAPTERS } from "../app/demo/chapters"
+import { CHAPTERS, chapterIndex } from "../app/demo/chapters"
 import {
 	chapterTitle,
 	expectNoSeriousAccessibilityViolations,
@@ -25,24 +25,35 @@ test("the arrow keys step the chapters from the pager, and walk the rail without
 	await mapReady(page)
 	const heading = (index: number) =>
 		page.getByRole("heading", { level: 1, name: chapterTitle(index) })
-	const next = page.getByRole("button", { name: /^Ask →/ })
+	const next = page.getByRole("button", { name: /^Ask it →/ })
 	await next.focus()
 	await page.keyboard.press("ArrowRight")
-	await expect(heading(1)).toBeFocused()
-	await page.getByRole("button", { name: /^Sources arrive →/ }).focus()
+	await expect(heading(chapterIndex("ask"))).toBeFocused()
+	await page.getByRole("button", { name: /^Where it came from →/ }).focus()
 	await page.keyboard.press("ArrowLeft")
-	await expect(heading(0)).toBeFocused()
+	await expect(heading(chapterIndex("brain"))).toBeFocused()
 
 	const rail = page.getByRole("navigation", { name: "Chapters" })
-	await rail.getByRole("button", { name: chapterTitle(0), exact: true }).focus()
+	await rail
+		.getByRole("button", {
+			name: chapterTitle(chapterIndex("brain")),
+			exact: true,
+		})
+		.focus()
 	await page.keyboard.press("ArrowDown")
 	await expect(
-		rail.getByRole("button", { name: chapterTitle(1), exact: true }),
+		rail.getByRole("button", {
+			name: chapterTitle(chapterIndex("ask")),
+			exact: true,
+		}),
 	).toBeFocused()
-	await expect(heading(0)).toBeVisible()
+	await expect(heading(chapterIndex("brain"))).toBeVisible()
 	await page.keyboard.press("ArrowUp")
 	await expect(
-		rail.getByRole("button", { name: chapterTitle(0), exact: true }),
+		rail.getByRole("button", {
+			name: chapterTitle(chapterIndex("brain")),
+			exact: true,
+		}),
 	).toBeFocused()
 	await page.keyboard.press("End")
 	await expect(
@@ -118,8 +129,8 @@ test.describe("reduced motion", () => {
 		await expect
 			.poll(() => page.evaluate(() => document.getAnimations().length))
 			.toBe(0)
-		await goto(page, 5)
-		await goto(page, 0)
+		await goto(page, chapterIndex("growth"))
+		await goto(page, chapterIndex("brain"))
 		await mapReady(page)
 		expect(await motion()).toEqual({ started: [], peak: 0 })
 	})
@@ -141,7 +152,7 @@ test("without the preference the chapter eases in, under GSAP", async ({
 		}
 		requestAnimationFrame(watch)
 	})
-	await page.goto("/demo")
+	await page.goto("/demo#brain")
 	await expect(page.locator("[data-motion]").first()).toHaveAttribute(
 		"data-motion",
 		"full",
@@ -164,7 +175,7 @@ test("the run's number table names each value on the phone, where the header row
 	await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
-	await goto(page, 8)
+	await goto(page, chapterIndex("run"))
 	const columns = await page
 		.locator('[data-verify="pages"] td')
 		.evaluateAll((cells) =>
@@ -214,7 +225,7 @@ test("the map stays in view beside a long list on a wide screen", async ({
 			height,
 		)
 	}
-	await goto(page, 1)
+	await goto(page, chapterIndex("ask"))
 	await page
 		.getByRole("list", { name: "Example questions" })
 		.getByRole("button")
@@ -226,7 +237,7 @@ test("the map stays in view beside a long list on a wide screen", async ({
 	await stays("Where the answers live")
 	await proxy.flush()
 	await page.evaluate(() => window.scrollTo(0, 0))
-	await goto(page, 6)
+	await goto(page, chapterIndex("changes"))
 	await expect(page.getByTestId("change-row").first()).toBeVisible(SLOW_READ)
 	await stays("Where it changed")
 })
@@ -239,7 +250,7 @@ test("chapter 5's claim cards are as tall as their own content, not stretched to
 	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
-	await goto(page, 4)
+	await goto(page, chapterIndex("contradiction"))
 	test.skip(
 		(await settleContradiction(page, proxy)) === "none",
 		"this run records no contradiction yet, so chapter 5 has no claim cards",
@@ -330,7 +341,7 @@ test("the desktop rail runs the full height of the page and keeps its chapters i
 	await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
-	await goto(page, 2)
+	await goto(page, chapterIndex("sources"))
 	const more = page.getByRole("button", { name: "Show ten more" })
 	await expect(more).toBeVisible(SLOW_READ)
 	for (let asked = 0; asked < 3 && (await more.isVisible()); asked += 1) {

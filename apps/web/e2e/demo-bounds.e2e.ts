@@ -55,7 +55,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 				const type = types.get(e.requestId) ?? "Other"
 				byType.set(type, (byType.get(type) ?? 0) + e.encodedDataLength)
 			})
-			await page.goto("/demo", { waitUntil: "commit" })
+			await page.goto("/demo#brain", { waitUntil: "commit" })
 			await page.waitForFunction(
 				() =>
 					(window as unknown as { __settledAt?: number }).__settledAt !==
@@ -102,7 +102,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 		// The island is lazy, so its first frame comes after the page is ready; a
 		// run of its own, left alone, shows when.
 		const island = await rig(browser, "mobile", { link: LINK })
-		await island.page.goto("/demo", { waitUntil: "commit" })
+		await island.page.goto("/demo#brain", { waitUntil: "commit" })
 		await island.page.waitForFunction(FIRST_FRAME, undefined, {
 			timeout: 120_000,
 		})
@@ -147,7 +147,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 				link: profile === "mobile" ? LINK : undefined,
 			})
 			const errors = errorsOf(page)
-			await page.goto("/demo")
+			await page.goto("/demo#brain")
 			await page.waitForFunction(FIRST_FRAME, undefined, { timeout: 90_000 })
 			const drift = await sample(page, 5000)
 			const result: Record<string, unknown> = {
@@ -219,7 +219,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 				link: profile === "mobile" ? LINK : undefined,
 			})
 			const errors = errorsOf(page)
-			await page.goto("/demo")
+			await page.goto("/demo#brain")
 			await page.waitForFunction(FIRST_FRAME, undefined, { timeout: 90_000 })
 			const quiet = async (ms: number) => {
 				await page.waitForFunction(
@@ -257,7 +257,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 					await page.waitForTimeout(300)
 				}
 				ninth.push(await atRest(`cycle ${cycle}: ch9`, 1200))
-				await goto(page, 0)
+				await goto(page, chapterIndex("brain"))
 				if (cycle === 1 || cycle === 5) {
 					first.push(
 						await atRest(`cycle ${cycle}: back on ch1, drift rest`, 11_000),

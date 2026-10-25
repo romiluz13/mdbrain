@@ -19,6 +19,7 @@ import {
 	installDemoProxy,
 	type AnswerReplyer,
 } from "./demo-proxy"
+import { chapterIndex } from "../app/demo/chapters"
 
 test.describe("answer lane", () => {
 	test("refuses over the hourly rate, keeps the question, and keeps the stored search reachable", async ({
@@ -31,7 +32,7 @@ test.describe("answer lane", () => {
 		}))
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		const input = page.getByLabel("Your question")
 		await input.fill("renewal")
 		await page.getByTestId("answer-submit").click()
@@ -78,7 +79,7 @@ test.describe("answer lane", () => {
 		await installAnswerRoute(page, reply)
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		await page.getByLabel("Your question").fill("renewal")
 		await page.getByTestId("answer-submit").click()
 		const spent = page.getByTestId("answer-spent")
@@ -97,7 +98,7 @@ test.describe("answer lane", () => {
 		}))
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		await page.getByLabel("Your question").fill("renewal")
 		await page.getByTestId("answer-submit").click()
 		await expect(page.getByTestId("answer-off")).toContainText(
@@ -112,20 +113,28 @@ test.describe("answer lane", () => {
 		const answers = await installAnswerRoute(page, () => ({ kind: "hold" }))
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		await page.getByLabel("Your question").fill("renewal")
 		await page.getByTestId("answer-submit").click()
 		await expect(page.getByTestId("answer-answering")).toBeVisible()
 		// The disconnect: the chapter unmounts and aborts its request.
 		await page
-			.getByRole("button", { name: new RegExp(`^${chapterTitle(2)} →`) })
+			.getByRole("button", {
+				name: new RegExp(`^${chapterTitle(chapterIndex("sources"))} →`),
+			})
 			.click()
 		await expect(
-			page.getByRole("heading", { level: 1, name: chapterTitle(2) }),
+			page.getByRole("heading", {
+				level: 1,
+				name: chapterTitle(chapterIndex("sources")),
+			}),
 		).toBeVisible()
 		await page.getByRole("button", { name: /^← Ask/ }).click()
 		await expect(
-			page.getByRole("heading", { level: 1, name: chapterTitle(1) }),
+			page.getByRole("heading", {
+				level: 1,
+				name: chapterTitle(chapterIndex("ask")),
+			}),
 		).toBeVisible()
 		await expect(page.getByTestId("answer-canceled")).toBeVisible()
 		expect(answers.served).toHaveLength(1)
@@ -166,7 +175,7 @@ test.describe("answer lane", () => {
 		await installAnswerRoute(page, reply)
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		await page.getByLabel("Your question").fill("renewal")
 		await page.getByTestId("answer-submit").click()
 		await expect(page.getByTestId("answer-text")).toBeVisible()
@@ -182,7 +191,7 @@ test.describe("answer lane", () => {
 		const answers = await installAnswerRoute(page, () => ({ kind: "down" }))
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		await page.getByLabel("Your question").fill("renewal")
 		await page.getByTestId("answer-submit").click()
 		const unavailable = page.getByTestId("answer-unavailable")

@@ -90,7 +90,7 @@ for (const variant of VARIANTS) {
 				latency: 150,
 			})
 			await client.send("Emulation.setCPUThrottlingRate", { rate: 4 })
-			await page.goto("/demo", { waitUntil: "commit" })
+			await page.goto("/demo#brain", { waitUntil: "commit" })
 			await page.waitForFunction(
 				() =>
 					(window as unknown as { __readyAt?: number }).__readyAt !== undefined,

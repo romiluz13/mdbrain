@@ -99,7 +99,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 					} as typeof original
 				})
 				const started = Date.now()
-				await page.goto("/demo")
+				await page.goto("/demo#brain")
 				await flat(page)
 				const reason = await status(page)
 				outcome.webglOff = {
@@ -115,7 +115,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 			{
 				const { context, page, proxy } = await rig(browser, profile, { link })
 				const errors = errorsOf(page)
-				await page.goto("/demo")
+				await page.goto("/demo#brain")
 				await page.waitForFunction(FIRST_FRAME, undefined, { timeout: 90_000 })
 				const lost = Date.now()
 				await page.evaluate(() => {
@@ -142,7 +142,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 					reducedMotion: "reduce",
 				})
 				const errors = errorsOf(page)
-				await page.goto("/demo")
+				await page.goto("/demo#brain")
 				await flat(page)
 				await page.waitForFunction(
 					() =>
@@ -170,7 +170,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 			{
 				const { context, page, proxy } = await rig(browser, profile, { link })
 				const errors = errorsOf(page)
-				await page.goto("/demo")
+				await page.goto("/demo#brain")
 				await page.waitForFunction(FIRST_FRAME, undefined, { timeout: 90_000 })
 				const drifting = await sample(page, 800)
 				const changed = Date.now()
@@ -221,7 +221,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 			link: LINK,
 		})
 		const errors = errorsOf(page)
-		await page.goto("/demo")
+		await page.goto("/demo#brain")
 		await page.waitForFunction(FIRST_FRAME, undefined, { timeout: 90_000 })
 		const chapters: Array<Record<string, unknown>> = []
 		for (let at = 0; at < CHAPTERS_TOTAL; at++) {
@@ -237,7 +237,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 				}))),
 			})
 		}
-		await goto(page, 0)
+		await goto(page, chapterIndex("brain"))
 		await page.waitForFunction(
 			() =>
 				document.querySelector('[data-view="3d"][data-drawn="true"]') !== null,
@@ -296,7 +296,7 @@ test.describe(`D15 bounds on the production build (${GL} GL)`, () => {
 	}) => {
 		const { context, page, proxy } = await rig(browser, "trailer")
 		const errors = errorsOf(page)
-		await page.goto("/demo")
+		await page.goto("/demo#brain")
 		await page.waitForFunction(
 			() =>
 				document.querySelector('[data-view="3d"][data-drawn="true"]') !== null,

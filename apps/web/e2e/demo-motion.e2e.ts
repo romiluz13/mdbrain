@@ -13,6 +13,7 @@ import {
 	stat,
 } from "./demo-helpers"
 import { GENERATED, installDemoProxy } from "./demo-proxy"
+import { chapterIndex } from "../app/demo/chapters"
 
 type Win = Window & {
 	__frames?: unknown[]
@@ -168,7 +169,7 @@ test.describe("chapter enter", () => {
 				opacity: heading ? Number(getComputedStyle(heading).opacity) : null,
 			}
 		})
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		await expect(page.getByRole("heading", { level: 1 })).toBeFocused()
 		await settled(page)
 		const frames = await stopFrames<{ title: string | null; opacity: number }>(
@@ -211,7 +212,7 @@ test.describe("chapter 3 streams its sources in", () => {
 		await openDemo(page)
 		await mapReady(page)
 		await recordFrames(page, readRows)
-		await goto(page, 2)
+		await goto(page, chapterIndex("sources"))
 		await expect(page.getByTestId("source-row").first()).toBeVisible()
 		await readsSettled(page)
 		await settled(page)
@@ -251,7 +252,7 @@ test.describe("chapter 3 streams its sources in", () => {
 			await openDemo(page)
 			await mapReady(page)
 			await recordFrames(page, readRows)
-			await goto(page, 2)
+			await goto(page, chapterIndex("sources"))
 			await expect(page.getByTestId("source-row").first()).toBeVisible()
 			await readsSettled(page)
 			const frames = (await stopFrames<{ rows: Row[] }>(page)).filter(
@@ -288,7 +289,7 @@ test.describe("chapter 4 hands off, in turn", () => {
 		await openDemo(page)
 		await mapReady(page)
 		await recordFrames(page, readHandoff)
-		await goto(page, 3)
+		await goto(page, chapterIndex("agents"))
 		await expect(page.getByTestId("handoff-arrow").first()).toBeVisible()
 		await readsSettled(page)
 		await settled(page)

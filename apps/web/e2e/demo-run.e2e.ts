@@ -12,6 +12,7 @@ import {
 	stat,
 } from "./demo-helpers"
 import { GENERATED, installDemoProxy, type ProxyOptions } from "./demo-proxy"
+import { chapterIndex } from "../app/demo/chapters"
 
 test.skip(!GENERATED, "the states are planted in the generated fixture")
 
@@ -38,7 +39,7 @@ test.describe("chapter 3: sources in arrival order", () => {
 	test("shows the record's counts, and the first ten rows in the record's order, each confirmed by its id", async ({
 		page,
 	}) => {
-		const proxy = await open(page, {}, 2)
+		const proxy = await open(page, {}, chapterIndex("sources"))
 		await expect(page.getByTestId("source-row")).toHaveCount(10)
 		await proxy.flush()
 		const run = proxy.latest("run")?.body as Run
@@ -67,7 +68,11 @@ test.describe("chapter 3: sources in arrival order", () => {
 	test("says an agent wrote an event the record does not list when the record shows it, and leaves the rest unexplained", async ({
 		page,
 	}) => {
-		const proxy = await open(page, { run: { arrivals: 6 } }, 2)
+		const proxy = await open(
+			page,
+			{ run: { arrivals: 6 } },
+			chapterIndex("sources"),
+		)
 		await expect(page.getByTestId("source-row")).toHaveCount(6)
 		await proxy.flush()
 		const run = proxy.latest("run")?.body as Run
@@ -109,7 +114,7 @@ test.describe("chapter 3: sources in arrival order", () => {
 		const proxy = await open(
 			page,
 			{ run: { arrivals: 6, variant: "no-steps" } },
-			2,
+			chapterIndex("sources"),
 		)
 		await expect(page.getByTestId("source-row")).toHaveCount(6)
 		await proxy.flush()
@@ -122,7 +127,7 @@ test.describe("chapter 3: sources in arrival order", () => {
 	})
 
 	test("tallies the rows it has confirmed", async ({ page }) => {
-		await open(page, {}, 2)
+		await open(page, {}, chapterIndex("sources"))
 		const tally = page.getByTestId("arrivals-tally")
 		await expect(
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
@@ -135,7 +140,7 @@ test.describe("chapter 3: sources in arrival order", () => {
 	test("cites only the rows it shows, and shows ten more on request with focus on the first new row", async ({
 		page,
 	}) => {
-		const proxy = await open(page, {}, 2)
+		const proxy = await open(page, {}, chapterIndex("sources"))
 		await expect(
 			page.locator('[data-testid="source-row"][data-status="loading"]'),
 		).toHaveCount(0)
@@ -172,7 +177,7 @@ test.describe("chapter 3: sources in arrival order", () => {
 	test("opens a confirmed row's source from the arrival list", async ({
 		page,
 	}) => {
-		await open(page, {}, 2)
+		await open(page, {}, chapterIndex("sources"))
 		await page
 			.getByRole("button", { name: /^Open source / })
 			.first()
@@ -183,7 +188,11 @@ test.describe("chapter 3: sources in arrival order", () => {
 	test("says so when the server has no run record, shows the stored sources instead, and the other chapters keep working", async ({
 		page,
 	}) => {
-		await open(page, { run: { variant: "unconfigured" } }, 2)
+		await open(
+			page,
+			{ run: { variant: "unconfigured" } },
+			chapterIndex("sources"),
+		)
 		await expect(
 			page.locator(
 				'[data-state="incomplete"][data-reason="RUN_NOT_CONFIGURED"]',
@@ -193,7 +202,7 @@ test.describe("chapter 3: sources in arrival order", () => {
 		await expect(page.getByTestId("source-row").first()).toBeVisible()
 		await expect(page.locator('[data-state="error"]')).toHaveCount(0)
 		await expect(stat(page, "pages")).not.toHaveText("—")
-		await goto(page, 3)
+		await goto(page, chapterIndex("agents"))
 		await expect(
 			page.locator(
 				'[data-state="incomplete"][data-reason="RUN_NOT_CONFIGURED"]',
@@ -206,7 +215,7 @@ test.describe("chapter 4: agents at work", () => {
 	test("tells the run from its record: three agents in hand-off order, wall time and tokens against the ceiling", async ({
 		page,
 	}) => {
-		await open(page, {}, 3)
+		await open(page, {}, chapterIndex("agents"))
 		const run = page.getByTestId("agent-run")
 		await expect(run).toHaveAttribute("data-run-state", "complete")
 		await expect(run.locator('[data-stat="agent-wall-time"]')).toHaveText(
@@ -227,7 +236,7 @@ test.describe("chapter 4: agents at work", () => {
 	test("verifies the page Support wrote and its revision through a wiki read, and that the proposal is pending", async ({
 		page,
 	}) => {
-		const proxy = await open(page, {}, 3)
+		const proxy = await open(page, {}, chapterIndex("agents"))
 		await expect(page.getByTestId("agent-check")).toHaveCount(3)
 		await expect(
 			page.getByTestId("agent-check").filter({ hasText: "Checking" }),
@@ -268,7 +277,7 @@ test.describe("chapter 4: agents at work", () => {
 	test("confirms a role's steps by their event ids only when its steps are opened", async ({
 		page,
 	}) => {
-		const proxy = await open(page, {}, 3)
+		const proxy = await open(page, {}, chapterIndex("agents"))
 		await proxy.flush()
 		const run = proxy.latest("run")?.body as Run
 		const stepEvents = new Map(
@@ -307,7 +316,7 @@ test.describe("chapter 4: agents at work", () => {
 	test("says a step it could not confirm was not confirmed in this run", async ({
 		page,
 	}) => {
-		await open(page, { run: { missedSteps: [2] } }, 3)
+		await open(page, { run: { missedSteps: [2] } }, chapterIndex("agents"))
 		const support = page.locator(
 			'[data-testid="agent-role"][data-role="support"]',
 		)
@@ -323,15 +332,18 @@ test.describe("chapter 4: agents at work", () => {
 	test("leads on to the contradiction when the contradiction involves the page Support wrote", async ({
 		page,
 	}) => {
-		await open(page, {}, 3)
+		await open(page, {}, chapterIndex("agents"))
 		await page.getByTestId("agent-bridge").getByRole("button").click()
 		await expect(
-			page.getByRole("heading", { level: 1, name: chapterTitle(4) }),
+			page.getByRole("heading", {
+				level: 1,
+				name: chapterTitle(chapterIndex("contradiction")),
+			}),
 		).toBeVisible()
 	})
 
 	test("says not yet in this run before the agents start", async ({ page }) => {
-		await open(page, { run: { variant: "none" } }, 3)
+		await open(page, { run: { variant: "none" } }, chapterIndex("agents"))
 		await expect(
 			page.locator(
 				'[data-state="incomplete"][data-reason="AGENT_RUN_NOT_STARTED"]',
@@ -344,7 +356,7 @@ test.describe("chapter 4: agents at work", () => {
 	test("says the agents are at work while the run is running", async ({
 		page,
 	}) => {
-		await open(page, { run: { variant: "running" } }, 3)
+		await open(page, { run: { variant: "running" } }, chapterIndex("agents"))
 		await expect(
 			page.locator(
 				'[data-state="incomplete"][data-reason="AGENT_RUN_RUNNING"]',
@@ -360,7 +372,7 @@ test.describe("chapter 4: agents at work", () => {
 	test("says the run stopped early with a fixed label, and none of its stored reason", async ({
 		page,
 	}) => {
-		await open(page, { run: { variant: "incomplete" } }, 3)
+		await open(page, { run: { variant: "incomplete" } }, chapterIndex("agents"))
 		await expect(
 			page.locator(
 				'[data-state="incomplete"][data-reason="AGENT_RUN_INCOMPLETE"]',
@@ -378,7 +390,7 @@ test.describe("chapter 4: agents at work", () => {
 	test("shows a finished run's summary and says its steps were not indexed", async ({
 		page,
 	}) => {
-		await open(page, { run: { variant: "no-steps" } }, 3)
+		await open(page, { run: { variant: "no-steps" } }, chapterIndex("agents"))
 		await expect(page.getByTestId("agent-run")).toHaveAttribute(
 			"data-run-state",
 			"complete",

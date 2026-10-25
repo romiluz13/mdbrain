@@ -2,7 +2,7 @@
 // buyer steps through the nine chapters and opens a citation down to the stored
 // source. The input mode (keyboard or touch) is passed in.
 import { expect, type Locator, type Page } from "@playwright/test"
-import { CHAPTERS } from "../app/demo/chapters"
+import { CHAPTERS, chapterIndex } from "../app/demo/chapters"
 import type { AnswerOutcome } from "../lib/demo-data/answer-types.js"
 import {
 	chapterTitle,
@@ -85,14 +85,21 @@ async function showAnOpenableSource(page: Page): Promise<void> {
 	await expect(open.first()).toBeVisible(SLOW_READ)
 }
 
-async function nextChapter(page: Page, act: Act, from: number): Promise<void> {
+async function nextChapter(
+	page: Page,
+	act: Act,
+	target: string,
+): Promise<void> {
 	await act(
 		page.getByRole("button", {
-			name: new RegExp(`^${chapterTitle(from + 1)} →`),
+			name: new RegExp(`^${chapterTitle(chapterIndex(target))} →`),
 		}),
 	)
 	await expect(
-		page.getByRole("heading", { level: 1, name: chapterTitle(from + 1) }),
+		page.getByRole("heading", {
+			level: 1,
+			name: chapterTitle(chapterIndex(target)),
+		}),
 	).toBeFocused()
 	await expect(page.getByTestId("synthetic-label")).toBeVisible()
 }
@@ -116,7 +123,7 @@ export async function journey(
 	await openDemo(page)
 	await mapReady(page)
 	await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-		chapterTitle(0),
+		chapterTitle(chapterIndex("brain")),
 	)
 
 	// 1 The brain: pick a page, open one of its claims down to the source.
@@ -132,7 +139,7 @@ export async function journey(
 	)
 
 	// 2 Ask: a read-only question, then a hit's citation.
-	await nextChapter(page, act, 0)
+	await nextChapter(page, act, "ask")
 	await act(
 		page
 			.getByRole("list", { name: "Example questions" })
@@ -206,7 +213,7 @@ export async function journey(
 	}
 	// 3 Sources arrive: the run's record in arrival order, or an honest note that
 	// this server has no run record, and a source opened down to its text.
-	await nextChapter(page, act, 1)
+	await nextChapter(page, act, "sources")
 	await expect(
 		page.locator(
 			'[data-testid="arrivals-summary"], [data-state="incomplete"][data-reason="RUN_NOT_CONFIGURED"]',
@@ -223,7 +230,7 @@ export async function journey(
 
 	// 4 Agents at work: the run's agents with their steps confirmed, or an honest
 	// not-yet state, and never an error.
-	await nextChapter(page, act, 2)
+	await nextChapter(page, act, "agents")
 	await expect(
 		page
 			.locator(
@@ -244,7 +251,7 @@ export async function journey(
 
 	// 5 A contradiction caught: both claims, both sources, the recorded stamp.
 	// A run before its agent run records none, and says so honestly instead.
-	await nextChapter(page, act, 3)
+	await nextChapter(page, act, "contradiction")
 	if ((await settleContradiction(page, proxy)) === "recorded") {
 		await expect(page.getByTestId("contradiction-claim")).toHaveCount(2)
 		await citeAndReturn(
@@ -262,11 +269,11 @@ export async function journey(
 	}
 
 	// 6 Governed growth.
-	await nextChapter(page, act, 4)
+	await nextChapter(page, act, "growth")
 	await expect(page.getByTestId("review-queue-boundary")).toBeVisible()
 
 	// 7 What changed.
-	await nextChapter(page, act, 5)
+	await nextChapter(page, act, "changes")
 	await expect(page.getByTestId("change-row").first()).toBeVisible(SLOW_READ)
 	await citeAndReturn(
 		page,
@@ -280,12 +287,12 @@ export async function journey(
 	)
 
 	// 8 Under the hood: run one read.
-	await nextChapter(page, act, 6)
+	await nextChapter(page, act, "hood")
 	await act(page.getByRole("button", { name: "Run this read" }).first())
 	await expect(page.getByTestId("read-status")).toContainText("HTTP 200")
 
 	// 9 Reading the pinned run: read every number again.
-	await nextChapter(page, act, 7)
+	await nextChapter(page, act, "run")
 	await act(page.getByRole("button", { name: "Read everything again" }))
 	await expect(page.locator('[data-reread="pages"]')).toContainText("(matches)")
 	await expect(page.getByRole("button", { name: /→$/ })).toHaveCount(0)

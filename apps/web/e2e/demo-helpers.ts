@@ -28,7 +28,9 @@ export function bodyOf<T>(
 	return entry.body as T
 }
 
-export async function openDemo(page: Page, hash = ""): Promise<void> {
+/** Opens the page on the brain by default: the story is the page's own first
+ * chapter, and the specs that predate it start on the map. */
+export async function openDemo(page: Page, hash = "#brain"): Promise<void> {
 	await page.goto(`/demo${hash}`)
 	await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
 }

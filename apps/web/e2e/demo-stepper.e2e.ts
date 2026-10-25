@@ -11,9 +11,11 @@ import {
 	settleContradiction,
 	settled,
 	showBeat,
+	chapterTitle,
 } from "./demo-helpers"
 import { installDemoProxy } from "./demo-proxy"
 import { withTouch } from "./demo-journey"
+import { chapterIndex } from "../app/demo/chapters"
 
 const NEXT = /^Next beat/
 const PREVIOUS = /Previous beat$/
@@ -24,7 +26,7 @@ async function openWalk(page: Page): Promise<void> {
 	const proxy = await installDemoProxy(page)
 	await openDemo(page)
 	await mapReady(page)
-	await goto(page, 4)
+	await goto(page, chapterIndex("contradiction"))
 	test.skip(
 		(await settleContradiction(page, proxy)) !== "recorded",
 		"this run records no contradiction yet, so chapter 5 has no walk-through",
@@ -114,7 +116,10 @@ test("the arrow keys step the beats from the stepper while focus stays on it", a
 	// The chapter pager keeps its own arrow keys: stepping beats did not leave
 	// the chapter.
 	await expect(
-		page.getByRole("heading", { level: 1, name: /contradiction/i }),
+		page.getByRole("heading", {
+			level: 1,
+			name: chapterTitle(chapterIndex("contradiction")),
+		}),
 	).toBeVisible()
 })
 

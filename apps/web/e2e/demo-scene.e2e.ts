@@ -151,7 +151,7 @@ test.describe("chapter 1 in 3D", () => {
 		await installDemoProxy(page)
 		await openDemo(page, "#ask")
 		await expect(
-			page.getByRole("heading", { level: 1, name: "Ask" }),
+			page.getByRole("heading", { level: 1, name: "Ask it" }),
 		).toBeVisible()
 		await page.waitForTimeout(3000)
 		await expect(page.locator('[data-view="3d"]')).toHaveCount(0)

@@ -14,6 +14,7 @@ import {
 } from "./demo-helpers"
 import { journey, withKeyboard, withTouch } from "./demo-journey"
 import { GENERATED, installDemoProxy } from "./demo-proxy"
+import { chapterIndex } from "../app/demo/chapters"
 
 test.describe("journey", () => {
 	// Each journey walks nine chapters and opens a citation: 17 to 28 s alone, which
@@ -65,7 +66,9 @@ test("the browser never carries the read key or the principal", async ({
 	page.on("pageerror", (error) => consoleErrors.push(String(error)))
 	await openDemo(page)
 	await mapReady(page)
-	await page.getByRole("button", { name: chapterTitle(4) }).click()
+	await page
+		.getByRole("button", { name: chapterTitle(chapterIndex("contradiction")) })
+		.click()
 	await settleContradiction(page, proxy)
 	expect(proxy.responses.length).toBeGreaterThan(3)
 	for (const entry of proxy.responses) {

@@ -24,7 +24,7 @@ test.describe("story proof intent", () => {
 		page,
 	}) => {
 		const proxy = await installDemoProxy(page)
-		await openDemo(page)
+		await openDemo(page, "")
 		await expect(page.getByRole("heading", STORY)).toBeVisible()
 		await expect(page.getByText("Chapter 1 of 10")).toBeVisible()
 		await storyReady(page)
@@ -61,7 +61,7 @@ test.describe("story proof intent", () => {
 		page,
 	}) => {
 		await installDemoProxy(page)
-		await openDemo(page)
+		await openDemo(page, "")
 		await storyReady(page)
 		const see = page
 			.getByTestId("story-beat-1")
@@ -79,7 +79,7 @@ test.describe("story proof intent", () => {
 		page,
 	}) => {
 		await installDemoProxy(page)
-		await openDemo(page)
+		await openDemo(page, "")
 		await storyReady(page)
 		await page
 			.getByRole("button", { name: "Caught: a disagreement", exact: true })

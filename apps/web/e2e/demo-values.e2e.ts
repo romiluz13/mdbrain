@@ -22,6 +22,7 @@ import {
 	wordsOf,
 } from "./demo-helpers"
 import { GENERATED, installDemoProxy, SLOW_LIST, SLOW_READ } from "./demo-proxy"
+import { chapterIndex } from "../app/demo/chapters"
 
 test.describe("values on screen equal the proxy's responses", () => {
 	test("the brain, the sources and the run's own table", async ({ page }) => {
@@ -44,7 +45,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 			String(lint.unresolvedContradictions.length),
 		)
 
-		await goto(page, 8)
+		await goto(page, chapterIndex("run"))
 		await expect(stat(page, "verify-pages")).toHaveText(
 			String(listTotal(proxy)),
 		)
@@ -84,7 +85,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		const proxy = await installDemoProxy(page)
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 2)
+		await goto(page, chapterIndex("sources"))
 		const rows = page.getByTestId("source-row")
 		await expect(rows.first()).toBeVisible(SLOW_READ)
 		await expect(
@@ -244,7 +245,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		).toBeVisible(SLOW_READ)
 		await page.keyboard.press("Escape")
 
-		await goto(page, 6)
+		await goto(page, chapterIndex("changes"))
 		const row = page.getByTestId("change-row").first()
 		await expect(row.locator('[data-time-kind="ingestion"]')).toBeVisible(
 			SLOW_READ,
@@ -261,7 +262,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		const proxy = await installDemoProxy(page)
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 1)
+		await goto(page, chapterIndex("ask"))
 		const examples = page
 			.getByRole("list", { name: "Example questions" })
 			.getByRole("button")
@@ -299,7 +300,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		const proxy = await installDemoProxy(page)
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 4)
+		await goto(page, chapterIndex("contradiction"))
 		const recorded = (await settleContradiction(page, proxy)) === "recorded"
 		if (!recorded) {
 			await expect(page.getByTestId("contradiction-claim")).toHaveCount(0)
@@ -384,7 +385,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		await mapReady(page)
 		await proxy.flush()
 		const pages = listPages(proxy)
-		await goto(page, 5)
+		await goto(page, chapterIndex("growth"))
 		await expect(page.getByTestId("review-queue-boundary")).toBeVisible()
 		if (GENERATED) {
 			expect(new Set(pages.map((p) => p.trustTier)).size).toBeGreaterThan(1)
@@ -400,7 +401,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 				String(pages.filter((p) => p.state === state).length),
 			)
 		}
-		await goto(page, 6)
+		await goto(page, chapterIndex("changes"))
 		await expect(stat(page, "revisions")).not.toHaveText("—", SLOW_READ)
 		await proxy.flush()
 		const changes = allChanges(proxy)
@@ -449,7 +450,7 @@ test.describe("values on screen equal the proxy's responses", () => {
 		const proxy = await installDemoProxy(page)
 		await openDemo(page)
 		await mapReady(page)
-		await goto(page, 7)
+		await goto(page, chapterIndex("hood"))
 		const row = page.locator('[data-read="wiki-list"]')
 		await row.getByRole("button", { name: "Run this read" }).click()
 		await expect
