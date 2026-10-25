@@ -1,3 +1,5 @@
+"use client"
+
 import {
 	type Judged,
 	READINESS_LABEL,
@@ -16,8 +18,6 @@ function Status({ readiness }: { readiness: Readiness }) {
 	)
 }
 
-/** One judged item: its status, then its filled copy when it is shown, or the
- * fixed label that says why it is not. */
 function Judgement({ item }: { item: Judged }) {
 	return (
 		<p className={styles.judged}>
@@ -81,7 +81,7 @@ export function StoryView({
 						>
 							<h3 className={styles.beatTitle}>{beat.title}</h3>
 							<Judgement item={beat} />
-							{beat.n === 3 ? (
+							{beat.citations ? (
 								<ul className={styles.citations}>
 									{story.citations.map((citation) => (
 										<li key={`${citation.pageTitle ?? ""}|${citation.label}`}>

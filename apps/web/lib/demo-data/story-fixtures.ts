@@ -1,5 +1,4 @@
-// Shared fixtures for the story seam and its view: a recorded run as the page
-// reads it. Scenario names live here, in test code, and nowhere in the page.
+// Scenario names live here, in test code, and nowhere in the page.
 
 import type { MdbrainWikiClaim } from "@mdbrain/client"
 import type { WikiMapPage, WikiMapView } from "./loaders.js"
@@ -151,4 +150,13 @@ export function withAgentRun(
 	over: Partial<NonNullable<RunRecord["agentRun"]>>,
 ): DataState<RunRecord> {
 	return withRun({ agentRun: { ...AGENT_RUN, ...over } })
+}
+
+/** The error state the run loader makes for a 404 from the proxy, which answers
+ * RUN_NOT_FOUND when the pinned run has no stored record. */
+export const RUN_NOT_FOUND: DataState<RunRecord> = {
+	kind: "error",
+	code: "RUN_NOT_FOUND",
+	status: 404,
+	message: "The pinned run has no stored record.",
 }

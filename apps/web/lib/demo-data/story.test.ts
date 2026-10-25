@@ -5,6 +5,7 @@ import {
 	CLAIM_PAGE_B,
 	LOADING,
 	RUN,
+	RUN_NOT_FOUND,
 	SUPPORT_TITLE,
 	ACCOUNT_TITLE,
 	claim,
@@ -243,6 +244,12 @@ describe("beat 4 and the counts clause (the run and the map)", () => {
 		expect(story.summary.counts.readiness).toBe("not-recorded")
 	})
 
+	it("is not recorded when the pinned run has no stored record (proxy 404 RUN_NOT_FOUND)", () => {
+		const story = buildStory(input({ run: RUN_NOT_FOUND }))
+		expect(story.beats[3].readiness).toBe("not-recorded")
+		expect(story.summary.counts.readiness).toBe("not-recorded")
+	})
+
 	it("is not recorded when the run is empty", () => {
 		const story = buildStory(input({ run: { kind: "empty" } }))
 		expect(story.beats[3].readiness).toBe("not-recorded")
@@ -324,6 +331,16 @@ describe("beat 4 and the counts clause (the run and the map)", () => {
 		const story = buildStory(input({ map: LOADING }))
 		expect(story.beats[3].readiness).toBe("shown")
 		expect(story.summary.counts.readiness).toBe("loading")
+	})
+})
+
+describe("beat titles (the plan's copy)", () => {
+	it("titles beat 3 and beat 5 in the plan's words", () => {
+		const story = buildStory(input())
+		expect(story.beats[2].title).toBe(
+			"Compare the source text and dates where available",
+		)
+		expect(story.beats[4].title).toBe("Agents handed work on")
 	})
 })
 

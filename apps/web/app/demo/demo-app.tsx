@@ -450,7 +450,7 @@ export function DemoApp() {
 								type="button"
 								className={styles.button}
 								data-variant="quiet"
-								onClick={() => goToIndex(0)}
+								onClick={() => goToIndex(chapterIndex("story"))}
 							>
 								Back to the story
 							</button>

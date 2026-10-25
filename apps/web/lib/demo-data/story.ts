@@ -1,8 +1,6 @@
-// The story chapter's seam: one pure function that turns the data the page has
-// already read into the summary, six beats and five properties. Each item is
-// judged only on the reads it needs, so one failed read never hides an item
-// that does not depend on it. Nothing here is typed in as scenario data: the
-// specifics come from the reads, and the words around them are fixed copy.
+// Each item is judged only on the reads it needs, so one failed read never hides
+// an item that does not depend on it. Nothing here is typed in as scenario data:
+// the specifics come from the reads, and the words around them are fixed copy.
 
 import type { WikiMapView } from "./loaders.js"
 import type { ContradictionCase } from "./loaders-chapters.js"
@@ -40,14 +38,13 @@ export type StoryTarget =
 	| "growth"
 	| "hood"
 
-/** One judged item: its readiness, the filled copy when it is shown, and a
- * fixed label when a stored state explains why it is not. */
 export type Judged = { readiness: Readiness; text?: string; note?: string }
 
 export type StoryBeat = Judged & {
 	n: number
 	title: string
 	target: StoryTarget
+	citations?: true
 }
 
 export type StoryProperty = Judged & {
@@ -83,8 +80,6 @@ const RANK: Record<Readiness, number> = {
 	loading: 3,
 }
 
-/** The most pressing of several readiness states: loading, then unreadable,
- * then not recorded, then shown. */
 function worst(states: readonly Readiness[]): Readiness {
 	return states.reduce<Readiness>(
 		(most, state) => (RANK[state] > RANK[most] ? state : most),
@@ -103,6 +98,8 @@ type ContradictionPart = {
 		ContradictionCase["claims"][number],
 	]
 	resolution?: string
+	citations: CitationProof[]
+	citationReadiness: Readiness
 }
 
 function contradictionPart(
@@ -110,22 +107,45 @@ function contradictionPart(
 ): ContradictionPart {
 	switch (state.kind) {
 		case "loading":
-			return { readiness: "loading" }
+			return {
+				readiness: "loading",
+				citations: [],
+				citationReadiness: "loading",
+			}
 		case "empty":
-			return { readiness: "not-recorded" }
+			return {
+				readiness: "not-recorded",
+				citations: [],
+				citationReadiness: "not-recorded",
+			}
 		case "ready": {
+			const citations = state.data.claims.map((entry) =>
+				citationOf(entry.claim, entry.pageTitle),
+			)
+			const citationReadiness: Readiness =
+				citations.length === 0
+					? "not-recorded"
+					: citations.some((citation) => citation.readiness === "shown")
+						? "shown"
+						: worst(citations.map((citation) => citation.readiness))
 			const [first, second] = state.data.claims
 			if (state.data.claims.length < 2 || !first || !second) {
-				return { readiness: "not-recorded" }
+				return { readiness: "not-recorded", citations, citationReadiness }
 			}
 			return {
 				readiness: "shown",
 				pair: [first, second],
 				resolution: state.data.resolution,
+				citations,
+				citationReadiness,
 			}
 		}
 		default:
-			return { readiness: "unreadable" }
+			return {
+				readiness: "unreadable",
+				citations: [],
+				citationReadiness: "unreadable",
+			}
 	}
 }
 
@@ -163,6 +183,9 @@ function runPart(state: DataState<RunRecord>): RunPart {
 		case "empty":
 			return { readiness: "not-recorded" }
 		case "error":
+			if (state.code === "RUN_NOT_FOUND") {
+				return { readiness: "not-recorded" }
+			}
 			return { readiness: "unreadable" }
 		case "ready":
 			return { readiness: "shown", record: state.data }
@@ -290,24 +313,7 @@ export function buildStory(input: StoryInput): Story {
 	const [claimA, claimB] = pair ?? []
 	const pageA = claimA?.pageTitle
 	const pageB = claimB?.pageTitle
-
-	const citations: CitationProof[] =
-		input.contradiction.kind === "ready"
-			? input.contradiction.data.claims.map((entry) =>
-					citationOf(entry.claim, entry.pageTitle),
-				)
-			: []
-	const citationReadiness: Readiness =
-		input.contradiction.kind === "loading"
-			? "loading"
-			: input.contradiction.kind === "ready" ||
-					input.contradiction.kind === "empty"
-				? citations.length === 0
-					? "not-recorded"
-					: citations.some((citation) => citation.readiness === "shown")
-						? "shown"
-						: worst(citations.map((citation) => citation.readiness))
-				: "unreadable"
+	const { citations, citationReadiness } = contradiction
 
 	const countsReadiness = worst([run.readiness, map.readiness])
 	const counts: Judged =
@@ -358,33 +364,34 @@ export function buildStory(input: StoryInput): Story {
 				n: 1,
 				title: "Two accounts disagree",
 				target: "contradiction",
-				readiness: contradiction.readiness,
-				...(contradiction.readiness === "shown" && pageA && pageB
-					? { text: `${pageA} and ${pageB} disagree.` }
-					: {}),
+				...shownOr(
+					contradiction.readiness,
+					() => `${pageA} and ${pageB} disagree.`,
+				),
 			},
 			{
 				n: 2,
 				title: "Both are kept",
 				target: "contradiction",
-				readiness: contradiction.readiness,
-				...(contradiction.readiness === "shown"
-					? { text: `Both claims are kept, recorded as ${resolution}.` }
-					: {}),
+				...shownOr(
+					contradiction.readiness,
+					() => `Both claims are kept, recorded as ${resolution}.`,
+				),
 			},
 			{
 				n: 3,
-				title: "Compare the sources",
+				title: "Compare the source text and dates where available",
 				target: "contradiction",
-				readiness: citationReadiness,
-				...(citationReadiness === "shown"
-					? { text: "Each claim below names the source events it rests on." }
-					: {}),
+				citations: true,
+				...shownOr(
+					citationReadiness,
+					() => "Each claim below names the source events it rests on.",
+				),
 			},
 			beatFour,
 			{
 				n: 5,
-				title: "Agents hand work on",
+				title: "Agents handed work on",
 				target: "agents",
 				readiness: handoff.readiness,
 				...(handoff.readiness === "shown" &&

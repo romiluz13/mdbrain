@@ -1,10 +1,6 @@
-// The story chapter on the fixture lane: its first screen, the readiness rows
-// of its table forced one at a time, the honest copy on the rendered page, and
-// the old link to the caught chapter.
 import { expect, test } from "@playwright/test"
-import { settleContradiction } from "./demo-helpers"
+import { openDemo, settleContradiction } from "./demo-helpers"
 import { GENERATED, installDemoProxy } from "./demo-proxy"
-import { openDemo } from "./demo-helpers"
 
 const HEADLINES = [
 	"Check the evidence behind a claim.",

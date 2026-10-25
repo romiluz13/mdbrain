@@ -45,8 +45,6 @@ export type AskState = {
 	answer: AnswerLane
 }
 
-/** A "See it" jump from the story: the chapter it landed on, kept until the
- * visitor goes somewhere else. */
 export type ProofIntent = { target: ChapterId }
 
 export type DemoContextValue = {

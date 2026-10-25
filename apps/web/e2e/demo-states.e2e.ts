@@ -170,7 +170,6 @@ test.describe("states", () => {
 			mode = stateMode
 			await page.reload()
 			for (const [index, chapter] of CHAPTERS.entries()) {
-				// The story states its own readiness per item; demo-story.e2e.ts checks them.
 				if (chapter.id === "story") {
 					continue
 				}

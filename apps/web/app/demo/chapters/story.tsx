@@ -1,3 +1,5 @@
+"use client"
+
 import { useMemo } from "react"
 import { buildStory } from "../../../lib/demo-data/story.js"
 import { useDemo } from "../demo-context.js"

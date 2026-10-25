@@ -1,6 +1,3 @@
-// The story's proof intent: "See it" lands on the recorded end state with the
-// heading focused and "Back to the story" shown, and the sequence story, proof,
-// rewind, story, proof lands on the same end state again.
 import { expect, test } from "@playwright/test"
 import { openDemo, settleContradiction, tabTo } from "./demo-helpers"
 import { GENERATED, installDemoProxy } from "./demo-proxy"
@@ -9,7 +6,6 @@ const CAUGHT = { level: 1, name: "Caught: a disagreement" } as const
 const STORY = { level: 1, name: "The story" } as const
 const BACK = { name: "Back to the story" } as const
 
-/** The story reads the run and the map; its first beat is judged once both have answered. */
 const storyReady = (page: import("@playwright/test").Page) =>
 	expect(page.getByTestId("story-beat-1")).toHaveAttribute(
 		"data-readiness",
