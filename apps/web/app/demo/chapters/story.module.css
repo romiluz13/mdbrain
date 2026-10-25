@@ -1,0 +1,118 @@
+/* The story chapter. Tokens come from the shell's .root; touch targets are the
+   shell's --target (44 px). */
+.story {
+	display: grid;
+	gap: 32px;
+	max-width: 72ch;
+}
+
+.block {
+	display: grid;
+	gap: 12px;
+}
+
+.heading {
+	margin: 0;
+	font-size: var(--t17);
+	font-weight: 650;
+}
+
+.definition {
+	margin: 0;
+	font-family: var(--font-serif);
+	font-size: var(--t21);
+	line-height: 1.35;
+}
+
+.judged {
+	margin: 0;
+	color: var(--ink-2);
+}
+
+.status {
+	display: inline-block;
+	margin-right: 8px;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: var(--inset);
+	color: var(--ink-2);
+	font-size: var(--t12);
+}
+
+.status[data-readiness="shown"] {
+	background: var(--ok-tint);
+	color: var(--ok-ink);
+}
+
+.status[data-readiness="unreadable"] {
+	background: var(--signal-tint);
+	color: var(--signal-ink);
+}
+
+.beats {
+	display: grid;
+	gap: 12px;
+	margin: 0;
+	padding-left: 24px;
+}
+
+.beat,
+.card {
+	display: grid;
+	gap: 8px;
+	padding: 14px 16px;
+	border: 1px solid var(--line);
+	border-radius: var(--r2);
+	background: var(--panel);
+}
+
+.beatTitle {
+	margin: 0;
+	font-size: var(--t17);
+	font-weight: 650;
+}
+
+.citations {
+	display: grid;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-2);
+}
+
+.see {
+	justify-self: start;
+	min-height: var(--target);
+	padding: 0 16px;
+	border: 1px solid var(--ink);
+	border-radius: var(--r1);
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	cursor: pointer;
+}
+
+.see:focus-visible {
+	outline: 3px solid var(--focus);
+	outline-offset: 2px;
+}
+
+.sectionLine {
+	margin: 0;
+	color: var(--ink-2);
+}
+
+.cards {
+	display: grid;
+	gap: 12px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+@media (min-width: 720px) {
+	.cards {
+		grid-template-columns: 1fr 1fr;
+	}
+}

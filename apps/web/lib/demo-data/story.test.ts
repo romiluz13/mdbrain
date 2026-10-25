@@ -1,166 +1,33 @@
-import type { MdbrainWikiClaim } from "@mdbrain/client"
 import { describe, expect, it } from "vitest"
-import type { WikiMapPage, WikiMapView } from "./loaders.js"
-import type {
-	ContradictionCase,
-	ContradictionCaseClaim,
-} from "./loaders-chapters.js"
+import {
+	CLAIM_B,
+	CLAIM_PAGE_A,
+	CLAIM_PAGE_B,
+	LOADING,
+	MAP,
+	RUN,
+	SUPPORT_SLUG,
+	SUPPORT_TITLE,
+	ACCOUNT_TITLE,
+	claim,
+	contradiction,
+	input,
+	ready,
+	withAgentRun,
+	withRun,
+} from "./story-fixtures.js"
 import {
 	DEADLINE_LABEL,
 	FAILED_LABEL,
 	INCOMPLETE_LABEL,
-	type AgentRunRecord,
 	type RunRecord,
 } from "./run-record.js"
-import type { DataState } from "./states.js"
 import {
 	buildStory,
 	READINESS_LABEL,
 	STORY_DEFINITION,
 	STORY_SECTION_LINE,
-	type StoryInput,
 } from "./story.js"
-
-const SUPPORT_SLUG = "risks/halvorsen-renewal-support-view"
-const SUPPORT_TITLE = "Halvorsen renewal: support view"
-const ACCOUNT_SLUG = "accounts/halvorsen-freight-group"
-const ACCOUNT_TITLE = "Halvorsen Freight Group"
-const CLAIM_A = "The renewal is not on track for November signature."
-const CLAIM_B = "The renewal is healthy and on track for November signature."
-const LOADING = { kind: "loading" } as const
-
-function claim(
-	id: string,
-	text: string,
-	overrides: Partial<MdbrainWikiClaim> = {},
-): MdbrainWikiClaim {
-	return {
-		id,
-		text,
-		status: "contradicted",
-		confidence: 0.9,
-		marker: `[[wiki:${id}@r1]]`,
-		evidence: [
-			{ kind: "event", sourceId: `evt-${id}`, marker: `[[event:evt-${id}]]` },
-		],
-		derivedFrom: [],
-		...overrides,
-	}
-}
-
-const CLAIM_PAGE_A: ContradictionCaseClaim = {
-	pageSlug: SUPPORT_SLUG,
-	pageTitle: SUPPORT_TITLE,
-	revision: 1,
-	claim: claim("support-renewal", CLAIM_A),
-}
-const CLAIM_PAGE_B: ContradictionCaseClaim = {
-	pageSlug: ACCOUNT_SLUG,
-	pageTitle: ACCOUNT_TITLE,
-	revision: 1,
-	claim: claim("account-renewal", CLAIM_B),
-}
-
-function contradiction(
-	claims: ContradictionCaseClaim[] = [CLAIM_PAGE_A, CLAIM_PAGE_B],
-): ContradictionCase {
-	return {
-		id: "contra-renewal",
-		detectedAt: "2026-10-21T22:35:14.097Z",
-		resolution: "unresolved",
-		claims,
-		unresolvedCount: 1,
-	}
-}
-
-function mapPage(slug: string, title: string): WikiMapPage {
-	return {
-		slug,
-		title,
-		kind: "synthesis",
-		type: "synthesis",
-		trustTier: "standard",
-		state: "active",
-		revision: 1,
-		claimCount: 1,
-		linkCount: 0,
-		createdAt: "2026-10-21T22:35:12.821Z",
-		updatedAt: "2026-10-21T22:35:12.821Z",
-		links: [],
-		sourceIds: [],
-		contradictedClaims: 0,
-		claims: [],
-	}
-}
-
-const MAP: WikiMapView = {
-	pages: [
-		mapPage(SUPPORT_SLUG, SUPPORT_TITLE),
-		mapPage(ACCOUNT_SLUG, ACCOUNT_TITLE),
-	],
-	pageTotal: 110,
-	claimTotal: 290,
-	sourceTotal: 4,
-	unresolvedContradictionCount: 1,
-}
-
-const AGENT_RUN: AgentRunRecord = {
-	state: "complete",
-	startedAt: "2026-10-21T22:33:53.532Z",
-	endedAt: "2026-10-21T22:37:55.694Z",
-	stepsRecorded: 3,
-	reusedPage: {
-		slug: SUPPORT_SLUG,
-		writtenBy: "support",
-		readBy: "account",
-	},
-	pendingProposal: {
-		title: "Silent ETA drift",
-		slug: "syntheses/silent-eta-drift",
-	},
-	steps: [
-		{ n: 1, role: "support", name: "read", eventId: "step-1" },
-		{ n: 2, role: "account", name: "read", eventId: "step-2" },
-		{ n: 3, role: "product", name: "read", eventId: "step-3" },
-	],
-}
-
-const RUN: RunRecord = {
-	state: "used",
-	createdAt: "2026-10-21T20:42:10.545Z",
-	readyAt: "2026-10-21T22:30:35.425Z",
-	usedAt: "2026-10-21T22:37:55.972Z",
-	eventsPlanned: 3,
-	pagesPlanned: 2,
-	arrivals: [
-		{ sourceId: "src-1", eventId: "evt-1" },
-		{ sourceId: "src-2", eventId: "evt-2" },
-		{ sourceId: "src-3", eventId: "evt-3" },
-	],
-	pagesWritten: [SUPPORT_SLUG, ACCOUNT_SLUG],
-	agentRun: AGENT_RUN,
-}
-
-const ready = <T>(data: T): DataState<T> => ({ kind: "ready", data })
-
-function input(over: Partial<StoryInput> = {}): StoryInput {
-	return {
-		map: ready(MAP),
-		contradiction: ready(contradiction()),
-		run: ready(RUN),
-		...over,
-	}
-}
-
-function withRun(over: Partial<RunRecord>): DataState<RunRecord> {
-	return ready({ ...RUN, ...over })
-}
-
-function withAgentRun(
-	over: Partial<NonNullable<RunRecord["agentRun"]>>,
-): DataState<RunRecord> {
-	return withRun({ agentRun: { ...AGENT_RUN, ...over } })
-}
 
 describe("buildStory: the copy that always renders", () => {
 	it("keeps the definition and the section line whatever the reads say", () => {
