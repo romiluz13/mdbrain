@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { countOf } from "../../../lib/demo-data/plural.js"
 import { useDemo } from "../demo-context.js"
 import styles from "../chapters.module.css"
@@ -27,7 +27,7 @@ const beatLabels = (claims: number): string[] => [
 ]
 
 export function ContradictionChapter() {
-	const { data, cite, pin, goTo, reload } = useDemo()
+	const { data, cite, pin, goTo, reload, proof } = useDemo()
 	const [beat, setBeat] = useState(0)
 	const beats = useRef<HTMLDivElement>(null)
 	const heading = useRef<"forward" | "back">("forward")
@@ -47,6 +47,12 @@ export function ContradictionChapter() {
 	}
 	const labels = beatLabels(found?.claims.length ?? 0)
 	const lastBeat = labels.length - 1
+	// A "See it" from the story lands on the recorded stamp, not the first claim.
+	useEffect(() => {
+		if (proof?.target === "contradiction") {
+			setBeat(lastBeat)
+		}
+	}, [proof, lastBeat])
 	const highlight = useMemo(
 		() => new Set(found?.claims.map((claim) => claim.pageSlug) ?? []),
 		[found],

@@ -14,6 +14,7 @@ import type { SearchView } from "../../lib/demo-data/loaders-chapters.js"
 import type { EventReader } from "../../lib/demo-data/event-reader.js"
 import type { SourceReader } from "../../lib/demo-data/source-reader.js"
 import type { DataState } from "../../lib/demo-data/states.js"
+import type { ChapterId } from "./chapters.js"
 import type { Graph } from "../../lib/demo-data/views.js"
 import type { DemoData } from "./use-demo-data.js"
 import type { Playback } from "./use-playback.js"
@@ -44,6 +45,10 @@ export type AskState = {
 	answer: AnswerLane
 }
 
+/** A "See it" jump from the story: the chapter it landed on, kept until the
+ * visitor goes somewhere else. */
+export type ProofIntent = { target: ChapterId }
+
 export type DemoContextValue = {
 	upstream: DemoDataUpstream
 	/** Reads a claim's sources one at a time and remembers them. */
@@ -65,6 +70,8 @@ export type DemoContextValue = {
 	ask: AskState
 	setAsk: Dispatch<SetStateAction<AskState>>
 	goTo: (id: string) => void
+	proof: ProofIntent | null
+	see: (target: ChapterId) => void
 	presenter: Presenter
 	/** The page is showing a presenter's leased slot, live, not the recording. */
 	live: boolean

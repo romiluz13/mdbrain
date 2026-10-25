@@ -35,6 +35,7 @@ import {
 	type AskState,
 	type CitationTarget,
 	type DemoContextValue,
+	type ProofIntent,
 } from "./demo-context.js"
 import styles from "./demo.module.css"
 import { CitationDialog } from "./parts/citation-dialog.js"
@@ -88,6 +89,7 @@ export function DemoApp() {
 	const [index, setIndex] = useState(0)
 	const [pinned, setPinned] = useState<string | null>(null)
 	const [citation, setCitation] = useState<CitationTarget | null>(null)
+	const [proof, setProof] = useState<ProofIntent | null>(null)
 	const [ask, setAsk] = useState<AskState>({
 		query: "",
 		result: null,
@@ -263,12 +265,26 @@ export function DemoApp() {
 	const goToIndex = useCallback((next: number) => {
 		const clamped = Math.min(Math.max(next, 0), CHAPTERS.length - 1)
 		focusHeading.current = true
+		setProof(null)
 		setIndex(clamped)
 		const chapter = CHAPTERS[clamped]
 		if (chapter) {
 			window.history.replaceState(null, "", `#${chapter.id}`)
 		}
 	}, [])
+
+	const see = useCallback(
+		(target: ChapterId) => {
+			focusHeading.current = true
+			setProof({ target })
+			setIndex(chapterIndex(target))
+			if (playback.status === "ready" && PLAYBACK_CHAPTERS.has(target)) {
+				playback.jump("end")
+			}
+			window.history.replaceState(null, "", `#${target}`)
+		},
+		[playback],
+	)
 
 	// Arrow keys step the chapters from the pager, and walk the rail's buttons
 	// without selecting one (Enter selects), so a keyboard visitor can move
@@ -324,6 +340,8 @@ export function DemoApp() {
 			ask,
 			setAsk,
 			goTo: (id) => goToIndex(chapterIndex(id)),
+			proof,
+			see,
 			presenter,
 			live,
 			playback,
@@ -342,6 +360,8 @@ export function DemoApp() {
 			presenter,
 			live,
 			playback,
+			proof,
+			see,
 		],
 	)
 
@@ -425,6 +445,16 @@ export function DemoApp() {
 							{chapter.title}
 						</h1>
 						<p className={styles.lede}>{chapter.lede}</p>
+						{proof?.target === chapter.id ? (
+							<button
+								type="button"
+								className={styles.button}
+								data-variant="quiet"
+								onClick={() => goToIndex(0)}
+							>
+								Back to the story
+							</button>
+						) : null}
 					</header>
 					<div ref={screenRef} className={styles.screen} data-testid="screen">
 						{presenter.mode === "presenter" ? <PresenterBar /> : null}
