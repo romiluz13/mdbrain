@@ -28,6 +28,7 @@ import { GrowthChapter } from "./chapters/growth.js"
 import { HoodChapter } from "./chapters/hood.js"
 import { RunChapter } from "./chapters/run.js"
 import { SourcesChapter } from "./chapters/sources.js"
+import { StoryChapter } from "./chapters/story.js"
 import { CHAPTERS, chapterIndex, type ChapterId } from "./chapters.js"
 import {
 	DemoContext,
@@ -68,6 +69,7 @@ const PLAYBACK_CHAPTERS: ReadonlySet<ChapterId> = new Set([
 const LIVE_REFRESH_MS = 2_500
 
 const BODY: Record<ChapterId, () => React.JSX.Element> = {
+	story: StoryChapter,
 	brain: BrainChapter,
 	ask: AskChapter,
 	sources: SourcesChapter,
